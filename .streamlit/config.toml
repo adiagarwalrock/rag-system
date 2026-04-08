@@ -1,0 +1,30 @@
+[client]
+showSidebarNavigation = true
+
+[browser]
+gatherUsageStats = false
+
+[server]
+headless = true
+enableCORS = true
+enableXsrfProtection = true
+# fileWatcherType = "none"
+maxUploadSize = 200
+maxMessageSize = 200
+
+[runner]
+magicEnabled = false
+fastReruns = true
+enforceSerializableSessionState = true
+
+[logger]
+level = "info"
+messageFormat = "%(asctime)s %(message)s"
+
+[theme]
+base = "light"
+primaryColor = "#155EEF"
+backgroundColor = "#F6F8FB"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#101828"
+font = "sans serif"
