@@ -16,6 +16,7 @@ from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.schema import BaseNode
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.models.client import Client
 from app.db.models.document import (
     Document,
@@ -40,9 +41,7 @@ from app.ingestion.version_resolver import resolve_version
 
 logger = logging.getLogger(__name__)
 
-RAW_DATA_DIR = os.environ.get(
-    "RAW_DATA_DIR", os.path.join(os.path.dirname(__file__), "..", "..", "data", "raw")
-)
+RAW_DATA_DIR = settings.RAW_DATA_DIR
 
 NON_SEMANTIC_EMBED_METADATA_KEYS = (
     "document_id",
@@ -475,7 +474,7 @@ def _execute_pipeline(
             client_id=client_id,
             vector_collection=COLLECTION_NAME,
             vector_node_id=node.node_id,
-            embedding_model="text-embedding-3-small",
+            embedding_model=settings.EMBEDDING_MODEL,
         )
         db.add(registry)
 
@@ -506,7 +505,9 @@ def _handle_ingestion_failure(
     error_msg = str(e)[:1000]
     error_lower = error_msg.lower()
     if (
-        "openai" in error_lower
+        "google" in error_lower
+        or "gemini" in error_lower
+        or "genai" in error_lower
         or "api key" in error_lower
         or "rate limit" in error_lower
     ):

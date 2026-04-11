@@ -16,3 +16,7 @@ venv/
 node_modules/*
 data/qdrant_storage*
 data/raw*
+# 
+plan/*
+artifacts/*
+.codex

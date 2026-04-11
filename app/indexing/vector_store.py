@@ -4,17 +4,17 @@ Handles indexing and query engine creation.
 """
 
 import logging
-import os
 from typing import List
 
 import qdrant_client
+from google.genai import types as genai_types
 from llama_index.core import Settings, StorageContext, VectorStoreIndex
 from llama_index.core.embeddings import MockEmbedding
 from llama_index.core.llms import MockLLM
 from llama_index.core.schema import BaseNode
 from llama_index.core.vector_stores import MetadataFilters
-from llama_index.embeddings.openai import OpenAIEmbedding
-from llama_index.llms.openai import OpenAI
+from llama_index.embeddings.google_genai import GoogleGenAIEmbedding
+from llama_index.llms.google_genai import GoogleGenAI
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from qdrant_client.http import models as qdrant_models
 
@@ -23,7 +23,7 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = settings.COLLECTION_NAME
-VECTOR_DIMENSIONS = settings.VECTOR_DIMENSIONS
+VECTOR_DIMENSIONS = settings.effective_vector_dimensions
 DENSE_VECTOR_NAME = "text-dense"
 SPARSE_VECTOR_NAME = "text-sparse-new"
 SPARSE_MODEL_NAME = "Qdrant/bm25"
@@ -38,55 +38,48 @@ PAYLOAD_INDEXES = (
 
 _llama_configured = False
 _configured_key = ""
-# Kept for compatibility with UI imports
+# Kept for compatibility with UI imports.
 _is_placeholder = True
 
 
-def _normalize_key(raw_key: str | None) -> str:
-    key = (raw_key or "").strip()
-    return key.strip("'\"").strip()
-
-
-def _get_openai_api_key() -> str:
-    return _normalize_key(os.getenv("OPENAI_API_KEY") or settings.OPENAI_API_KEY)
-
-
-def _is_placeholder_key(api_key: str) -> bool:
-    key = api_key.strip().lower()
-    placeholders = {
-        "your_openai_api_key_here",
-        "your_openai_api_key",
-        "sk-proj-your_openai_api_key_here",
-    }
-    return not key or key in placeholders or key.startswith(("your_", "sk-proj-your"))
+def _build_embedding_config() -> genai_types.EmbedContentConfig | None:
+    if settings.EMBEDDING_OUTPUT_DIMENSION is None:
+        return None
+    return genai_types.EmbedContentConfig(
+        output_dimensionality=settings.EMBEDDING_OUTPUT_DIMENSION
+    )
 
 
 def _configure_llama_settings() -> None:
     global _llama_configured, _configured_key, _is_placeholder
 
-    api_key = _get_openai_api_key()
+    api_key = settings.google_api_key
     if _llama_configured and api_key == _configured_key:
         return
 
     _configured_key = api_key
     _llama_configured = True
-    _is_placeholder = _is_placeholder_key(api_key)
+    _is_placeholder = settings.is_google_api_key_placeholder
 
     if _is_placeholder:
         Settings.llm = MockLLM()
         Settings.embed_model = MockEmbedding(embed_dim=VECTOR_DIMENSIONS)
         logger.warning(
-            "OPENAI_API_KEY missing or placeholder. Using Mock LLM/Embeddings."
+            "GOOGLE_API_KEY missing or placeholder. Using Mock LLM/Embeddings."
         )
     else:
-        os.environ["OPENAI_API_KEY"] = api_key
-        Settings.llm = OpenAI(model="gpt-4o-mini", api_key=api_key)
-        Settings.embed_model = OpenAIEmbedding(
-            model="text-embedding-3-small", api_key=api_key
+        Settings.llm = GoogleGenAI(model=settings.LLM_MODEL, api_key=api_key)
+        Settings.embed_model = GoogleGenAIEmbedding(
+            model_name=settings.EMBEDDING_MODEL,
+            api_key=api_key,
+            embedding_config=_build_embedding_config(),
         )
         logger.info(
-            "OPENAI_API_KEY configured (prefix=%s). Using real OpenAI models.",
+            "GOOGLE_API_KEY configured (prefix=%s). Using Google GenAI models "
+            "(llm=%s, embedding=%s).",
             api_key[:7],
+            settings.LLM_MODEL,
+            settings.EMBEDDING_MODEL,
         )
 
 
@@ -169,9 +162,38 @@ def _ensure_collection_exists(client):
             VECTOR_DIMENSIONS,
         )
     else:
+        _ensure_vector_dimensions_match(client)
         _ensure_sparse_vectors(client)
 
     _ensure_payload_indexes(client)
+
+
+def _ensure_vector_dimensions_match(client) -> None:
+    """Fail fast when existing collection dimensions do not match current config."""
+    info = client.get_collection(COLLECTION_NAME)
+    vectors_config = info.config.params.vectors
+
+    vector_params = None
+    if isinstance(vectors_config, dict):
+        vector_params = vectors_config.get(DENSE_VECTOR_NAME)
+    elif hasattr(vectors_config, "size"):
+        vector_params = vectors_config
+
+    actual_dim = getattr(vector_params, "size", None)
+    if actual_dim is None:
+        logger.warning(
+            "Could not determine dense vector dimensions for collection '%s'.",
+            COLLECTION_NAME,
+        )
+        return
+
+    if actual_dim != VECTOR_DIMENSIONS:
+        raise RuntimeError(
+            "Collection '%s' has dense vector size %s but config expects %s. "
+            "Recreate the collection (development) or align VECTOR_DIMENSIONS/"
+            "EMBEDDING_OUTPUT_DIMENSION."
+            % (COLLECTION_NAME, actual_dim, VECTOR_DIMENSIONS)
+        )
 
 
 def _ensure_sparse_vectors(client) -> None:
@@ -182,8 +204,8 @@ def _ensure_sparse_vectors(client) -> None:
     logger.warning(
         "Collection '%s' does not have sparse vector slot '%s'. "
         "Qdrant cannot add this vector name in-place for this collection. "
-        "Run `uv run python -m app.scripts.backfill_qdrant_hybrid --recreate-collection` "
-        "to rebuild it from Qdrant payloads, or continue with dense fallback.",
+        "Recreate the collection to restore hybrid behavior, or continue with "
+        "dense fallback.",
         COLLECTION_NAME,
         SPARSE_VECTOR_NAME,
     )

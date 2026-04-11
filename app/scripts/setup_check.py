@@ -7,7 +7,6 @@ Run:
 
 from __future__ import annotations
 
-import os
 import sys
 import warnings
 from pathlib import Path
@@ -22,11 +21,6 @@ if __package__ is None or __package__ == "":
 
 from app.core.config import settings
 
-PLACEHOLDER_OPENAI_KEYS = {
-    "your_openai_api_key_here",
-    "your_openai_api_key",
-    "sk-proj-your_openai_api_key_here",
-}
 SPARSE_VECTOR_NAME = "text-sparse-new"
 
 warnings.filterwarnings(
@@ -34,20 +28,6 @@ warnings.filterwarnings(
     message="Api key is used with an insecure connection.",
     category=UserWarning,
 )
-
-
-def _normalize(value: str | None) -> str:
-    return (value or "").strip().strip("'\"").strip()
-
-
-def _is_placeholder_openai_key(api_key: str) -> bool:
-    lowered = api_key.lower()
-    return (
-        not lowered
-        or lowered in PLACEHOLDER_OPENAI_KEYS
-        or lowered.startswith("your_")
-        or lowered.startswith("sk-proj-your")
-    )
 
 
 def check_snowflake() -> bool:
@@ -116,30 +96,30 @@ def check_qdrant() -> bool:
 
 
 def check_llm() -> bool:
-    api_key = _normalize(os.getenv("OPENAI_API_KEY") or settings.OPENAI_API_KEY)
-    if _is_placeholder_openai_key(api_key):
-        print("[FAIL] LLM: OPENAI_API_KEY is missing or placeholder")
+    api_key = settings.google_api_key
+    if settings.is_google_api_key_placeholder:
+        print("[FAIL] LLM: GOOGLE_API_KEY is missing or placeholder")
         return False
 
     try:
         response = requests.get(
-            "https://api.openai.com/v1/models",
-            headers={"Authorization": f"Bearer {api_key}"},
+            "https://generativelanguage.googleapis.com/v1beta/models",
+            params={"key": api_key},
             timeout=15,
         )
     except requests.RequestException as exc:
-        print(f"[FAIL] LLM: OpenAI API unreachable ({exc})")
+        print(f"[FAIL] LLM: Gemini API unreachable ({exc})")
         return False
 
     if response.status_code == 200:
-        print("[PASS] LLM: OPENAI_API_KEY accepted by OpenAI API")
+        print("[PASS] LLM: GOOGLE_API_KEY accepted by Gemini API")
         return True
 
     if response.status_code in {401, 403}:
-        print("[FAIL] LLM: OPENAI_API_KEY rejected by OpenAI API")
+        print("[FAIL] LLM: GOOGLE_API_KEY rejected by Gemini API")
         return False
 
-    print(f"[FAIL] LLM: OpenAI API returned status {response.status_code}")
+    print(f"[FAIL] LLM: Gemini API returned status {response.status_code}")
     return False
 
 
