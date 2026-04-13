@@ -35,7 +35,15 @@ QUARTER_MAP = {"Q1": (1, 3), "Q2": (4, 6), "Q3": (7, 9), "Q4": (10, 12)}
 
 
 def resolve_version(filename: str, content_preview: str = "") -> dict:
-    """Attempt to resolve version information from filename and content."""
+    """Attempt to resolve version information from filename and content.
+
+    Args:
+        filename: Name of the file being processed.
+        content_preview: Optional preview of the text content to assist resolution.
+
+    Returns:
+        Dict containing version labels, date limits, and confidence.
+    """
     result = {
         "version_label": None,
         "version_group": None,
