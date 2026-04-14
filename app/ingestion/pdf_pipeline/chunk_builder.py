@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Iterable
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +28,163 @@ from app.ingestion.pdf_pipeline.models import (
 from app.ingestion.pdf_pipeline.registry import PDFPipelineRegistry
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class ChunkBuildInputs:
+    page_manifests: list[PageManifest]
+    regions: list[Region]
+    tables: list[TableArtifact]
+    figures: list[FigureArtifact]
+    reasoning_artifacts: list[ReasoningArtifact]
+
+
+class ChunkArtifactAssembler:
+    def __init__(self, inputs: ChunkBuildInputs) -> None:
+        self._inputs = inputs
+        self._manifests = {
+            manifest.page_num: manifest for manifest in inputs.page_manifests
+        }
+        self._regions_by_page = _regions_by_page(inputs.regions)
+
+    def build(self) -> list[ChunkArtifact]:
+        chunks: list[ChunkArtifact] = []
+        self._append_body_text_chunks(chunks)
+        self._append_table_chunks(chunks)
+        self._append_figure_chunks(chunks)
+        self._append_page_cards(chunks)
+        self._append_reasoning_chunks(chunks)
+        return chunks
+
+    def _append_body_text_chunks(self, chunks: list[ChunkArtifact]) -> None:
+        for page_num, page_regions in self._regions_by_page.items():
+            manifest = self._manifests.get(page_num)
+            if manifest is None:
+                continue
+
+            body_regions = [
+                region
+                for region in page_regions
+                if region.region_type
+                in {"body_text", "section_heading", "subsection_heading"}
+            ]
+            grouped_regions = _group_regions_by_section(body_regions)
+            for section_path, section_regions in grouped_regions.items():
+                merged_text = "\n".join(
+                    region.text for region in section_regions if region.text
+                ).strip()
+                if not merged_text:
+                    continue
+                for split_idx, part in enumerate(split_body_text(merged_text), start=1):
+                    chunks.append(
+                        ChunkArtifact(
+                            chunk_id=str(uuid.uuid4()),
+                            chunk_type="body_text",
+                            source_artifact_type="region_group",
+                            source_artifact_id=f"{page_num}:{section_path}:{split_idx}",
+                            page_nums=[page_num],
+                            text=part,
+                            metadata=_base_chunk_metadata(
+                                manifest=manifest,
+                                section_path=section_path,
+                                region_ids=[
+                                    region.region_id for region in section_regions
+                                ],
+                                bbox_refs=[region.bbox for region in section_regions],
+                                caption="",
+                                units=[],
+                                continuation_flag=False,
+                                figure_type=None,
+                                source_artifact_type="region_group",
+                            ),
+                        )
+                    )
+
+    def _append_table_chunks(self, chunks: list[ChunkArtifact]) -> None:
+        for table in self._inputs.tables:
+            chunks.extend(_table_to_chunks(table, self._manifests))
+
+    def _append_figure_chunks(self, chunks: list[ChunkArtifact]) -> None:
+        for figure in self._inputs.figures:
+            chunks.extend(_figure_to_chunks(figure, self._manifests))
+
+    def _append_page_cards(self, chunks: list[ChunkArtifact]) -> None:
+        tables_by_page: dict[int, list[TableArtifact]] = {}
+        for table in self._inputs.tables:
+            for page_num in table.page_nums:
+                tables_by_page.setdefault(page_num, []).append(table)
+
+        figures_by_page: dict[int, list[FigureArtifact]] = {}
+        for figure in self._inputs.figures:
+            figures_by_page.setdefault(figure.page_num, []).append(figure)
+
+        for manifest in self._inputs.page_manifests:
+            page_tables = tables_by_page.get(manifest.page_num, [])
+            page_figures = figures_by_page.get(manifest.page_num, [])
+            if (
+                manifest.page_class == "simple_text_page"
+                and not page_tables
+                and not page_figures
+            ):
+                continue
+
+            summary = [
+                f"Page {manifest.page_num} summary",
+                f"Class: {manifest.page_class}",
+                f"Layout confidence: {manifest.layout_confidence:.2f}",
+                f"Tables: {len(page_tables)}",
+                f"Figures: {len(page_figures)}",
+            ]
+            if page_tables:
+                summary.append(
+                    "Table captions: "
+                    + "; ".join(
+                        table.caption_text or table.table_id
+                        for table in page_tables[:3]
+                    )
+                )
+            if page_figures:
+                summary.append(
+                    "Figure captions: "
+                    + "; ".join(
+                        figure.caption_text or figure.figure_type
+                        for figure in page_figures[:3]
+                    )
+                )
+
+            llm_summary = getattr(manifest, "llm_page_summary", None)
+            if llm_summary:
+                summary.append("\n--- Holistic Page Analysis ---")
+                summary.append(llm_summary)
+
+            chunks.append(
+                ChunkArtifact(
+                    chunk_id=str(uuid.uuid4()),
+                    chunk_type="page_card",
+                    source_artifact_type="page",
+                    source_artifact_id=f"page_{manifest.page_num}",
+                    page_nums=[manifest.page_num],
+                    text="\n".join(summary),
+                    metadata=_base_chunk_metadata(
+                        manifest=manifest,
+                        section_path="Page Summary",
+                        region_ids=[],
+                        bbox_refs=[],
+                        caption="",
+                        units=[],
+                        continuation_flag=False,
+                        figure_type=None,
+                        source_artifact_type="page",
+                    ),
+                    asset_refs=[manifest.screenshot_path]
+                    if manifest.screenshot_path
+                    else [],
+                )
+            )
+
+    def _append_reasoning_chunks(self, chunks: list[ChunkArtifact]) -> None:
+        for reasoning in self._inputs.reasoning_artifacts:
+            chunks.extend(_reasoning_to_chunks(reasoning, self._manifests))
 
 
 class DefaultChunkStage(ChunkStage):
@@ -98,138 +255,14 @@ def build_chunk_artifacts(
     figures: list[FigureArtifact],
     reasoning_artifacts: list[ReasoningArtifact] | None = None,
 ) -> list[ChunkArtifact]:
-    chunks: list[ChunkArtifact] = []
-    manifests = {manifest.page_num: manifest for manifest in page_manifests}
-    regions_by_page = _regions_by_page(regions)
-
-    for page_num, page_regions in regions_by_page.items():
-        manifest = manifests.get(page_num)
-        if manifest is None:
-            continue
-
-        body_regions = [
-            region
-            for region in page_regions
-            if region.region_type
-            in {"body_text", "section_heading", "subsection_heading"}
-        ]
-        grouped = _group_regions_by_section(body_regions)
-
-        for section_path, section_regions in grouped.items():
-            merged_text = "\n".join(
-                region.text for region in section_regions if region.text
-            ).strip()
-            if not merged_text:
-                continue
-
-            for split_idx, part in enumerate(split_body_text(merged_text), start=1):
-                chunks.append(
-                    ChunkArtifact(
-                        chunk_id=str(uuid.uuid4()),
-                        chunk_type="body_text",
-                        source_artifact_type="region_group",
-                        source_artifact_id=f"{page_num}:{section_path}:{split_idx}",
-                        page_nums=[page_num],
-                        text=part,
-                        metadata=_base_chunk_metadata(
-                            manifest=manifest,
-                            section_path=section_path,
-                            region_ids=[region.region_id for region in section_regions],
-                            bbox_refs=[region.bbox for region in section_regions],
-                            caption="",
-                            units=[],
-                            continuation_flag=False,
-                            figure_type=None,
-                            source_artifact_type="region_group",
-                        ),
-                    )
-                )
-
-    for table in tables:
-        chunks.extend(_table_to_chunks(table, manifests))
-
-    for figure in figures:
-        chunks.extend(_figure_to_chunks(figure, manifests))
-
-    tables_by_page: dict[int, list[TableArtifact]] = {}
-    for table in tables:
-        for page_num in table.page_nums:
-            tables_by_page.setdefault(page_num, []).append(table)
-
-    figures_by_page: dict[int, list[FigureArtifact]] = {}
-    for figure in figures:
-        figures_by_page.setdefault(figure.page_num, []).append(figure)
-
-    for manifest in page_manifests:
-        page_tables = tables_by_page.get(manifest.page_num, [])
-        page_figures = figures_by_page.get(manifest.page_num, [])
-
-        if (
-            manifest.page_class == "simple_text_page"
-            and not page_tables
-            and not page_figures
-        ):
-            continue
-
-        summary = [
-            f"Page {manifest.page_num} summary",
-            f"Class: {manifest.page_class}",
-            f"Layout confidence: {manifest.layout_confidence:.2f}",
-            f"Tables: {len(page_tables)}",
-            f"Figures: {len(page_figures)}",
-        ]
-
-        if page_tables:
-            summary.append(
-                "Table captions: "
-                + "; ".join(
-                    table.caption_text or table.table_id for table in page_tables[:3]
-                )
-            )
-        if page_figures:
-            summary.append(
-                "Figure captions: "
-                + "; ".join(
-                    figure.caption_text or figure.figure_type
-                    for figure in page_figures[:3]
-                )
-            )
-
-        llm_summary = getattr(manifest, "llm_page_summary", None)
-        if llm_summary:
-            summary.append("\n--- Holistic Page Analysis ---")
-            summary.append(llm_summary)
-
-        chunks.append(
-            ChunkArtifact(
-                chunk_id=str(uuid.uuid4()),
-                chunk_type="page_card",
-                source_artifact_type="page",
-                source_artifact_id=f"page_{manifest.page_num}",
-                page_nums=[manifest.page_num],
-                text="\n".join(summary),
-                metadata=_base_chunk_metadata(
-                    manifest=manifest,
-                    section_path="Page Summary",
-                    region_ids=[],
-                    bbox_refs=[],
-                    caption="",
-                    units=[],
-                    continuation_flag=False,
-                    figure_type=None,
-                    source_artifact_type="page",
-                ),
-                asset_refs=(
-                    [manifest.screenshot_path] if manifest.screenshot_path else []
-                ),
-            )
-        )
-
-    # --- Reasoning artifact chunks ---
-    for reasoning in reasoning_artifacts or []:
-        chunks.extend(_reasoning_to_chunks(reasoning, manifests))
-
-    return chunks
+    inputs = ChunkBuildInputs(
+        page_manifests=page_manifests,
+        regions=regions,
+        tables=tables,
+        figures=figures,
+        reasoning_artifacts=reasoning_artifacts or [],
+    )
+    return ChunkArtifactAssembler(inputs).build()
 
 
 def artifact_chunks_to_llama_docs(
@@ -583,7 +616,14 @@ def _figure_to_chunks(
             )
         )
 
-    if is_chart_like and (figure.approx_datapoints or figure.key_chart_facts):
+    has_chart_payload = bool(
+        figure.approx_datapoints
+        or figure.key_chart_facts
+        or figure.chart_title
+        or figure.trend_summary
+        or figure.chart_parse_status in {"partial", "success"}
+    )
+    if is_chart_like and has_chart_payload:
         chunks.append(
             ChunkArtifact(
                 chunk_id=str(uuid.uuid4()),

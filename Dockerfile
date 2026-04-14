@@ -20,9 +20,18 @@ FROM python:3.12-slim
 # Set working directory
 WORKDIR /app
 
+# Install Node/npm for LiteParse CLI tooling.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends nodejs npm \
+    && npm install -g @llamaindex/liteparse \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    PARSED_ARTIFACTS_DIR=/app/artifacts/parsed \
+    RAW_DATA_DIR=/app/data/raw \
     PATH="/app/.venv/bin:$PATH"
 
 # Copy the virtual environment from the builder stage
@@ -32,6 +41,9 @@ COPY --from=builder /app/.venv /app/.venv
 COPY app /app/app
 COPY ui /app/ui
 COPY app.py api.py init_db.py ./
+
+# Ensure local storage roots exist in container runtime.
+RUN mkdir -p /app/data/raw /app/artifacts/parsed
 
 # Expose Streamlit default port
 EXPOSE 8501

@@ -20,7 +20,7 @@ from llama_index.core.extractors import (
 )
 from llama_index.core.ingestion import IngestionPipeline
 from llama_index.core.node_parser import SemanticSplitterNodeParser
-from llama_index.core.schema import BaseNode
+from llama_index.core.schema import BaseNode, NodeRelationship, RelatedNodeInfo
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -33,10 +33,7 @@ from app.db.models.document import (
 )
 from app.indexing.vector_store import (
     COLLECTION_NAME,
-    get_qdrant_point_count,
-    index_nodes,
-    is_placeholder_mode,
-    delete_document_vectors,
+    vector_store_manager,
 )
 from app.ingestion.parser import parse_document, save_upload_file
 from app.ingestion.validator import (
@@ -164,11 +161,13 @@ _MISSING_DOC_ID_SENTINELS = {"", "none", "null", "n/a", "na", "undefined"}
 
 
 def _build_non_layout_node_parser() -> Any:
-    # Ensure embed model is initialized via our configured provider/mock path
-    # before constructing semantic splitter.
-    is_placeholder_mode()
+    embed_model = getattr(LlamaSettings, "_embed_model", None)
+    if embed_model is None and not settings.is_google_api_key_placeholder:
+        vector_store_manager.configure_llama_settings()
+        embed_model = getattr(LlamaSettings, "_embed_model", None)
+
     return SemanticSplitterNodeParser.from_defaults(
-        embed_model=LlamaSettings.embed_model,
+        embed_model=embed_model,
         breakpoint_percentile_threshold=settings.SEMANTIC_SPLITTER_BREAKPOINT_PERCENTILE,
         buffer_size=settings.SEMANTIC_SPLITTER_BUFFER_SIZE,
     )
@@ -203,7 +202,9 @@ def _apply_ref_doc_ids(nodes: List[BaseNode]) -> None:
         metadata = node.metadata or {}
         document_id = _normalize_document_id(metadata.get("document_id"))
         if document_id:
-            node.ref_doc_id = document_id
+            relationships = dict(node.relationships or {})
+            relationships[NodeRelationship.SOURCE] = RelatedNodeInfo(node_id=document_id)
+            node.relationships = relationships
 
 
 def _isoformat_or_none(value: Any) -> str | None:
@@ -354,7 +355,7 @@ def retry_ingestion(document_id: str, user_id: str, db: Session) -> Document:
 
     # 3. Pre-clean prior partial data
     try:
-        delete_document_vectors(doc_id, client_id)
+        vector_store_manager.delete_document_vectors(doc_id, client_id)
         db.query(VectorNodeRegistry).filter(
             VectorNodeRegistry.document_id == doc_id
         ).delete()
@@ -410,7 +411,9 @@ def delete_document(document_id: str, db: Session, hard: bool = False) -> None:
 
     try:
         # 2. delete vector nodes
-        vector_deleted = delete_document_vectors(document_id, client_id)
+        vector_deleted = vector_store_manager.delete_document_vectors(
+            document_id, client_id
+        )
         if not vector_deleted:
             logger.warning(f"Failed to delete vectors for document {document_id}")
 
@@ -456,6 +459,8 @@ def _execute_pipeline(
     file_ext: str,
     db: Session,
 ):
+    vector_store_manager.configure_llama_settings()
+
     # 5. Parse
     document_metadata = {
         "document_id": doc_id,
@@ -565,19 +570,10 @@ def _execute_pipeline(
         and bool(llama_docs)
         and any((doc.metadata or {}).get("chunk_type") for doc in llama_docs)
     )
-    placeholder_mode = is_placeholder_mode()
     transformations: list[Any] = []
     if not layout_aware_pdf:
         transformations.append(_build_non_layout_node_parser())
         logger.info("Using semantic splitter for %s", filename)
-    else:
-        logger.info(
-            "Layout-aware PDF chunks detected for %s; skipping sentence splitting",
-            filename,
-        )
-
-    # Only add LLM-based extractors if API key is present and not a placeholder
-    if not placeholder_mode and not layout_aware_pdf:
         try:
             transformations.extend(
                 [
@@ -592,7 +588,10 @@ def _execute_pipeline(
         except Exception as e:
             logger.warning(f"Failed to initialize LLM extractors: {e}. Skipping.")
     else:
-        logger.info("Skipping LLM extractors (API key missing or placeholder)")
+        logger.info(
+            "Layout-aware PDF chunks detected for %s; skipping sentence splitting",
+            filename,
+        )
 
     pipeline = IngestionPipeline(transformations=transformations)
 
@@ -608,9 +607,9 @@ def _execute_pipeline(
     _apply_metadata_exclusions(nodes)
 
     # Persist nodes into Qdrant explicitly.
-    index_nodes(nodes)
+    vector_store_manager.index_nodes(nodes)
 
-    qdrant_points = get_qdrant_point_count()
+    qdrant_points = vector_store_manager.get_qdrant_point_count()
     if qdrant_points is not None:
         logger.info(
             "Qdrant collection '%s' current point count: %d",

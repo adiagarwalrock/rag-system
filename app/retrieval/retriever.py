@@ -22,7 +22,8 @@ from llama_index.core.retrievers import QueryFusionRetriever
 from llama_index.core.retrievers.fusion_retriever import FUSION_MODES
 from llama_index.core.vector_stores import ExactMatchFilter, MetadataFilters
 
-from app.indexing.vector_store import get_retriever, is_placeholder_mode
+from app.core.prompts import build_grounded_answer_prompt
+from app.indexing.vector_store import vector_store_manager
 from app.retrieval.citation_builder import build_citations
 from app.retrieval.conflict_detector import detect_conflicts
 from app.retrieval.query_expansion import build_query_variants, should_expand_query
@@ -30,7 +31,7 @@ from app.retrieval.reranker import rerank_nodes
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_EVIDENCE_LIMIT = 4
+DEFAULT_EVIDENCE_LIMIT = 7
 COMPARATIVE_EVIDENCE_LIMIT = 6
 CONFLICT_EVIDENCE_LIMIT = 8
 MAX_MULTIMODAL_IMAGES = 6
@@ -56,7 +57,7 @@ class VecteraRetriever:
     reranking, temporal awareness, conflict detection, and citations.
     """
 
-    def __init__(self, client_id: str, top_k: int = 10):
+    def __init__(self, client_id: str, top_k: int = 15):
         self.client_id = client_id
         self.top_k = top_k
         self.prefetch_top_k = top_k + 5
@@ -163,7 +164,7 @@ class VecteraRetriever:
             if _is_conflict_focused_query(question)
             else self.prefetch_top_k
         )
-        base_retriever = get_retriever(
+        base_retriever = vector_store_manager.get_retriever(
             filters=self.filters,
             similarity_top_k=prefetch_top_k,
             sparse_top_k=prefetch_top_k,
@@ -171,7 +172,7 @@ class VecteraRetriever:
             hybrid=hybrid,
         )
 
-        should_expand = should_expand_query(question) and not is_placeholder_mode()
+        should_expand = should_expand_query(question)
         if should_expand:
             return self._retrieve_with_expansion(
                 question, base_retriever, prefetch_top_k
@@ -481,30 +482,11 @@ def _build_grounded_prompt(
     )
     evidence_block = "\n".join(evidence_lines)
 
-    return (
-        "You are a retrieval-grounded assistant for sensitive enterprise documents.\n"
-        "Answer using only the provided evidence snippets and attached images.\n"
-        "Rules:\n"
-        "1) If evidence is insufficient or contradictory, say so explicitly.\n"
-        "2) For each factual claim, cite at least one source index like [1].\n"
-        "3) Do not cite sources that are not in the evidence list.\n"
-        "4) Prefer the most current/effective version unless the question asks for comparison.\n"
-        "5) If conflict hints are empty, avoid absolute claims such as "
-        "'no conflicts exist'; state only what was or was not detected in "
-        "the retrieved evidence.\n"
-        "6) Use attached images when they help resolve chart/table/map questions.\n"
-        "7) Return output using this exact format:\n"
-        "<thinking>\n"
-        "your step-by-step reasoning grounded in source indices\n"
-        "</thinking>\n"
-        "<answer>\n"
-        "final answer with inline citations like [1], [2]\n"
-        "</answer>\n\n"
-        f"Question:\n{question}\n\n"
-        f"Attached image count: {image_attachment_count}\n\n"
-        f"Evidence:\n{evidence_block}\n\n"
-        f"Conflict hints:\n{conflict_block}\n\n"
-        "Answer:"
+    return build_grounded_answer_prompt(
+        question=question,
+        image_attachment_count=image_attachment_count,
+        evidence_block=evidence_block,
+        conflict_block=conflict_block,
     )
 
 
@@ -607,16 +589,7 @@ def _resolve_asset_path(raw_ref: Any, artifact_bundle_path: Any) -> Path | None:
 
 
 def _thinking_generation_config() -> dict[str, Any] | None:
-    try:
-        from google.genai import types as genai_types
-    except Exception:
-        return None
-
-    try:
-        return {"thinking_config": genai_types.ThinkingConfig(include_thoughts=True)}
-    except Exception:
-        logger.exception("Failed to build Gemini thinking configuration")
-        return None
+    return {"thinking_config": {"include_thoughts": True}}
 
 
 def _extract_answer_and_reasoning_from_chat(response: Any) -> tuple[str, str | None]:

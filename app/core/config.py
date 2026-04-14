@@ -37,7 +37,6 @@ class Settings(BaseSettings):
     )
     LLM_MODEL: str = "gemini-3-flash-preview"
     QUERY_EXPANSION_MODEL: str = "gemini-3-flash-preview"
-    SECONDARY_MODEL: str = "gemini-3-flash-preview"
     EMBEDDING_MODEL: str = "gemini-embedding-001"
     EMBEDDING_OUTPUT_DIMENSION: int | None = None
 
@@ -112,3 +111,11 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def validate_runtime_settings() -> None:
+    """Validate mandatory runtime configuration before serving requests."""
+    if settings.is_google_api_key_placeholder:
+        raise RuntimeError(
+            "GOOGLE_API_KEY (or GEMINI_API_KEY) must be set to a valid key before startup."
+        )

@@ -5,22 +5,13 @@ Query routing and low-fanout expansion for retrieval.
 import logging
 from typing import List
 
-from llama_index.core.prompts import PromptTemplate
 from llama_index.llms.google_genai import GoogleGenAI
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
-from app.indexing.vector_store import is_placeholder_mode
+from app.core.prompts import QUERY_EXPANSION_PROMPT
 
 logger = logging.getLogger(__name__)
-QUERY_EXPANSION_MODEL = "gemini-3-flash-preview"
-QUERY_EXPANSION_PROMPT = PromptTemplate(
-    "Rewrite the user question into at most {max_rewrites} short retrieval queries "
-    "for enterprise document RAG. Preserve concrete product names, dates, versions, "
-    "and numeric terms. Do not answer the question.\n\n"
-    "Return a structured object with `rewrites` containing only rewritten queries.\n\n"
-    "Question: {question}"
-)
 
 
 class QueryRewriteResponse(BaseModel):
@@ -73,19 +64,15 @@ def build_query_variants(question: str, max_rewrites: int = 2) -> list[str]:
     """
     Return the original question plus up to max_rewrites retrieval rewrites.
 
-    Expansion is intentionally skipped for narrow lookup questions and when the
-    app is running with mock LLM settings.
+    Expansion is intentionally skipped for narrow lookup questions.
     """
     variants = [question.strip()]
     if not variants[0] or not should_expand_query(question):
         return variants
 
-    if is_placeholder_mode():
-        return variants
-
     try:
         llm = GoogleGenAI(
-            model=QUERY_EXPANSION_MODEL,
+            model=settings.QUERY_EXPANSION_MODEL,
             api_key=settings.google_api_key,
         )
         response = llm.structured_predict(

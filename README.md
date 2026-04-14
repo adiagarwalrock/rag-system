@@ -51,7 +51,7 @@ After cloning, run the setup script to install all dependencies (requires `uv` a
    - Set all `SNOWFLAKE_*` fields for Snowflake.
    - Set `GOOGLE_API_KEY` for real LLM and embedding responses.
    - Keep `QDRANT_URL` as `http://localhost:6333` for local Docker.
-   - If `SNOWFLAKE_*` values are omitted, the app uses local SQLite (`vectera_local.db`) as a fallback.
+   - If `SNOWFLAKE_*` values are omitted, the app uses local SQLite (`rag_local.db`) as a fallback.
 
 3. Install dependencies:
 
@@ -111,7 +111,7 @@ Please see [architecture.md](./architecture.md) for a comprehensive diagrammatic
 
 ### Database (Snowflake / SQLite)
 
-- The system heavily relies on SQLAlchemy ORM using Snowflake for production, with a seamless fallback to a local SQLite database (`vectera_local.db`).
+- The system heavily relies on SQLAlchemy ORM using Snowflake for production, with a seamless fallback to a local SQLite database (`rag_local.db`).
 - It tracks relational metadata such as Client workspaces, Document families/versions, Vector registry metadata mappings (mapping Qdrant node IDs to physical documents), and Query Logs to enable robust document management without overloading the vector database with broad document relationship logic.
 
 ### Chunking Strategy

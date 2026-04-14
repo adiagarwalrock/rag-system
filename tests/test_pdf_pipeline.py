@@ -185,7 +185,6 @@ def test_analyze_chart_artifacts_populates_structured_chart_fields(monkeypatch):
     monkeypatch.setattr(settings, "ENABLE_MULTIMODAL_CAPTIONING", True)
     monkeypatch.setattr(settings, "LLM_CAPTION_MAX_PAGES", 3)
     monkeypatch.setattr(settings, "LLM_CAPTION_MAX_ARTIFACTS_PER_PAGE", 3)
-    monkeypatch.setattr(artifact_builders, "is_placeholder_mode", lambda: False)
     monkeypatch.setattr(
         artifact_builders,
         "LlamaSettings",
@@ -238,7 +237,6 @@ def test_analyze_chart_artifacts_falls_back_when_llm_fails(monkeypatch):
     monkeypatch.setattr(settings, "ENABLE_MULTIMODAL_CAPTIONING", True)
     monkeypatch.setattr(settings, "LLM_CAPTION_MAX_PAGES", 3)
     monkeypatch.setattr(settings, "LLM_CAPTION_MAX_ARTIFACTS_PER_PAGE", 3)
-    monkeypatch.setattr(artifact_builders, "is_placeholder_mode", lambda: False)
     monkeypatch.setattr(
         artifact_builders,
         "LlamaSettings",
@@ -250,6 +248,41 @@ def test_analyze_chart_artifacts_falls_back_when_llm_fails(monkeypatch):
     assert figure.llm_caption_status == "failed"
     assert figure.chart_parse_status in {"partial", "success"}
     assert len(figure.approx_datapoints) >= 2
+
+
+def test_run_google_multimodal_inference_503_returns_none_and_warns(
+    monkeypatch, tmp_path, caplog
+):
+    image_path = tmp_path / "figure.png"
+    image_path.write_bytes(b"fake-image-bytes")
+    monkeypatch.setattr(settings, "GOOGLE_API_KEY", "test-google-key")
+
+    class _FakeServerError(Exception):
+        def __init__(self, status_code: int, message: str):
+            super().__init__(message)
+            self.status_code = status_code
+
+    class _FakeLLM:
+        def chat(self, _messages):
+            raise _FakeServerError(
+                503,
+                "503 UNAVAILABLE. Deadline expired before operation could complete.",
+            )
+
+    monkeypatch.setattr(
+        artifact_builders,
+        "LlamaSettings",
+        type("_FakeSettings", (), {"llm": _FakeLLM()}),
+    )
+
+    caplog.set_level("WARNING")
+    result = artifact_builders._run_google_multimodal_inference(
+        "Extract chart structure", str(image_path)
+    )
+
+    assert result is None
+    assert "Google multimodal inference unavailable" in caplog.text
+    assert "Falling back to text-only inference" in caplog.text
 
 
 def test_page_structure_uses_layout_predictions_for_region_typing():

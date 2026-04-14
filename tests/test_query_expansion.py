@@ -6,11 +6,13 @@ from app.retrieval import query_expansion
 def test_build_query_variants_uses_structured_output_and_enforces_dedupe_and_cap(
     monkeypatch,
 ):
-    monkeypatch.setattr(query_expansion, "is_placeholder_mode", lambda: False)
     monkeypatch.setattr(
         query_expansion,
         "settings",
-        SimpleNamespace(google_api_key="test-google-key"),
+        SimpleNamespace(
+            google_api_key="test-google-key",
+            QUERY_EXPANSION_MODEL="gemini-3-flash-preview",
+        ),
     )
 
     class FakeGoogleGenAI:
@@ -56,11 +58,13 @@ def test_build_query_variants_uses_structured_output_and_enforces_dedupe_and_cap
 
 
 def test_build_query_variants_falls_back_to_original_on_structured_error(monkeypatch):
-    monkeypatch.setattr(query_expansion, "is_placeholder_mode", lambda: False)
     monkeypatch.setattr(
         query_expansion,
         "settings",
-        SimpleNamespace(google_api_key="test-google-key"),
+        SimpleNamespace(
+            google_api_key="test-google-key",
+            QUERY_EXPANSION_MODEL="gemini-3-flash-preview",
+        ),
     )
 
     class FailingGoogleGenAI:
@@ -78,8 +82,6 @@ def test_build_query_variants_falls_back_to_original_on_structured_error(monkeyp
 
 
 def test_build_query_variants_skips_llm_for_non_expansion_queries(monkeypatch):
-    monkeypatch.setattr(query_expansion, "is_placeholder_mode", lambda: False)
-
     class ShouldNotBeCalledGoogleGenAI:
         def __init__(self, model: str, api_key: str):
             raise AssertionError("GoogleGenAI should not be called for narrow queries")
@@ -90,14 +92,13 @@ def test_build_query_variants_skips_llm_for_non_expansion_queries(monkeypatch):
     assert query_expansion.build_query_variants(question) == [question]
 
 
-def test_build_query_variants_skips_llm_in_placeholder_mode(monkeypatch):
-    monkeypatch.setattr(query_expansion, "is_placeholder_mode", lambda: True)
+def test_build_query_variants_skips_llm_for_empty_question(monkeypatch):
 
     class ShouldNotBeCalledGoogleGenAI:
         def __init__(self, model: str, api_key: str):
-            raise AssertionError("GoogleGenAI should not be called in placeholder mode")
+            raise AssertionError("GoogleGenAI should not be called for empty question")
 
     monkeypatch.setattr(query_expansion, "GoogleGenAI", ShouldNotBeCalledGoogleGenAI)
 
-    question = "Compare the latest and previous version"
-    assert query_expansion.build_query_variants(question) == [question]
+    question = "   "
+    assert query_expansion.build_query_variants(question) == [""]

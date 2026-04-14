@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 import os
 import uuid
@@ -24,6 +25,24 @@ from app.ingestion.pdf_pipeline.registry import PDFPipelineRegistry
 from app.ingestion.pdf_pipeline.repair import repair_pdf_path, suppress_mupdf_messages
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class PipelinePaths:
+    artifact_root: Path
+    screenshot_dir: Path
+    figure_dir: Path
+    raw_dir: Path
+
+    @classmethod
+    def for_document(cls, document_id: str) -> "PipelinePaths":
+        artifact_root = Path(settings.PARSED_ARTIFACTS_DIR) / document_id
+        return cls(
+            artifact_root=artifact_root,
+            screenshot_dir=artifact_root / "screenshots",
+            figure_dir=artifact_root / "figures",
+            raw_dir=artifact_root / "raw",
+        )
 
 
 def parse_pdf_layout_aware(
@@ -52,11 +71,7 @@ class PDFIngestionPipeline:
         self.document_metadata = document_metadata
         self.document_id = document_metadata.get("document_id") or str(uuid.uuid4())
         self.source_file = os.path.basename(file_path)
-
-        self.artifact_root = Path(settings.PARSED_ARTIFACTS_DIR) / self.document_id
-        self.screenshot_dir = self.artifact_root / "screenshots"
-        self.figure_dir = self.artifact_root / "figures"
-        self.raw_dir = self.artifact_root / "raw"
+        self.paths = PipelinePaths.for_document(self.document_id)
 
         registry = PDFPipelineRegistry()
         self.extraction_stage = extraction_stage or registry.resolve_extraction_stage(
@@ -82,7 +97,7 @@ class PDFIngestionPipeline:
                 pdf_doc=pdf_doc,
                 file_path=self.file_path,
                 parse_input_path=parse_input_path,
-                screenshot_dir=self.screenshot_dir,
+                screenshot_dir=self.paths.screenshot_dir,
             )
             page_manifests, regions = self.page_structure_stage.build(
                 document_id=self.document_id,
@@ -96,7 +111,7 @@ class PDFIngestionPipeline:
                 page_manifests=page_manifests,
                 pymupdf_pages=extraction.pymupdf_pages,
                 regions=regions,
-                figure_dir=self.figure_dir,
+                figure_dir=self.paths.figure_dir,
             )
 
         chunk_artifacts = self.chunk_stage.build_chunks(
@@ -108,7 +123,7 @@ class PDFIngestionPipeline:
         )
 
         self.chunk_stage.write_bundle(
-            artifact_root=self.artifact_root,
+            artifact_root=self.paths.artifact_root,
             liteparse_pages=extraction.liteparse_pages,
             pymupdf_pages=extraction.pymupdf_pages,
             page_manifests=page_manifests,
@@ -124,7 +139,7 @@ class PDFIngestionPipeline:
             chunk_artifacts=chunk_artifacts,
             document_metadata=self.document_metadata,
             source_file=self.source_file,
-            artifact_root=self.artifact_root,
+            artifact_root=self.paths.artifact_root,
         )
         logger.info(
             "Parsed %s via layout-aware PDF pipeline: %d chunks, %d units",
@@ -135,10 +150,10 @@ class PDFIngestionPipeline:
         return docs, units
 
     def _prepare_workspace(self) -> None:
-        self.artifact_root.mkdir(parents=True, exist_ok=True)
-        self.screenshot_dir.mkdir(parents=True, exist_ok=True)
-        self.figure_dir.mkdir(parents=True, exist_ok=True)
-        self.raw_dir.mkdir(parents=True, exist_ok=True)
+        self.paths.artifact_root.mkdir(parents=True, exist_ok=True)
+        self.paths.screenshot_dir.mkdir(parents=True, exist_ok=True)
+        self.paths.figure_dir.mkdir(parents=True, exist_ok=True)
+        self.paths.raw_dir.mkdir(parents=True, exist_ok=True)
 
     def _prepare_parse_input(self) -> tuple[str, dict[str, Any]]:
         if getattr(settings, "SUPPRESS_MUPDF_STDERR", True):

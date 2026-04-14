@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from llama_index.core.schema import NodeRelationship, TextNode
+
 from app.services.ingest_service import (
     _apply_metadata_exclusions,
     _apply_ref_doc_ids,
@@ -103,12 +105,13 @@ def test_build_non_layout_node_parser_semantic_uses_config(monkeypatch):
 
 
 def test_apply_ref_doc_ids_sets_from_metadata_document_id():
-    first = DummyNode(node_id="n1", metadata={"document_id": "doc-1"})
-    second = DummyNode(node_id="n2", metadata={"document_id": "None"})
-    third = DummyNode(node_id="n3", metadata={})
+    first = TextNode(text="first", metadata={"document_id": "doc-1"})
+    second = TextNode(text="second", metadata={"document_id": "None"})
+    third = TextNode(text="third", metadata={})
 
     _apply_ref_doc_ids([first, second, third])
 
     assert first.ref_doc_id == "doc-1"
+    assert first.relationships[NodeRelationship.SOURCE].node_id == "doc-1"
     assert second.ref_doc_id is None
     assert third.ref_doc_id is None
