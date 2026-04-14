@@ -1,7 +1,6 @@
 import streamlit as st
 
 from app.core.config import settings
-from app.indexing.vector_store import is_placeholder_mode
 from ui.components.auth import render_login
 
 
@@ -33,9 +32,9 @@ def render_account_sidebar():
     if not auth_enabled():
         st.sidebar.caption("Auth disabled: dev mode")
 
-    if is_placeholder_mode():
+    if settings.is_google_api_key_placeholder:
         st.sidebar.warning(
-            "OpenAI key missing. LLM features (extractors, chat) will use mock data.",
+            "Google API key missing or placeholder. Runtime startup validation will fail until this is configured.",
             icon=":material/warning:",
         )
 
