@@ -3,13 +3,29 @@ Query routing and low-fanout expansion for retrieval.
 """
 
 import logging
-import re
+from typing import List
 
-from llama_index.core import Settings
+from llama_index.core.prompts import PromptTemplate
+from llama_index.llms.google_genai import GoogleGenAI
+from pydantic import BaseModel, Field
 
+from app.core.config import settings
 from app.indexing.vector_store import is_placeholder_mode
 
 logger = logging.getLogger(__name__)
+QUERY_EXPANSION_MODEL = "gemini-3-flash-preview"
+QUERY_EXPANSION_PROMPT = PromptTemplate(
+    "Rewrite the user question into at most {max_rewrites} short retrieval queries "
+    "for enterprise document RAG. Preserve concrete product names, dates, versions, "
+    "and numeric terms. Do not answer the question.\n\n"
+    "Return a structured object with `rewrites` containing only rewritten queries.\n\n"
+    "Question: {question}"
+)
+
+
+class QueryRewriteResponse(BaseModel):
+    rewrites: List[str] = Field(default_factory=list)
+
 
 EXPANSION_TRIGGERS = (
     "compare",
@@ -31,6 +47,19 @@ EXPANSION_TRIGGERS = (
     "summary",
     "across",
     "over time",
+    "chart",
+    "charts",
+    "graph",
+    "graphs",
+    "map",
+    "maps",
+    "table",
+    "tables",
+    "figure",
+    "figures",
+    "diagram",
+    "image",
+    "screenshot",
 )
 
 
@@ -55,20 +84,22 @@ def build_query_variants(question: str, max_rewrites: int = 2) -> list[str]:
         return variants
 
     try:
-        prompt = (
-            "Rewrite the user question into at most "
-            f"{max_rewrites} short retrieval queries for enterprise document RAG. "
-            "Preserve concrete product names, dates, versions, and numeric terms. "
-            "Do not answer the question. Return one query per line.\n\n"
-            f"Question: {question}"
+        llm = GoogleGenAI(
+            model=QUERY_EXPANSION_MODEL,
+            api_key=settings.google_api_key,
         )
-        response = Settings.llm.complete(prompt)
+        response = llm.structured_predict(
+            QueryRewriteResponse,
+            QUERY_EXPANSION_PROMPT,
+            question=question,
+            max_rewrites=max_rewrites,
+        )
     except Exception:
         logger.exception("Query expansion failed; using original question only")
         return variants
 
-    for line in str(response).splitlines():
-        rewrite = _clean_rewrite(line)
+    for rewrite_candidate in response.rewrites:
+        rewrite = rewrite_candidate.strip()
         if not rewrite or rewrite.lower() == variants[0].lower():
             continue
         if rewrite.lower() in {variant.lower() for variant in variants}:
@@ -78,9 +109,3 @@ def build_query_variants(question: str, max_rewrites: int = 2) -> list[str]:
             break
 
     return variants
-
-
-def _clean_rewrite(line: str) -> str:
-    rewrite = line.strip()
-    rewrite = re.sub(r"^\s*(?:[-*]|\d+[.)])\s*", "", rewrite)
-    return rewrite.strip().strip('"')

@@ -31,6 +31,16 @@ uv --version
 
 Run all commands from the repository root.
 
+### Quick Start
+
+After cloning, run the setup script to install all dependencies (requires `uv` and `npm`):
+
+```bash
+./setup.sh
+```
+
+### Manual Setup
+
 1. Create your environment file:
 
    ```bash
@@ -108,7 +118,8 @@ Please see [architecture.md](./architecture.md) for a comprehensive diagrammatic
 
 - Input documents (PDF, DOCX, PPTX) are processed natively via `LlamaIndex`'s specific file readers in `app/ingestion/parser.py`.
 - During parsing, structural data (like page numbers and slide numbers) are extracted and attached to chunks.
-- The pipeline utilizes a `SentenceSplitter` configured for a `chunk_size` of 1024 tokens and `chunk_overlap` of 200 tokens to ensure contextual integrity across segment borders.
+- For non-layout-aware documents, the pipeline uses `SemanticSplitterNodeParser` with configurable `SEMANTIC_SPLITTER_BREAKPOINT_PERCENTILE` and `SEMANTIC_SPLITTER_BUFFER_SIZE`.
+- Layout-aware PDF ingestion keeps its specialized artifact-aware chunking path (tables/charts/figures) and skips this generic splitter stage.
 - Optional pipeline enhancements include `TitleExtractor` when API keys are available to fortify LLM metadata contexts.
 
 ### Retrieval Approach

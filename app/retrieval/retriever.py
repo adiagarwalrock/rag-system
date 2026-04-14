@@ -5,9 +5,19 @@ Flow: vector retrieval -> ranking -> evidence selection -> conflict checks -> ci
 """
 
 import logging
+import mimetypes
+import re
+from pathlib import Path
 from typing import Any, Dict, List
 
 from llama_index.core import Settings
+from llama_index.core.base.llms.types import (
+    ChatMessage,
+    ImageBlock,
+    MessageRole,
+    TextBlock,
+    ThinkingBlock,
+)
 from llama_index.core.retrievers import QueryFusionRetriever
 from llama_index.core.retrievers.fusion_retriever import FUSION_MODES
 from llama_index.core.vector_stores import ExactMatchFilter, MetadataFilters
@@ -23,6 +33,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_EVIDENCE_LIMIT = 4
 COMPARATIVE_EVIDENCE_LIMIT = 6
 CONFLICT_EVIDENCE_LIMIT = 8
+MAX_MULTIMODAL_IMAGES = 6
+SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 COMPARATIVE_TERMS = (
     "compare",
     "comparison",
@@ -70,9 +82,12 @@ class VecteraRetriever:
         if not source_nodes:
             return {
                 "answer": "I could not find relevant information in the uploaded documents to answer this question.",
+                "reasoning": None,
                 "citations": [],
                 "conflicts": [],
                 "source_count": 0,
+                "images_used": [],
+                "image_evidence_count": 0,
             }
 
         # Step 2: Rank candidates with semantic + temporal/version signals.
@@ -90,14 +105,17 @@ class VecteraRetriever:
         citations = build_citations(evidence_nodes)
 
         # Step 6: Synthesize grounded answer from selected evidence only.
-        answer_text = self._synthesize_answer(question, citations, conflicts)
+        synthesis = self._synthesize_answer(question, citations, conflicts)
 
         return {
-            "answer": answer_text,
+            "answer": synthesis["answer"],
+            "reasoning": synthesis.get("reasoning"),
             "citations": citations,
             "conflicts": conflicts,
             "source_count": len(ranked_nodes),
             "evidence_count": len(evidence_nodes),
+            "images_used": synthesis.get("images_used", []),
+            "image_evidence_count": len(synthesis.get("images_used", [])),
             **retrieval_metadata,
         }
 
@@ -111,7 +129,12 @@ class VecteraRetriever:
         rank_top_k = (
             self.top_k + 8 if _is_conflict_focused_query(question) else self.top_k
         )
-        return rerank_nodes(source_nodes, top_k=rank_top_k, prefer_latest=prefer_latest)
+        return rerank_nodes(
+            source_nodes,
+            top_k=rank_top_k,
+            prefer_latest=prefer_latest,
+            query=question,
+        )
 
     def _retrieve(self, question: str) -> tuple[list, dict[str, Any]]:
         try:
@@ -234,35 +257,76 @@ class VecteraRetriever:
         question: str,
         citations: list[dict[str, Any]],
         conflicts: list[dict[str, Any]],
-    ) -> str:
+    ) -> dict[str, Any]:
         if not citations:
-            return (
-                "I could not find enough relevant evidence in the uploaded documents "
-                "to answer this question confidently."
-            )
+            return {
+                "answer": (
+                    "I could not find enough relevant evidence in the uploaded "
+                    "documents to answer this question confidently."
+                ),
+                "reasoning": None,
+                "images_used": [],
+            }
+
+        image_paths = _collect_image_evidence_paths(citations)
+        prompt = _build_grounded_prompt(
+            question,
+            citations,
+            conflicts,
+            image_attachment_count=len(image_paths),
+        )
+
+        attempts = [
+            ("multimodal", _build_grounded_message(prompt, image_paths), image_paths),
+            ("text_only", _build_grounded_message(prompt, []), []),
+        ]
+        if not image_paths:
+            attempts = attempts[1:]
+
+        for attempt_name, message, used_images in attempts:
+            try:
+                response = self._chat_with_optional_thinking([message])
+                answer, reasoning = _extract_answer_and_reasoning_from_chat(response)
+                if answer:
+                    return {
+                        "answer": answer,
+                        "reasoning": reasoning,
+                        "images_used": used_images,
+                    }
+                raise ValueError("LLM returned empty answer")
+            except Exception:
+                logger.exception("%s answer synthesis failed", attempt_name)
 
         try:
-            prompt = _build_grounded_prompt(question, citations, conflicts)
             response = Settings.llm.complete(prompt)
-            answer = str(response).strip()
+            answer, reasoning = _split_reasoning_from_text(str(response).strip())
             if answer:
-                return answer
+                return {
+                    "answer": answer,
+                    "reasoning": reasoning,
+                    "images_used": [],
+                }
             raise ValueError("LLM returned empty answer")
         except Exception:
             logger.exception(
                 "Answer synthesis failed; returning source-grounded fallback"
             )
-            labels = []
-            for citation in citations[:3]:
-                label = citation.get("citation_label") or citation.get("document_name")
-                if label:
-                    labels.append(label)
-            if labels:
-                return (
-                    "I found relevant evidence, but could not synthesize a final answer. "
-                    f"Review these sources: {', '.join(labels)}."
+            return {
+                "answer": _build_source_grounded_fallback(citations),
+                "reasoning": None,
+                "images_used": image_paths,
+            }
+
+    def _chat_with_optional_thinking(self, messages: list[ChatMessage]):
+        generation_config = _thinking_generation_config()
+        if generation_config is not None:
+            try:
+                return Settings.llm.chat(messages, generation_config=generation_config)
+            except Exception:
+                logger.exception(
+                    "Chat with Gemini thinking config failed; retrying without thinking config"
                 )
-            return "I found relevant evidence, but could not synthesize a final answer."
+        return Settings.llm.chat(messages)
 
 
 def _fuse_node_batches(node_batches: list[list]) -> list:
@@ -376,7 +440,10 @@ def _node_unique_key(node: Any) -> str:
 
 
 def _build_grounded_prompt(
-    question: str, citations: list[dict[str, Any]], conflicts: list[dict[str, Any]]
+    question: str,
+    citations: list[dict[str, Any]],
+    conflicts: list[dict[str, Any]],
+    image_attachment_count: int = 0,
 ) -> str:
     evidence_lines = []
     for index, citation in enumerate(citations, start=1):
@@ -384,9 +451,18 @@ def _build_grounded_prompt(
             "document_name", f"Source {index}"
         )
         version = citation.get("version_label") or "unknown"
-        excerpt = (citation.get("text") or "").strip().replace("\n", " ")
+        chunk_type = citation.get("chunk_type") or "text"
+        location = ""
+        if citation.get("page_num"):
+            location = f" | page={citation['page_num']}"
+        elif citation.get("slide_num"):
+            location = f" | slide={citation['slide_num']}"
+        image_assets = citation.get("asset_refs") or []
+        excerpt = _prompt_excerpt(citation)
         evidence_lines.append(
-            f"[{index}] {label} | version={version} | excerpt={excerpt[:450]}"
+            f"[{index}] {label} | version={version} | chunk_type={chunk_type}"
+            f"{location} | image_assets={len(image_assets)}\n"
+            f"Excerpt:\n{excerpt}"
         )
 
     conflict_lines = []
@@ -407,7 +483,7 @@ def _build_grounded_prompt(
 
     return (
         "You are a retrieval-grounded assistant for sensitive enterprise documents.\n"
-        "Answer using only the provided evidence snippets.\n"
+        "Answer using only the provided evidence snippets and attached images.\n"
         "Rules:\n"
         "1) If evidence is insufficient or contradictory, say so explicitly.\n"
         "2) For each factual claim, cite at least one source index like [1].\n"
@@ -415,9 +491,201 @@ def _build_grounded_prompt(
         "4) Prefer the most current/effective version unless the question asks for comparison.\n"
         "5) If conflict hints are empty, avoid absolute claims such as "
         "'no conflicts exist'; state only what was or was not detected in "
-        "the retrieved evidence.\n\n"
+        "the retrieved evidence.\n"
+        "6) Use attached images when they help resolve chart/table/map questions.\n"
+        "7) Return output using this exact format:\n"
+        "<thinking>\n"
+        "your step-by-step reasoning grounded in source indices\n"
+        "</thinking>\n"
+        "<answer>\n"
+        "final answer with inline citations like [1], [2]\n"
+        "</answer>\n\n"
         f"Question:\n{question}\n\n"
+        f"Attached image count: {image_attachment_count}\n\n"
         f"Evidence:\n{evidence_block}\n\n"
         f"Conflict hints:\n{conflict_block}\n\n"
         "Answer:"
     )
+
+
+def _prompt_excerpt(citation: dict[str, Any]) -> str:
+    chunk_type = str(citation.get("chunk_type") or "")
+    rich_types = {
+        "full_table",
+        "table_segment",
+        "table_summary_text",
+        "figure_artifact",
+        "chart_context",
+        "chart_data_points",
+        "visual_proxy_text",
+        "reasoning_table",
+        "reasoning_chart",
+        "reasoning_figure",
+        "reasoning_page",
+    }
+    limit = 2400 if chunk_type in rich_types else 1400
+    text = (citation.get("text") or "").strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit].rstrip()}\n[...truncated]"
+
+
+def _build_grounded_message(prompt: str, image_paths: list[str]) -> ChatMessage:
+    blocks: list[Any] = [TextBlock(text=prompt)]
+    for image_path in image_paths:
+        mime_type = mimetypes.guess_type(image_path)[0]
+        blocks.append(
+            ImageBlock(
+                path=image_path,
+                image_mimetype=mime_type or "image/png",
+            )
+        )
+    return ChatMessage(role=MessageRole.USER, blocks=blocks)
+
+
+def _collect_image_evidence_paths(
+    citations: list[dict[str, Any]], max_images: int = MAX_MULTIMODAL_IMAGES
+) -> list[str]:
+    seen: set[str] = set()
+    image_paths: list[str] = []
+
+    for citation in citations:
+        refs = citation.get("asset_refs") or []
+        if isinstance(refs, str):
+            refs = [refs]
+        if not isinstance(refs, list):
+            continue
+
+        artifact_bundle_path = citation.get("artifact_bundle_path")
+        for ref in refs:
+            resolved = _resolve_asset_path(ref, artifact_bundle_path)
+            if resolved is None:
+                continue
+            if resolved.suffix.lower() not in SUPPORTED_IMAGE_SUFFIXES:
+                continue
+
+            path_str = str(resolved)
+            if path_str in seen:
+                continue
+            seen.add(path_str)
+            image_paths.append(path_str)
+
+            if len(image_paths) >= max_images:
+                return image_paths
+
+    return image_paths
+
+
+def _resolve_asset_path(raw_ref: Any, artifact_bundle_path: Any) -> Path | None:
+    if not isinstance(raw_ref, str):
+        return None
+
+    ref = raw_ref.strip()
+    if not ref:
+        return None
+
+    candidates: list[Path] = []
+    raw_path = Path(ref).expanduser()
+
+    if raw_path.is_absolute():
+        candidates.append(raw_path)
+    else:
+        if isinstance(artifact_bundle_path, str) and artifact_bundle_path.strip():
+            candidates.append(Path(artifact_bundle_path).expanduser() / raw_path)
+        candidates.append(raw_path)
+        candidates.append(Path.cwd() / raw_path)
+
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if resolved.exists() and resolved.is_file():
+            return resolved
+
+    return None
+
+
+def _thinking_generation_config() -> dict[str, Any] | None:
+    try:
+        from google.genai import types as genai_types
+    except Exception:
+        return None
+
+    try:
+        return {"thinking_config": genai_types.ThinkingConfig(include_thoughts=True)}
+    except Exception:
+        logger.exception("Failed to build Gemini thinking configuration")
+        return None
+
+
+def _extract_answer_and_reasoning_from_chat(response: Any) -> tuple[str, str | None]:
+    message = getattr(response, "message", None)
+    if message is None:
+        return _split_reasoning_from_text(str(response).strip())
+
+    answer_parts: list[str] = []
+    reasoning_parts: list[str] = []
+
+    for block in getattr(message, "blocks", None) or []:
+        if isinstance(block, ThinkingBlock):
+            content = (block.content or "").strip()
+            if content:
+                reasoning_parts.append(content)
+        elif isinstance(block, TextBlock):
+            content = (block.text or "").strip()
+            if content:
+                answer_parts.append(content)
+
+    answer_text = "\n".join(answer_parts).strip()
+    reasoning_text = "\n\n".join(reasoning_parts).strip() or None
+
+    parsed_answer, parsed_reasoning = _split_reasoning_from_text(
+        answer_text or str(getattr(message, "content", "") or "").strip()
+    )
+    if not reasoning_text and parsed_reasoning:
+        reasoning_text = parsed_reasoning
+
+    return parsed_answer, reasoning_text
+
+
+def _split_reasoning_from_text(text: str) -> tuple[str, str | None]:
+    if not text:
+        return "", None
+
+    thinking_match = re.search(
+        r"<thinking>(.*?)</thinking>", text, re.IGNORECASE | re.DOTALL
+    )
+    answer_match = re.search(r"<answer>(.*?)</answer>", text, re.IGNORECASE | re.DOTALL)
+
+    reasoning = thinking_match.group(1).strip() if thinking_match else None
+
+    if answer_match:
+        answer = answer_match.group(1).strip()
+    elif thinking_match:
+        answer = re.sub(
+            r"<thinking>.*?</thinking>",
+            "",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        ).strip()
+        answer = re.sub(r"</?answer>", "", answer, flags=re.IGNORECASE).strip()
+    else:
+        answer = text.strip()
+
+    return answer, reasoning
+
+
+def _build_source_grounded_fallback(citations: list[dict[str, Any]]) -> str:
+    labels = []
+    for citation in citations[:3]:
+        label = citation.get("citation_label") or citation.get("document_name")
+        if label:
+            labels.append(label)
+
+    if labels:
+        return (
+            "I found relevant evidence, but could not synthesize a final answer. "
+            f"Review these sources: {', '.join(labels)}."
+        )
+    return "I found relevant evidence, but could not synthesize a final answer."

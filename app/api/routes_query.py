@@ -35,10 +35,13 @@ def query_documents(
     )
     return QueryResponse(
         answer=result["answer"],
+        reasoning=result.get("reasoning"),
         citations=result.get("citations", []),
         conflicts=result.get("conflicts", []),
         query_id=result.get("query_id"),
         latency_ms=result.get("latency_ms"),
         source_count=result.get("source_count", 0),
         evidence_count=result.get("evidence_count", 0),
+        images_used=result.get("images_used", []),
+        image_evidence_count=result.get("image_evidence_count", 0),
     )

@@ -36,6 +36,8 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("GOOGLE_API_KEY", "GEMINI_API_KEY"),
     )
     LLM_MODEL: str = "gemini-3-flash-preview"
+    QUERY_EXPANSION_MODEL: str = "gemini-3-flash-preview"
+    SECONDARY_MODEL: str = "gemini-3-flash-preview"
     EMBEDDING_MODEL: str = "gemini-embedding-001"
     EMBEDDING_OUTPUT_DIMENSION: int | None = None
 
@@ -60,6 +62,10 @@ class Settings(BaseSettings):
     LLM_CAPTION_MAX_PAGES: int = 3
     LLM_CAPTION_MAX_ARTIFACTS_PER_PAGE: int = 3
     LLM_CAPTION_TIMEOUT_SECONDS: int = 25
+
+    # Non-layout parsing strategy (semantic splitter only)
+    SEMANTIC_SPLITTER_BREAKPOINT_PERCENTILE: int = 95
+    SEMANTIC_SPLITTER_BUFFER_SIZE: int = 1
 
     # Reasoning enrichment (artifact-first grounded analysis)
     ENABLE_LLM_REASONING_ENRICHMENT: bool = True

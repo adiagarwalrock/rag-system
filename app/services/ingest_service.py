@@ -10,6 +10,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, List
 
+from llama_index.core import Settings as LlamaSettings
 from llama_index.core.extractors import (
     TitleExtractor,
     SummaryExtractor,
@@ -18,7 +19,7 @@ from llama_index.core.extractors import (
     DocumentContextExtractor,
 )
 from llama_index.core.ingestion import IngestionPipeline
-from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.node_parser import SemanticSplitterNodeParser
 from llama_index.core.schema import BaseNode
 from sqlalchemy.orm import Session
 
@@ -159,6 +160,19 @@ NON_SEMANTIC_LLM_METADATA_KEYS = (
     "llm_enriched",
 )
 
+_MISSING_DOC_ID_SENTINELS = {"", "none", "null", "n/a", "na", "undefined"}
+
+
+def _build_non_layout_node_parser() -> Any:
+    # Ensure embed model is initialized via our configured provider/mock path
+    # before constructing semantic splitter.
+    is_placeholder_mode()
+    return SemanticSplitterNodeParser.from_defaults(
+        embed_model=LlamaSettings.embed_model,
+        breakpoint_percentile_threshold=settings.SEMANTIC_SPLITTER_BREAKPOINT_PERCENTILE,
+        buffer_size=settings.SEMANTIC_SPLITTER_BUFFER_SIZE,
+    )
+
 
 def _apply_metadata_exclusions(nodes: List[BaseNode]) -> None:
     for node in nodes:
@@ -170,6 +184,26 @@ def _apply_metadata_exclusions(nodes: List[BaseNode]) -> None:
 
         node.excluded_embed_metadata_keys = sorted(embed_excluded)
         node.excluded_llm_metadata_keys = sorted(llm_excluded)
+
+
+def _normalize_document_id(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        normalized = value.strip()
+        if normalized.lower() in _MISSING_DOC_ID_SENTINELS:
+            return None
+        return normalized
+    return str(value)
+
+
+def _apply_ref_doc_ids(nodes: List[BaseNode]) -> None:
+    """Ensure top-level vector-store doc IDs are derived from canonical metadata."""
+    for node in nodes:
+        metadata = node.metadata or {}
+        document_id = _normalize_document_id(metadata.get("document_id"))
+        if document_id:
+            node.ref_doc_id = document_id
 
 
 def _isoformat_or_none(value: Any) -> str | None:
@@ -531,9 +565,11 @@ def _execute_pipeline(
         and bool(llama_docs)
         and any((doc.metadata or {}).get("chunk_type") for doc in llama_docs)
     )
+    placeholder_mode = is_placeholder_mode()
     transformations: list[Any] = []
     if not layout_aware_pdf:
-        transformations.append(SentenceSplitter(chunk_size=1024, chunk_overlap=200))
+        transformations.append(_build_non_layout_node_parser())
+        logger.info("Using semantic splitter for %s", filename)
     else:
         logger.info(
             "Layout-aware PDF chunks detected for %s; skipping sentence splitting",
@@ -541,7 +577,7 @@ def _execute_pipeline(
         )
 
     # Only add LLM-based extractors if API key is present and not a placeholder
-    if not is_placeholder_mode() and not layout_aware_pdf:
+    if not placeholder_mode and not layout_aware_pdf:
         try:
             transformations.extend(
                 [
@@ -549,7 +585,7 @@ def _execute_pipeline(
                     SummaryExtractor(summaries=["prev", "self"]),
                     KeywordExtractor(keywords=10),
                     QuestionsAnsweredExtractor(num_questions=3),
-                    DocumentContextExtractor(llm=llm, num_workers=3),
+                    DocumentContextExtractor(llm=LlamaSettings.llm, num_workers=3),
                 ]
             )
             logger.info("Added LLM-based extractors (Title, Summary) to pipeline")
@@ -565,6 +601,7 @@ def _execute_pipeline(
     nodes: List[BaseNode] = pipeline.run(documents=llama_docs, num_workers=worker_count)
 
     _apply_retrieval_metadata(nodes, filename=filename, version_info=version_info)
+    _apply_ref_doc_ids(nodes)
 
     # Exclude non-semantic metadata from embedding/LLM contexts while keeping
     # payload metadata available for filtering and citations.

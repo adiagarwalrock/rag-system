@@ -7,9 +7,34 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
+TABLE_QUERY_TERMS = ("table", "row", "rows", "column", "columns")
+CHART_QUERY_TERMS = (
+    "chart",
+    "graph",
+    "plot",
+    "trend",
+    "map",
+    "diagram",
+    "figure",
+)
+IMAGE_QUERY_TERMS = ("image", "images", "screenshot", "screenshots", "visual")
+NUMERIC_QUERY_TERMS = (
+    "number",
+    "numbers",
+    "metric",
+    "metrics",
+    "percentage",
+    "percent",
+    "value",
+    "values",
+)
+
 
 def rerank_nodes(
-    source_nodes: list, top_k: int = 10, prefer_latest: bool = True
+    source_nodes: list,
+    top_k: int = 10,
+    prefer_latest: bool = True,
+    query: str | None = None,
 ) -> list:
     """
     Rank retrieved nodes by combining semantic similarity with one temporal pass.
@@ -18,6 +43,7 @@ def rerank_nodes(
         source_nodes: LlamaIndex NodeWithScore objects
         top_k: Number of top results to return
         prefer_latest: If True, apply stronger recency/current-version preference
+        query: Optional user query for intent-aware structural boosts
 
     Returns:
         Reranked list of source nodes.
@@ -30,7 +56,13 @@ def rerank_nodes(
 
         temporal_adjustment = _temporal_adjustment(metadata, now, prefer_latest)
         authority_adjustment = _authority_adjustment(metadata)
-        combined_score = semantic_score + temporal_adjustment + authority_adjustment
+        structural_adjustment = _structural_adjustment(metadata, query)
+        combined_score = (
+            semantic_score
+            + temporal_adjustment
+            + authority_adjustment
+            + structural_adjustment
+        )
         node.score = combined_score
         scored.append((combined_score, node))
 
@@ -91,6 +123,52 @@ def _authority_adjustment(metadata: dict) -> float:
 
     normalized = max(min(authority - 1.0, 1.0), -1.0)
     return normalized * 0.05
+
+
+def _structural_adjustment(metadata: dict, query: str | None) -> float:
+    if not query:
+        return 0.0
+
+    normalized_query = query.lower()
+    chunk_type = str(metadata.get("chunk_type") or "")
+    figure_type = str(metadata.get("figure_type") or "")
+
+    wants_table = any(term in normalized_query for term in TABLE_QUERY_TERMS)
+    wants_chart = any(term in normalized_query for term in CHART_QUERY_TERMS)
+    wants_image = any(term in normalized_query for term in IMAGE_QUERY_TERMS)
+    wants_numeric = any(term in normalized_query for term in NUMERIC_QUERY_TERMS)
+
+    is_table_chunk = chunk_type in {
+        "full_table",
+        "table_segment",
+        "table_summary_text",
+    } or _safe_bool(metadata.get("table_detected"), False)
+    is_chart_chunk = (
+        chunk_type
+        in {
+            "figure_artifact",
+            "chart_context",
+            "chart_data_points",
+            "visual_proxy_text",
+        }
+        or _safe_bool(metadata.get("chart_detected"), False)
+        or figure_type in {"chart", "diagram", "infographic"}
+    )
+    is_reasoning_chunk = chunk_type.startswith("reasoning_")
+
+    adjustment = 0.0
+    if wants_table and is_table_chunk:
+        adjustment += 0.12
+    if wants_chart and is_chart_chunk:
+        adjustment += 0.12
+    if (wants_table or wants_chart) and is_reasoning_chunk:
+        adjustment += 0.05
+    if wants_image and bool(metadata.get("asset_refs")):
+        adjustment += 0.06
+    if wants_numeric and _safe_bool(metadata.get("contains_numeric_data"), False):
+        adjustment += 0.03
+
+    return min(adjustment, 0.2)
 
 
 def _parse_date(val) -> datetime | None:

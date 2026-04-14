@@ -2,7 +2,12 @@ from llama_index.core.schema import NodeWithScore, TextNode
 
 from app.retrieval.citation_builder import build_citations
 from app.retrieval.query_expansion import should_expand_query
-from app.retrieval.retriever import VecteraRetriever, _fuse_node_batches
+from app.retrieval.retriever import (
+    VecteraRetriever,
+    _collect_image_evidence_paths,
+    _fuse_node_batches,
+    _split_reasoning_from_text,
+)
 
 
 def _node(node_id: str, score: float, metadata: dict | None = None) -> NodeWithScore:
@@ -17,6 +22,7 @@ def _node(node_id: str, score: float, metadata: dict | None = None) -> NodeWithS
 def test_query_expansion_routes_broad_and_version_questions_only():
     assert should_expand_query("Compare the current version against the older version")
     assert should_expand_query("Summarize trends across the uploaded reports")
+    assert should_expand_query("Show me the chart for quarterly revenue")
     assert not should_expand_query("What is the renewal deadline?")
 
 
@@ -174,7 +180,73 @@ def test_conflict_query_diversifies_evidence_when_versions_are_missing():
     evidence_nodes = retriever._select_evidence_nodes(
         "Are there conflicting data points across documents?", ranked
     )
-    evidence_doc_ids = {node.node.metadata.get("document_id") for node in evidence_nodes}
+    evidence_doc_ids = {
+        node.node.metadata.get("document_id") for node in evidence_nodes
+    }
 
     assert "doc-a" in evidence_doc_ids
     assert "doc-b" in evidence_doc_ids
+
+
+def test_build_citations_includes_asset_refs_and_visual_metadata():
+    citations = build_citations(
+        [
+            _node(
+                "figure-1",
+                0.8,
+                {
+                    "chunk_type": "figure_artifact",
+                    "asset_refs": ["/tmp/fake-chart.png"],
+                    "figure_type": "chart",
+                    "chart_type": "line",
+                    "table_id": None,
+                },
+            )
+        ]
+    )
+
+    assert len(citations) == 1
+    assert citations[0]["asset_refs"] == ["/tmp/fake-chart.png"]
+    assert citations[0]["has_image_assets"] is True
+    assert citations[0]["figure_type"] == "chart"
+    assert citations[0]["chart_type"] == "line"
+
+
+def test_collect_image_evidence_paths_resolves_relative_and_dedupes(tmp_path):
+    absolute_image = tmp_path / "absolute.png"
+    absolute_image.write_bytes(b"fake")
+
+    bundle_dir = tmp_path / "bundle"
+    bundle_dir.mkdir()
+    relative_image = bundle_dir / "relative.png"
+    relative_image.write_bytes(b"fake")
+    non_image = bundle_dir / "note.txt"
+    non_image.write_text("not an image", encoding="utf-8")
+
+    citations = [
+        {
+            "asset_refs": [str(absolute_image), str(absolute_image)],
+            "artifact_bundle_path": None,
+        },
+        {
+            "asset_refs": ["relative.png", "note.txt"],
+            "artifact_bundle_path": str(bundle_dir),
+        },
+    ]
+
+    paths = _collect_image_evidence_paths(citations, max_images=10)
+
+    assert paths == [str(absolute_image.resolve()), str(relative_image.resolve())]
+
+
+def test_split_reasoning_from_text_extracts_thinking_and_answer():
+    raw = (
+        "<thinking>Check Source [1] and [2], compare figures, reconcile conflicts.</thinking>\n"
+        "<answer>Revenue rises from 10 to 14 across versions [1][2].</answer>"
+    )
+
+    answer, reasoning = _split_reasoning_from_text(raw)
+
+    assert answer == "Revenue rises from 10 to 14 across versions [1][2]."
+    assert reasoning is not None
+    assert "compare figures" in reasoning

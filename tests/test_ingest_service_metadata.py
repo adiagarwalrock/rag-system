@@ -3,7 +3,9 @@ from datetime import datetime, timezone
 
 from app.services.ingest_service import (
     _apply_metadata_exclusions,
+    _apply_ref_doc_ids,
     _apply_retrieval_metadata,
+    _build_non_layout_node_parser,
 )
 
 
@@ -13,6 +15,7 @@ class DummyNode:
     metadata: dict
     excluded_embed_metadata_keys: list[str] | None = None
     excluded_llm_metadata_keys: list[str] | None = None
+    ref_doc_id: str | None = None
 
 
 def test_apply_retrieval_metadata_sets_labels_and_version_fields():
@@ -59,6 +62,8 @@ def test_apply_metadata_exclusions_merges_existing_keys_without_duplicates():
 
     assert "already_here" in node.excluded_embed_metadata_keys
     assert "citation_label" in node.excluded_embed_metadata_keys
+    assert "chunk_type" in node.excluded_embed_metadata_keys
+    assert "source_artifact_type" in node.excluded_embed_metadata_keys
     assert "document_id" in node.excluded_embed_metadata_keys
     assert "version_rank" in node.excluded_llm_metadata_keys
     assert node.excluded_embed_metadata_keys == sorted(
@@ -68,3 +73,42 @@ def test_apply_metadata_exclusions_merges_existing_keys_without_duplicates():
     assert len(node.excluded_embed_metadata_keys) == len(
         set(node.excluded_embed_metadata_keys)
     )
+
+
+def test_build_non_layout_node_parser_semantic_uses_config(monkeypatch):
+    from app.core.config import settings
+    from app.services import ingest_service
+
+    calls: dict = {}
+
+    def _fake_from_defaults(**kwargs):
+        calls.update(kwargs)
+        return "semantic-parser"
+
+    monkeypatch.setattr(
+        ingest_service.SemanticSplitterNodeParser,
+        "from_defaults",
+        staticmethod(_fake_from_defaults),
+    )
+
+    monkeypatch.setattr(settings, "SEMANTIC_SPLITTER_BREAKPOINT_PERCENTILE", 88)
+    monkeypatch.setattr(settings, "SEMANTIC_SPLITTER_BUFFER_SIZE", 2)
+
+    parser = _build_non_layout_node_parser()
+
+    assert parser == "semantic-parser"
+    assert calls["breakpoint_percentile_threshold"] == 88
+    assert calls["buffer_size"] == 2
+    assert "embed_model" in calls
+
+
+def test_apply_ref_doc_ids_sets_from_metadata_document_id():
+    first = DummyNode(node_id="n1", metadata={"document_id": "doc-1"})
+    second = DummyNode(node_id="n2", metadata={"document_id": "None"})
+    third = DummyNode(node_id="n3", metadata={})
+
+    _apply_ref_doc_ids([first, second, third])
+
+    assert first.ref_doc_id == "doc-1"
+    assert second.ref_doc_id is None
+    assert third.ref_doc_id is None
