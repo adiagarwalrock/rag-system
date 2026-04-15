@@ -19,20 +19,28 @@ def build_chart_caption_prompt(
     nearby_text: str,
     current_proxy: str,
 ) -> str:
+    def _truncate(value: str, max_chars: int) -> str:
+        text = value.strip()
+        if len(text) <= max_chars:
+            return text
+        return f"{text[: max_chars - 16].rstrip()} ...[truncated]"
+
+    caption = _truncate(caption_text, 320)
+    nearby = _truncate(nearby_text, 900)
+    proxy = _truncate(current_proxy, 700)
+
     return "\n".join(
         [
             "You are extracting chart structure from a financial report.",
-            "Return strict JSON with keys:",
-            "chart_type, chart_title, x_axis_label, y_axis_label, x_categories, series, approx_datapoints, trend_summary, key_chart_facts, numeric_extraction_confidence.",
-            "approx_datapoints must be an array of objects with shape:",
-            '{"series": "...", "x": "...", "y": <number>, "unit": "...", "approximate": true}',
+            "Extract all fields in the provided response schema.",
+            "Capture explicit chart labels and values whenever legible.",
             "Use approximate values when exact values are not readable.",
-            "Do not include markdown. Output JSON only.",
+            "Do not speculate beyond visible chart evidence.",
             f"Page: {page_num}",
             f"Page class: {page_class}",
-            f"Caption: {caption_text}",
-            f"Nearby text: {nearby_text}",
-            f"Current proxy: {current_proxy}",
+            f"Caption: {caption}",
+            f"Nearby text: {nearby}",
+            f"Current proxy: {proxy}",
         ]
     )
 
@@ -45,7 +53,8 @@ def build_artifact_enrichment_prompt(
 ) -> str:
     lines = [
         "Summarize these artifacts for retrieval.",
-        "Output 4-6 concise bullet points with concrete metrics, units, and interpretation cues.",
+        "Return concise evidence-grounded summary points with concrete metrics and units.",
+        "Each point should be independently useful for retrieval and answering.",
         "Do not speculate.",
         f"Page: {page_num}",
     ]
@@ -68,9 +77,9 @@ def build_artifact_enrichment_prompt(
 PAGE_SCREENSHOT_PROMPT = """\
 You are a data analyst reviewing a full document page/slide screenshot.
 Describe everything visible: charts, tables, maps, diagrams, annotations, and key numbers.
-Output a structured plain-text summary with:
+Fill the provided structured fields with:
 - Page layout description (what elements are present and how they relate)
-- All numeric values, metrics, and units visible
+- Numeric values, metrics, and units visible
 - Chart/graph descriptions including axes, trends, and approximate data points
 - Table contents summarized with key rows and columns
 - Map/diagram annotations and geographic/spatial data
@@ -91,12 +100,12 @@ Units: {units}
 Content (first 1500 chars):
 {content}
 
-Output a JSON object with:
+Fill the provided structured fields:
 - "key_insights": list of 3-5 specific factual insights with concrete numbers
 - "metric_comparisons": list of comparisons between rows/columns (e.g. "X grew 15% vs Y")
 - "trend_statement": one sentence describing the overall trend
 - "caveats": list of data quality warnings or assumptions
-- "evidence_refs": list of specific cell references or row labels supporting each claim
+- "evidence_refs": JSON array of specific cell references or row labels supporting each claim
 
 Be precise. Every claim must reference specific data from the table. Do not speculate.
 """
@@ -116,12 +125,12 @@ Trend: {trend_summary}
 Key facts: {key_facts}
 Approximate datapoints (sample): {datapoints}
 
-Output a JSON object with:
+Fill the provided structured fields:
 - "key_insights": list of 3-5 specific factual insights with concrete numbers
 - "metric_comparisons": list of comparisons between series/categories
 - "trend_statement": one sentence describing the overall trend
 - "caveats": list of data quality warnings (e.g. approximate values)
-- "evidence_refs": list of specific series names, axis labels, or datapoints supporting each claim
+- "evidence_refs": JSON array of specific series names, axis labels, or datapoints supporting each claim
 
 Be precise. Every claim must cite specific data from the chart. Do not speculate.
 """
@@ -137,12 +146,12 @@ Artifacts present:
 LLM page summary (if available):
 {llm_page_summary}
 
-Output a JSON object with:
+Fill the provided structured fields:
 - "key_insights": list of 3-5 cross-artifact insights (how table data relates to chart trends)
 - "metric_comparisons": list of consistency checks between artifacts
 - "trend_statement": one sentence summarizing the page overall message
 - "caveats": any inconsistencies or gaps between artifacts
-- "evidence_refs": specific artifact IDs and data points supporting each claim
+- "evidence_refs": JSON array of specific artifact IDs and data points supporting each claim
 
 Be precise. Every claim must reference specific artifacts and their data. Do not speculate.
 """
@@ -180,3 +189,6 @@ def build_grounded_answer_prompt(
         f"Conflict hints:\n{conflict_block}\n\n"
         "Answer:"
     )
+
+
+_GENERIC_STRUCTURED_PROMPT = PromptTemplate("{user_prompt}")

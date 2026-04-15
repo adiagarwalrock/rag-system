@@ -224,8 +224,7 @@ class PDFPipelineHelper:
     @staticmethod
     def header_signature(headers: list[str]) -> str:
         return "|".join(
-            PDFPipelineHelper.normalize_whitespace(header).lower()
-            for header in headers
+            PDFPipelineHelper.normalize_whitespace(header).lower() for header in headers
         )
 
 

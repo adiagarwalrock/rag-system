@@ -20,6 +20,7 @@ from llama_index.core.base.llms.types import (
     MessageRole,
     TextBlock,
 )
+from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.prompts import (
@@ -30,6 +31,7 @@ from app.core.prompts import (
     TABLE_REASONING_PROMPT,
     build_artifact_enrichment_prompt,
     build_chart_caption_prompt,
+    _GENERIC_STRUCTURED_PROMPT,
 )
 from app.indexing.vector_store import vector_store_manager
 from app.ingestion.pdf_pipeline.contracts import ArtifactResult, ArtifactStage
@@ -45,17 +47,26 @@ from app.ingestion.pdf_pipeline.helpers import (
     union_bbox,
 )
 from app.ingestion.pdf_pipeline.models import (
+    # Artifacts
     FigureArtifact,
     PageManifest,
     ReasoningArtifact,
     Region,
     TableArtifact,
+    # Response Models
+    ChartCaptionResponse,
+    ChartDatapointResponse,
+    ReasoningInferenceResult,
+    ReasoningStructuredResponse,
+    ArtifactEnrichmentResponse,
+    PageScreenshotResponse,
 )
 
 logger = logging.getLogger(__name__)
 
 _Job = TypeVar("_Job")
 _Result = TypeVar("_Result")
+_Model = TypeVar("_Model", bound=BaseModel)
 
 
 def _llm_available_for_pipeline() -> bool:
@@ -144,6 +155,126 @@ def _run_parallel_jobs(
         max_workers=max_workers,
         timeout_seconds=timeout_seconds,
     )
+
+
+def _is_transient_provider_error(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    error_text = str(exc).lower()
+    return status_code in {429, 500, 502, 503, 504} or any(
+        marker in error_text
+        for marker in (
+            "deadline expired",
+            "timed out",
+            "timeout",
+            "unavailable",
+            "temporarily unavailable",
+            "try again",
+        )
+    )
+
+
+def _coerce_structured_output(output: Any, output_cls: type[_Model]) -> _Model | None:
+    if isinstance(output, output_cls):
+        return output
+
+    raw = getattr(output, "raw", None)
+    if isinstance(raw, output_cls):
+        return raw
+
+    if isinstance(raw, BaseModel):
+        try:
+            return output_cls.model_validate(raw.model_dump())
+        except Exception:
+            pass
+
+    if isinstance(output, BaseModel):
+        try:
+            return output_cls.model_validate(output.model_dump())
+        except Exception:
+            pass
+
+    if isinstance(output, dict):
+        try:
+            return output_cls.model_validate(output)
+        except Exception:
+            pass
+
+    message = getattr(output, "message", None)
+    content = getattr(message, "content", None) if message is not None else None
+    if isinstance(content, str) and content.strip():
+        try:
+            return output_cls.model_validate_json(content)
+        except Exception:
+            pass
+
+    if isinstance(output, str) and output.strip():
+        try:
+            return output_cls.model_validate_json(output)
+        except Exception:
+            pass
+
+    return None
+
+
+def _run_structured_text_inference(
+    prompt: str, output_cls: type[_Model]
+) -> _Model | None:
+    try:
+        structured = LlamaSettings.llm.structured_predict(
+            output_cls,
+            _GENERIC_STRUCTURED_PROMPT,
+            user_prompt=prompt,
+        )
+        return _coerce_structured_output(structured, output_cls)
+    except Exception:
+        logger.exception("Structured text inference failed for %s", output_cls.__name__)
+        return None
+
+
+def _run_structured_multimodal_inference(
+    *,
+    prompt: str,
+    image_path: str,
+    output_cls: type[_Model],
+) -> _Model | None:
+    if (
+        not image_path
+        or settings.is_google_api_key_placeholder
+        or not Path(image_path).exists()
+    ):
+        return None
+
+    try:
+        mime_type = mimetypes.guess_type(image_path)[0] or "image/png"
+        structured_llm = LlamaSettings.llm.as_structured_llm(output_cls)
+        response = structured_llm.chat(
+            [
+                ChatMessage(
+                    role=MessageRole.USER,
+                    blocks=[
+                        TextBlock(text=prompt),
+                        ImageBlock(path=image_path, image_mimetype=mime_type),
+                    ],
+                )
+            ]
+        )
+        parsed = _coerce_structured_output(response, output_cls)
+        if parsed is not None:
+            return parsed
+    except Exception as exc:
+        if _is_transient_provider_error(exc):
+            logger.warning(
+                "Google structured multimodal inference unavailable for %s (status=%s): %s",
+                image_path,
+                getattr(exc, "status_code", None),
+                exc,
+            )
+        else:
+            logger.exception(
+                "Google structured multimodal inference failed for %s", image_path
+            )
+
+    return None
 
 
 class DefaultArtifactStage(ArtifactStage):
@@ -445,38 +576,44 @@ def analyze_chart_artifacts(
             figure.llm_caption_status = "skipped"
             _apply_heuristic_chart_fields(figure)
 
-    def _run_chart_job(job: tuple[FigureArtifact, str]) -> str:
+    def _run_chart_job(job: tuple[FigureArtifact, str]) -> ChartCaptionResponse | None:
         figure, prompt = job
         return _run_chart_inference(prompt, figure.crop_path)
 
     chart_results = _run_parallel_jobs(
         llm_jobs,
         _run_chart_job,
-        max_workers=_parallel_worker_count(len(llm_jobs)),
+        max_workers=_parallel_worker_count(len(llm_jobs), max_workers=2),
         timeout_seconds=float(settings.LLM_CAPTION_TIMEOUT_SECONDS),
     )
 
-    for job, response_text, error in chart_results:
+    for job, chart_payload, error in chart_results:
         figure, _prompt = job
         if error is not None:
-            logger.error(
-                "Chart captioning failed for figure %s",
-                figure.figure_id,
-                exc_info=error,
-            )
-            figure.llm_caption_status = "failed"
+            if isinstance(error, TimeoutError):
+                logger.warning(
+                    "Chart captioning timed out for figure %s; applying heuristic fallback",
+                    figure.figure_id,
+                )
+                figure.llm_caption_status = "timeout_fallback"
+            else:
+                logger.error(
+                    "Chart captioning failed for figure %s",
+                    figure.figure_id,
+                    exc_info=error,
+                )
+                figure.llm_caption_status = "failed"
             figure.llm_caption_error = str(error)[:400]
             _apply_heuristic_chart_fields(figure)
             continue
 
-        parsed = _parse_chart_json_response(response_text or "")
-        if not parsed:
+        if chart_payload is None:
             figure.llm_caption_status = "failed"
-            figure.llm_caption_error = "invalid_json_response"
+            figure.llm_caption_error = "invalid_structured_response"
             _apply_heuristic_chart_fields(figure)
             continue
 
-        _apply_llm_chart_fields(figure, parsed)
+        _apply_llm_chart_fields(figure, chart_payload.model_dump())
         if not figure.approx_datapoints and not figure.key_chart_facts:
             _apply_heuristic_chart_fields(figure)
         figure.llm_caption_status = "success"
@@ -560,10 +697,9 @@ def maybe_llm_enrich_artifacts(
 
     def _run_enrichment_job(
         job: tuple[int, list[TableArtifact], list[FigureArtifact], str],
-    ) -> str:
+    ) -> ArtifactEnrichmentResponse | None:
         _page_num, _page_tables, _page_figures, prompt = job
-        response = LlamaSettings.llm.complete(prompt)
-        return normalize_whitespace(str(response))
+        return _run_structured_text_inference(prompt, ArtifactEnrichmentResponse)
 
     for job, enrichment, error in _run_parallel_jobs(
         enrichment_jobs,
@@ -576,20 +712,22 @@ def maybe_llm_enrich_artifacts(
             logger.error("LLM enrichment failed for page %s", page_num, exc_info=error)
             continue
 
-        if not enrichment:
+        if enrichment is None:
+            continue
+
+        summary_text = _format_summary_points(enrichment.summary_points, max_points=6)
+        if not summary_text:
             continue
 
         for table in page_tables:
-            table.normalized_table_text = f"{table.normalized_table_text}\nLLM summary: {enrichment[:600]}".strip()
+            table.normalized_table_text = f"{table.normalized_table_text}\nLLM summary:\n{summary_text[:600]}".strip()
             table.llm_enriched = True
             table.llm_enrichment_confidence = min(1.0, table.confidence + 0.07)
 
         for figure in page_figures:
             if figure.llm_caption_status == "success":
                 continue
-            figure.visual_proxy_text = (
-                f"{figure.visual_proxy_text}\nLLM summary: {enrichment[:600]}".strip()
-            )
+            figure.visual_proxy_text = f"{figure.visual_proxy_text}\nLLM summary:\n{summary_text[:600]}".strip()
             figure.llm_enriched = True
             figure.llm_enrichment_confidence = min(1.0, figure.confidence + 0.07)
 
@@ -846,13 +984,16 @@ def _is_chart_candidate(figure_type: str, caption_text: str) -> bool:
     )
 
 
-def _run_chart_inference(prompt: str, image_path: str) -> str:
-    multimodal_text = _run_google_multimodal_inference(prompt, image_path)
-    if multimodal_text:
-        return multimodal_text
+def _run_chart_inference(prompt: str, image_path: str) -> ChartCaptionResponse | None:
+    multimodal = _run_structured_multimodal_inference(
+        prompt=prompt,
+        image_path=image_path,
+        output_cls=ChartCaptionResponse,
+    )
+    if multimodal is not None:
+        return multimodal
 
-    response = LlamaSettings.llm.complete(prompt)
-    return str(response)
+    return _run_structured_text_inference(prompt, ChartCaptionResponse)
 
 
 def _run_google_multimodal_inference(prompt: str, image_path: str) -> str | None:
@@ -895,25 +1036,12 @@ def _run_google_multimodal_inference(prompt: str, image_path: str) -> str | None
         if response_text:
             return response_text
     except Exception as exc:
-        status_code = getattr(exc, "status_code", None)
-        error_text = str(exc).lower()
-        transient_provider_error = status_code in {429, 500, 502, 503, 504} or any(
-            marker in error_text
-            for marker in (
-                "deadline expired",
-                "timed out",
-                "timeout",
-                "unavailable",
-                "temporarily unavailable",
-                "try again",
-            )
-        )
-        if transient_provider_error:
+        if _is_transient_provider_error(exc):
             logger.warning(
                 "Google multimodal inference unavailable for %s (status=%s): %s. "
                 "Falling back to text-only inference.",
                 image_path,
-                status_code,
+                getattr(exc, "status_code", None),
                 exc,
             )
         else:
@@ -926,21 +1054,27 @@ def _parse_chart_json_response(response_text: str) -> dict[str, Any] | None:
         return None
     raw = response_text.strip()
     try:
-        return json.loads(raw)
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            return parsed
     except Exception:
         pass
 
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, flags=re.S)
     if fenced:
         try:
-            return json.loads(fenced.group(1))
+            parsed = json.loads(fenced.group(1))
+            if isinstance(parsed, dict):
+                return parsed
         except Exception:
             pass
 
     brace_match = re.search(r"\{.*\}", raw, flags=re.S)
     if brace_match:
         try:
-            return json.loads(brace_match.group(0))
+            parsed = json.loads(brace_match.group(0))
+            if isinstance(parsed, dict):
+                return parsed
         except Exception:
             return None
     return None
@@ -1073,6 +1207,55 @@ def _coerce_datapoints(value: Any) -> list[dict[str, Any]]:
     return datapoints
 
 
+def _coerce_reasoning_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+
+    if isinstance(value, dict):
+        raw_items: list[Any] = [f"{key}: {val}" for key, val in value.items()]
+    elif isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    else:
+        raw_items = [value]
+
+    cleaned: list[str] = []
+    for item in raw_items:
+        item_text = _clean_str(item)
+        if item_text and item_text not in cleaned:
+            cleaned.append(item_text)
+    return cleaned
+
+
+def _format_summary_points(points: list[str], *, max_points: int) -> str:
+    cleaned = _coerce_reasoning_list(points)
+    if not cleaned:
+        return ""
+    return "\n".join(f"- {point}" for point in cleaned[:max_points])
+
+
+def _render_page_screenshot_summary(summary: PageScreenshotResponse) -> str:
+    sections: list[str] = []
+
+    layout = _clean_str(summary.layout_description)
+    if layout:
+        sections.append(f"Layout: {layout}")
+
+    group_specs = [
+        ("Numeric values", summary.numeric_values, 12),
+        ("Charts", summary.chart_descriptions, 6),
+        ("Tables", summary.table_summaries, 6),
+        ("Maps/diagrams", summary.map_or_diagram_annotations, 6),
+        ("Key takeaways", summary.key_takeaways, 6),
+    ]
+
+    for title, values, max_points in group_specs:
+        bullets = _format_summary_points(values, max_points=max_points)
+        if bullets:
+            sections.append(f"{title}:\n{bullets}")
+
+    return "\n\n".join(sections).strip()
+
+
 # ---------------------------------------------------------------------------
 # Holistic page-level multimodal analysis
 # ---------------------------------------------------------------------------
@@ -1096,9 +1279,11 @@ def analyze_page_screenshots(page_manifests: list[PageManifest]) -> None:
         :max_pages
     ]
 
-    def _run_screenshot_job(manifest: PageManifest) -> str | None:
-        return _run_google_multimodal_inference(
-            PAGE_SCREENSHOT_PROMPT, manifest.screenshot_path
+    def _run_screenshot_job(manifest: PageManifest) -> PageScreenshotResponse | None:
+        return _run_structured_multimodal_inference(
+            prompt=PAGE_SCREENSHOT_PROMPT,
+            image_path=manifest.screenshot_path,
+            output_cls=PageScreenshotResponse,
         )
 
     for manifest, result, error in _run_parallel_jobs(
@@ -1114,8 +1299,13 @@ def analyze_page_screenshots(page_manifests: list[PageManifest]) -> None:
                 exc_info=error,
             )
             continue
-        if result:
-            manifest.llm_page_summary = result[: settings.REASONING_MAX_OUTPUT_CHARS]
+        if result is not None:
+            summary_text = _render_page_screenshot_summary(result)
+            if not summary_text:
+                continue
+            manifest.llm_page_summary = summary_text[
+                : settings.REASONING_MAX_OUTPUT_CHARS
+            ]
             manifest.llm_enriched = True
             logger.info(
                 "Page %d screenshot analysis complete (%d chars)",
@@ -1364,28 +1554,34 @@ class ReasoningEnrichmentService:
         success_confidence: float,
         fallback_confidence: float,
     ) -> ReasoningArtifact | None:
-        reasoning = _run_reasoning_inference(prompt, self._config.max_output_chars)
-        if not reasoning:
+        inference = _run_reasoning_inference(prompt, self._config.max_output_chars)
+        if inference is None:
             return None
 
-        parsed = _parse_chart_json_response(reasoning)
-        claims = parsed.get("key_insights", []) if parsed else []
-        trend = parsed.get("trend_statement", "") if parsed else ""
+        parsed = inference.payload
+        claims = _coerce_reasoning_list(parsed.get("key_insights"))
+        trend = _clean_str(parsed.get("trend_statement"))
+        comparisons = _coerce_reasoning_list(parsed.get("metric_comparisons"))
+        caveats = _coerce_reasoning_list(parsed.get("caveats"))
         merged_evidence = {
             **evidence_refs,
-            "evidence": (parsed.get("evidence_refs", []) if parsed else [])[:10],
+            "evidence": _coerce_reasoning_list(parsed.get("evidence_refs"))[:10],
         }
         return ReasoningArtifact(
             reasoning_id=str(uuid.uuid4()),
             reasoning_type=reasoning_type,
             page_nums=[page_num],
             source_artifact_ids=source_artifact_ids,
-            text="\n".join(_build_reasoning_text(parsed, trend, claims))[
+            text="\n".join(_build_reasoning_text(trend, claims, comparisons, caveats))[
                 : self._config.max_output_chars
             ],
             claims=claims[:5],
             evidence_refs=merged_evidence,
-            confidence=success_confidence if parsed else fallback_confidence,
+            confidence=(
+                success_confidence
+                if inference.used_structured_output
+                else fallback_confidence
+            ),
             model=self._config.model,
             prompt_version=REASONING_PROMPT_VERSION,
         )
@@ -1409,9 +1605,10 @@ class ReasoningEnrichmentService:
 
 
 def _build_reasoning_text(
-    parsed: dict[str, Any] | None,
     trend: str,
     claims: list[str],
+    metric_comparisons: list[str],
+    caveats: list[str],
 ) -> list[str]:
     """Assemble readable text from parsed reasoning JSON."""
     parts: list[str] = []
@@ -1419,29 +1616,61 @@ def _build_reasoning_text(
         parts.append(f"Trend: {trend}")
     for claim in claims[:5]:
         parts.append(f"- {claim}")
-    if parsed:
-        for comp in parsed.get("metric_comparisons", [])[:3]:
-            parts.append(f"Comparison: {comp}")
-        for caveat in parsed.get("caveats", [])[:2]:
-            parts.append(f"Caveat: {caveat}")
+    for comp in metric_comparisons[:3]:
+        parts.append(f"Comparison: {comp}")
+    for caveat in caveats[:2]:
+        parts.append(f"Caveat: {caveat}")
     return parts
 
 
 def _run_reasoning_inference(
     prompt: str,
     max_output: int,
-) -> str | None:
-    """Run LLM inference for reasoning enrichment with single retry."""
+) -> ReasoningInferenceResult | None:
+    """Run reasoning inference using structured outputs with raw JSON fallback."""
+    try:
+        structured = LlamaSettings.llm.structured_predict(
+            ReasoningStructuredResponse,
+            _GENERIC_STRUCTURED_PROMPT,
+            user_prompt=prompt,
+        )
+        if isinstance(structured, BaseModel):
+            payload = structured.model_dump()
+        elif isinstance(structured, dict):
+            payload = structured
+        else:
+            payload = None
+
+        if isinstance(payload, dict):
+            return ReasoningInferenceResult(
+                payload=payload,
+                used_structured_output=True,
+            )
+    except Exception:
+        logger.exception(
+            "Structured reasoning inference failed, falling back to raw JSON parsing"
+        )
+
     try:
         response = LlamaSettings.llm.complete(prompt)
         text = normalize_whitespace(str(response))
-        return text[:max_output] if text else None
+        parsed = _parse_chart_json_response(text[:max_output] if text else "")
+        if parsed is not None:
+            return ReasoningInferenceResult(
+                payload=parsed,
+                used_structured_output=False,
+            )
     except Exception:
         logger.exception("Reasoning inference failed, retrying once")
         try:
             response = LlamaSettings.llm.complete(prompt)
             text = normalize_whitespace(str(response))
-            return text[:max_output] if text else None
+            parsed = _parse_chart_json_response(text[:max_output] if text else "")
+            if parsed is not None:
+                return ReasoningInferenceResult(
+                    payload=parsed,
+                    used_structured_output=False,
+                )
         except Exception:
             logger.exception("Reasoning inference retry also failed")
-            return None
+    return None

@@ -3,7 +3,11 @@ from pathlib import Path
 from app.core.config import settings
 from app.ingestion.pdf_pipeline import artifact_builders
 from app.ingestion.pdf_pipeline import adapters, page_structure, repair
-from app.ingestion.pdf_pipeline.models import FigureArtifact, PageManifest
+from app.ingestion.pdf_pipeline.models import (
+    FigureArtifact,
+    PageManifest,
+    TableArtifact,
+)
 
 
 class _FakeTextItem:
@@ -135,25 +139,6 @@ def test_suppress_mupdf_messages_calls_tool_switches(monkeypatch):
 
 
 def test_analyze_chart_artifacts_populates_structured_chart_fields(monkeypatch):
-    class _FakeLLM:
-        def complete(self, _prompt):
-            return """{
-                "chart_type": "line",
-                "chart_title": "Revenue Trend",
-                "x_axis_label": "Quarter",
-                "y_axis_label": "Revenue",
-                "x_categories": ["Q1", "Q2", "Q3"],
-                "series": ["Revenue"],
-                "approx_datapoints": [
-                    {"series": "Revenue", "x": "Q1", "y": 10, "unit": "USDm", "approximate": true},
-                    {"series": "Revenue", "x": "Q2", "y": 20, "unit": "USDm", "approximate": true},
-                    {"series": "Revenue", "x": "Q3", "y": 30, "unit": "USDm", "approximate": true}
-                ],
-                "trend_summary": "Revenue increases each quarter.",
-                "key_chart_facts": ["Q3 is about 3x Q1."],
-                "numeric_extraction_confidence": 0.84
-            }"""
-
     manifest = PageManifest(
         document_id="doc-1",
         page_num=1,
@@ -187,8 +172,41 @@ def test_analyze_chart_artifacts_populates_structured_chart_fields(monkeypatch):
     monkeypatch.setattr(settings, "LLM_CAPTION_MAX_ARTIFACTS_PER_PAGE", 3)
     monkeypatch.setattr(
         artifact_builders,
-        "LlamaSettings",
-        type("_FakeSettings", (), {"llm": _FakeLLM()}),
+        "_run_chart_inference",
+        lambda _prompt, _image_path: artifact_builders.ChartCaptionResponse(
+            chart_type="line",
+            chart_title="Revenue Trend",
+            x_axis_label="Quarter",
+            y_axis_label="Revenue",
+            x_categories=["Q1", "Q2", "Q3"],
+            series=["Revenue"],
+            approx_datapoints=[
+                artifact_builders.ChartDatapointResponse(
+                    series="Revenue",
+                    x="Q1",
+                    y=10,
+                    unit="USDm",
+                    approximate=True,
+                ),
+                artifact_builders.ChartDatapointResponse(
+                    series="Revenue",
+                    x="Q2",
+                    y=20,
+                    unit="USDm",
+                    approximate=True,
+                ),
+                artifact_builders.ChartDatapointResponse(
+                    series="Revenue",
+                    x="Q3",
+                    y=30,
+                    unit="USDm",
+                    approximate=True,
+                ),
+            ],
+            trend_summary="Revenue increases each quarter.",
+            key_chart_facts=["Q3 is about 3x Q1."],
+            numeric_extraction_confidence=0.84,
+        ),
     )
 
     artifact_builders.analyze_chart_artifacts([manifest], [figure])
@@ -202,10 +220,6 @@ def test_analyze_chart_artifacts_populates_structured_chart_fields(monkeypatch):
 
 
 def test_analyze_chart_artifacts_falls_back_when_llm_fails(monkeypatch):
-    class _FailingLLM:
-        def complete(self, _prompt):
-            raise RuntimeError("llm error")
-
     manifest = PageManifest(
         document_id="doc-1",
         page_num=1,
@@ -239,8 +253,8 @@ def test_analyze_chart_artifacts_falls_back_when_llm_fails(monkeypatch):
     monkeypatch.setattr(settings, "LLM_CAPTION_MAX_ARTIFACTS_PER_PAGE", 3)
     monkeypatch.setattr(
         artifact_builders,
-        "LlamaSettings",
-        type("_FakeSettings", (), {"llm": _FailingLLM()}),
+        "_run_chart_inference",
+        lambda _prompt, _image_path: (_ for _ in ()).throw(RuntimeError("llm error")),
     )
 
     artifact_builders.analyze_chart_artifacts([manifest], [figure])
@@ -283,6 +297,296 @@ def test_run_google_multimodal_inference_503_returns_none_and_warns(
     assert result is None
     assert "Google multimodal inference unavailable" in caplog.text
     assert "Falling back to text-only inference" in caplog.text
+
+
+def test_build_reasoning_artifact_handles_non_list_fields(monkeypatch):
+    def _fake_inference(_prompt: str, _max_output: int):
+        return artifact_builders.ReasoningInferenceResult(
+            payload={
+                "key_insights": "Revenue rose materially",
+                "metric_comparisons": {"q4_vs_q3": "Q4 > Q3"},
+                "trend_statement": "Upward momentum continues",
+                "caveats": "Values are approximate",
+                "evidence_refs": {"table_id": "table-1", "row": "Net Revenue"},
+            },
+            used_structured_output=False,
+        )
+
+    monkeypatch.setattr(artifact_builders, "_run_reasoning_inference", _fake_inference)
+    service = artifact_builders.ReasoningEnrichmentService([], [], [])
+
+    artifact = service._build_reasoning_artifact(
+        prompt="analyze",
+        reasoning_type="page_reasoning",
+        page_num=11,
+        source_artifact_ids=["table-1"],
+        evidence_refs={"source_artifact_ids": ["table-1"]},
+        success_confidence=0.8,
+        fallback_confidence=0.5,
+    )
+
+    assert artifact is not None
+    assert artifact.claims == ["Revenue rose materially"]
+    assert artifact.evidence_refs["evidence"] == [
+        "table_id: table-1",
+        "row: Net Revenue",
+    ]
+    assert "Trend: Upward momentum continues" in artifact.text
+    assert "Comparison: q4_vs_q3: Q4 > Q3" in artifact.text
+    assert "Caveat: Values are approximate" in artifact.text
+
+
+def test_run_reasoning_inference_prefers_structured_output(monkeypatch):
+    class _FakeLLM:
+        def structured_predict(self, *_args, **_kwargs):
+            return artifact_builders.ReasoningStructuredResponse(
+                key_insights=["Structured insight"],
+                metric_comparisons=["Q4 > Q3"],
+                trend_statement="Upward trend",
+                caveats=["Approximate values"],
+                evidence_refs=["table-1: net revenue"],
+            )
+
+        def complete(self, _prompt):
+            raise AssertionError(
+                "complete() should not be called when structured output succeeds"
+            )
+
+    monkeypatch.setattr(
+        artifact_builders,
+        "LlamaSettings",
+        type("_FakeSettings", (), {"llm": _FakeLLM()}),
+    )
+
+    result = artifact_builders._run_reasoning_inference("analyze", 2000)
+
+    assert result is not None
+    assert result.used_structured_output is True
+    assert result.payload["key_insights"] == ["Structured insight"]
+
+
+def test_run_reasoning_inference_uses_user_prompt_kwarg(monkeypatch):
+    class _FakeLLM:
+        def structured_predict(
+            self, output_cls, prompt, llm_kwargs=None, **prompt_args
+        ):
+            assert output_cls is artifact_builders.ReasoningStructuredResponse
+            assert llm_kwargs is None
+            assert "prompt" not in prompt_args
+            assert prompt_args["user_prompt"] == "analyze this"
+            return artifact_builders.ReasoningStructuredResponse(
+                key_insights=["Structured insight"]
+            )
+
+        def complete(self, _prompt):
+            raise AssertionError(
+                "complete() should not be called when structured output succeeds"
+            )
+
+    monkeypatch.setattr(
+        artifact_builders,
+        "LlamaSettings",
+        type("_FakeSettings", (), {"llm": _FakeLLM()}),
+    )
+
+    result = artifact_builders._run_reasoning_inference("analyze this", 2000)
+
+    assert result is not None
+    assert result.used_structured_output is True
+    assert result.payload["key_insights"] == ["Structured insight"]
+
+
+def test_run_structured_text_inference_uses_user_prompt_kwarg(monkeypatch):
+    class _FakeLLM:
+        def structured_predict(
+            self, output_cls, prompt, llm_kwargs=None, **prompt_args
+        ):
+            assert output_cls is artifact_builders.ArtifactEnrichmentResponse
+            assert llm_kwargs is None
+            assert "prompt" not in prompt_args
+            assert prompt_args["user_prompt"] == "summarize table"
+            return artifact_builders.ArtifactEnrichmentResponse(
+                summary_points=["point"]
+            )
+
+    monkeypatch.setattr(
+        artifact_builders,
+        "LlamaSettings",
+        type("_FakeSettings", (), {"llm": _FakeLLM()}),
+    )
+
+    result = artifact_builders._run_structured_text_inference(
+        "summarize table",
+        artifact_builders.ArtifactEnrichmentResponse,
+    )
+
+    assert result is not None
+    assert result.summary_points == ["point"]
+
+
+def test_analyze_chart_artifacts_timeout_uses_heuristic_fallback(monkeypatch):
+    manifest = PageManifest(
+        document_id="doc-1",
+        page_num=1,
+        page_width=612,
+        page_height=792,
+        screenshot_path="",
+        full_page_text="",
+        layout_confidence=0.8,
+        complexity_score=0.9,
+        page_class="visual_heavy_page",
+        ocr_used=False,
+        parser_sources=["liteparse", "pymupdf"],
+    )
+    figure = FigureArtifact(
+        figure_id="fig-timeout-1",
+        page_num=1,
+        bbox=[10, 10, 200, 200],
+        figure_type="chart",
+        caption_text="Figure 1 Revenue Trend",
+        nearby_text="The series increases from 10 to 30 over time.",
+        section_path="Financials",
+        crop_path="/tmp/crop.png",
+        page_screenshot_path="",
+        visual_proxy_text="",
+        footnotes=[],
+        confidence=0.8,
+    )
+
+    monkeypatch.setattr(settings, "ENABLE_MULTIMODAL_CAPTIONING", True)
+    monkeypatch.setattr(settings, "LLM_CAPTION_MAX_PAGES", 3)
+    monkeypatch.setattr(settings, "LLM_CAPTION_MAX_ARTIFACTS_PER_PAGE", 3)
+    monkeypatch.setattr(artifact_builders, "_llm_available_for_pipeline", lambda: True)
+
+    def _fake_parallel_jobs(*_args, **_kwargs):
+        return [
+            ((figure, "prompt"), None, TimeoutError("job exceeded timeout (25.0s)"))
+        ]
+
+    monkeypatch.setattr(artifact_builders, "_run_parallel_jobs", _fake_parallel_jobs)
+
+    artifact_builders.analyze_chart_artifacts([manifest], [figure])
+
+    assert figure.llm_caption_status == "timeout_fallback"
+    assert figure.llm_caption_error == "job exceeded timeout (25.0s)"
+    assert figure.chart_parse_status in {"partial", "success"}
+    assert len(figure.approx_datapoints) >= 2
+
+
+def test_maybe_llm_enrich_artifacts_uses_structured_summary_points(monkeypatch):
+    manifest = PageManifest(
+        document_id="doc-1",
+        page_num=1,
+        page_width=612,
+        page_height=792,
+        screenshot_path="",
+        full_page_text="",
+        layout_confidence=0.8,
+        complexity_score=0.9,
+        page_class="visual_heavy_page",
+        ocr_used=False,
+        parser_sources=["liteparse", "pymupdf"],
+    )
+    table = TableArtifact(
+        table_id="table-1",
+        page_nums=[1],
+        bbox_list=[[10.0, 10.0, 200.0, 120.0]],
+        caption_text="Revenue table",
+        section_path="Financials",
+        html_table="<table></table>",
+        json_table=[["Quarter", "Revenue"], ["Q1", "10"]],
+        normalized_table_text="Quarter Revenue\nQ1 10",
+        header_rows=["Quarter", "Revenue"],
+        units=["USDm"],
+        footnotes=[],
+        continuation_flag=False,
+        confidence=0.8,
+    )
+    figure = FigureArtifact(
+        figure_id="fig-2",
+        page_num=1,
+        bbox=[10, 10, 200, 200],
+        figure_type="chart",
+        caption_text="Revenue trend",
+        nearby_text="Revenue rises",
+        section_path="Financials",
+        crop_path="",
+        page_screenshot_path="",
+        visual_proxy_text="Initial figure summary",
+        footnotes=[],
+        confidence=0.8,
+    )
+
+    monkeypatch.setattr(settings, "ENABLE_LLM_ARTIFACT_ENRICHMENT", True)
+    monkeypatch.setattr(settings, "LLM_ARTIFACT_ENRICHMENT_MAX_PAGES", 3)
+    monkeypatch.setattr(artifact_builders, "_llm_available_for_pipeline", lambda: True)
+
+    def _fake_parallel_jobs(jobs, _runner, **_kwargs):
+        response = artifact_builders.ArtifactEnrichmentResponse(
+            summary_points=[
+                "Revenue increases from Q1 to Q4.",
+                "All values are reported in USDm.",
+            ]
+        )
+        return [(jobs[0], response, None)]
+
+    monkeypatch.setattr(artifact_builders, "_run_parallel_jobs", _fake_parallel_jobs)
+
+    artifact_builders.maybe_llm_enrich_artifacts([manifest], [table], [figure])
+
+    assert "LLM summary:" in table.normalized_table_text
+    assert "- Revenue increases from Q1 to Q4." in table.normalized_table_text
+    assert table.llm_enriched is True
+    assert "LLM summary:" in figure.visual_proxy_text
+    assert "- All values are reported in USDm." in figure.visual_proxy_text
+    assert figure.llm_enriched is True
+
+
+def test_analyze_page_screenshots_uses_structured_output(monkeypatch):
+    manifest = PageManifest(
+        document_id="doc-1",
+        page_num=1,
+        page_width=612,
+        page_height=792,
+        screenshot_path="/tmp/page_1.png",
+        full_page_text="",
+        layout_confidence=0.8,
+        complexity_score=0.9,
+        page_class="visual_heavy_page",
+        ocr_used=False,
+        parser_sources=["liteparse", "pymupdf"],
+    )
+
+    monkeypatch.setattr(settings, "ENABLE_MULTIMODAL_CAPTIONING", True)
+    monkeypatch.setattr(settings, "LLM_CAPTION_MAX_PAGES", 3)
+    monkeypatch.setattr(artifact_builders, "_llm_available_for_pipeline", lambda: True)
+
+    def _fake_parallel_jobs(jobs, _runner, **_kwargs):
+        response = artifact_builders.PageScreenshotResponse(
+            layout_description="Two-column page with a chart and table.",
+            numeric_values=["Revenue: 10, 20, 30 USDm"],
+            chart_descriptions=["Line chart trending upward from Q1 to Q3."],
+            table_summaries=["Table lists quarterly revenue and margin."],
+            map_or_diagram_annotations=["No maps present."],
+            key_takeaways=["Revenue growth is consistent across quarters."],
+        )
+        return [(jobs[0], response, None)]
+
+    monkeypatch.setattr(artifact_builders, "_run_parallel_jobs", _fake_parallel_jobs)
+
+    artifact_builders.analyze_page_screenshots([manifest])
+
+    assert manifest.llm_enriched is True
+    assert manifest.llm_page_summary is not None
+    assert (
+        "Layout: Two-column page with a chart and table." in manifest.llm_page_summary
+    )
+    assert "Numeric values:" in manifest.llm_page_summary
+    assert "Charts:" in manifest.llm_page_summary
+
+
+def test_parse_chart_json_response_rejects_non_object_json():
+    assert artifact_builders._parse_chart_json_response('["a", "b"]') is None
 
 
 def test_page_structure_uses_layout_predictions_for_region_typing():

@@ -176,9 +176,9 @@ class ChunkArtifactAssembler:
                         figure_type=None,
                         source_artifact_type="page",
                     ),
-                    asset_refs=[manifest.screenshot_path]
-                    if manifest.screenshot_path
-                    else [],
+                    asset_refs=(
+                        [manifest.screenshot_path] if manifest.screenshot_path else []
+                    ),
                 )
             )
 

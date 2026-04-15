@@ -6,7 +6,6 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.config import settings
 
-
 logger = logging.getLogger(__name__)
 
 

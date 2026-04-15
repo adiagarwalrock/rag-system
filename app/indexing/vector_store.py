@@ -198,7 +198,9 @@ class VectorStoreManager:
         hybrid: bool = True,
     ):
         """Get a retriever with optional hybrid dense+sparse Qdrant search."""
-        index = VectorStoreIndex.from_vector_store(vector_store=self._get_vector_store())
+        index = VectorStoreIndex.from_vector_store(
+            vector_store=self._get_vector_store()
+        )
         kwargs = {
             "filters": filters,
             "similarity_top_k": similarity_top_k,

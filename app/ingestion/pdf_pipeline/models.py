@@ -3,6 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic import BaseModel, Field
+
+# -------------------------------------------------------------------------------------
+#
+# DATA MODELS
+#
+# -------------------------------------------------------------------------------------
+
+
 ZONE_ORDER = {
     "header_zone": 0,
     "main_body": 1,
@@ -136,3 +145,58 @@ class ChunkArtifact:
     text: str
     metadata: dict[str, Any]
     asset_refs: list[str] = field(default_factory=list)
+
+
+# -------------------------------------------------------------------------------------
+#
+# RESPONSE MODELS
+#
+# -------------------------------------------------------------------------------------
+
+
+class ChartDatapointResponse(BaseModel):
+    series: str = ""
+    x: str = ""
+    y: float
+    unit: str = ""
+    approximate: bool = True
+
+
+class ChartCaptionResponse(BaseModel):
+    chart_type: str = ""
+    chart_title: str = ""
+    x_axis_label: str = ""
+    y_axis_label: str = ""
+    x_categories: list[str] = Field(default_factory=list)
+    series: list[str] = Field(default_factory=list)
+    approx_datapoints: list[ChartDatapointResponse] = Field(default_factory=list)
+    trend_summary: str = ""
+    key_chart_facts: list[str] = Field(default_factory=list)
+    numeric_extraction_confidence: float | None = None
+
+
+class ArtifactEnrichmentResponse(BaseModel):
+    summary_points: list[str] = Field(default_factory=list)
+
+
+class PageScreenshotResponse(BaseModel):
+    layout_description: str = ""
+    numeric_values: list[str] = Field(default_factory=list)
+    chart_descriptions: list[str] = Field(default_factory=list)
+    table_summaries: list[str] = Field(default_factory=list)
+    map_or_diagram_annotations: list[str] = Field(default_factory=list)
+    key_takeaways: list[str] = Field(default_factory=list)
+
+
+class ReasoningStructuredResponse(BaseModel):
+    key_insights: list[str] = Field(default_factory=list)
+    metric_comparisons: list[str] = Field(default_factory=list)
+    trend_statement: str = ""
+    caveats: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
+class ReasoningInferenceResult:
+    payload: dict[str, Any]
+    used_structured_output: bool

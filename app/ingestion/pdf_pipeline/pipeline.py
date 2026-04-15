@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import logging
 import os
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -17,8 +17,8 @@ from app.ingestion.pdf_pipeline.chunk_builder import DefaultChunkStage
 from app.ingestion.pdf_pipeline.contracts import (
     ArtifactStage,
     ChunkStage,
-    PDFExtractionStage,
     PageStructureStage,
+    PDFExtractionStage,
 )
 from app.ingestion.pdf_pipeline.page_structure import DefaultPageStructureStage
 from app.ingestion.pdf_pipeline.registry import PDFPipelineRegistry

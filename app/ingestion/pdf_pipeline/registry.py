@@ -8,8 +8,8 @@ from typing import Any, TypeVar
 from app.ingestion.pdf_pipeline.contracts import (
     ArtifactStage,
     ChunkStage,
-    PDFExtractionStage,
     PageStructureStage,
+    PDFExtractionStage,
 )
 
 logger = logging.getLogger(__name__)

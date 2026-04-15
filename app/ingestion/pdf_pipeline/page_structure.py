@@ -11,7 +11,7 @@ from app.ingestion.pdf_pipeline.helpers import (
     normalize_whitespace,
     to_float_bbox,
 )
-from app.ingestion.pdf_pipeline.models import PageManifest, Region, ZONE_ORDER
+from app.ingestion.pdf_pipeline.models import ZONE_ORDER, PageManifest, Region
 
 
 class DefaultPageStructureStage(PageStructureStage):
@@ -158,7 +158,9 @@ def build_page_manifests_and_regions(
     return manifests, all_regions
 
 
-def _blocks_from_liteparse_items(text_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _blocks_from_liteparse_items(
+    text_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     if not text_items:
         return []
 
@@ -401,7 +403,9 @@ def _map_layout_label(label: str) -> tuple[str | None, str | None]:
         return "title", "header_zone"
     if any(token in label for token in ("heading", "section", "subtitle")):
         return "section_heading", "main_body"
-    if any(token in label for token in ("left_column", "left column", "column_1", "col1")):
+    if any(
+        token in label for token in ("left_column", "left column", "column_1", "col1")
+    ):
         return "body_text", "left_column"
     if any(
         token in label for token in ("right_column", "right column", "column_2", "col2")

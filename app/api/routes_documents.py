@@ -13,7 +13,11 @@ from app.db.models.document import Document, DocumentVersion, VectorNodeRegistry
 from app.db.models.user import User
 from app.db.snowflake import get_db
 from app.schemas.document import DocumentListResponse, DocumentResponse
-from app.services.ingest_service import delete_document, ingest_document, retry_ingestion
+from app.services.ingest_service import (
+    delete_document,
+    ingest_document,
+    retry_ingestion,
+)
 
 router = APIRouter()
 

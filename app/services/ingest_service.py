@@ -12,11 +12,11 @@ from typing import Any, List
 
 from llama_index.core import Settings as LlamaSettings
 from llama_index.core.extractors import (
-    TitleExtractor,
-    SummaryExtractor,
+    DocumentContextExtractor,
     KeywordExtractor,
     QuestionsAnsweredExtractor,
-    DocumentContextExtractor,
+    SummaryExtractor,
+    TitleExtractor,
 )
 from llama_index.core.ingestion import IngestionPipeline
 from llama_index.core.node_parser import SemanticSplitterNodeParser
@@ -31,10 +31,7 @@ from app.db.models.document import (
     IngestionJob,
     VectorNodeRegistry,
 )
-from app.indexing.vector_store import (
-    COLLECTION_NAME,
-    vector_store_manager,
-)
+from app.indexing.vector_store import COLLECTION_NAME, vector_store_manager
 from app.ingestion.parser import parse_document, save_upload_file
 from app.ingestion.validator import (
     compute_checksum,
@@ -203,7 +200,9 @@ def _apply_ref_doc_ids(nodes: List[BaseNode]) -> None:
         document_id = _normalize_document_id(metadata.get("document_id"))
         if document_id:
             relationships = dict(node.relationships or {})
-            relationships[NodeRelationship.SOURCE] = RelatedNodeInfo(node_id=document_id)
+            relationships[NodeRelationship.SOURCE] = RelatedNodeInfo(
+                node_id=document_id
+            )
             node.relationships = relationships
 
 
