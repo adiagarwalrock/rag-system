@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
-from dataclasses import dataclass
-import mimetypes
 import json
 import logging
+import mimetypes
 import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, TypeVar
-
-from PIL import Image, ImageStat
 
 import pymupdf as fitz
 from llama_index.core import Settings as LlamaSettings
@@ -20,10 +19,12 @@ from llama_index.core.base.llms.types import (
     MessageRole,
     TextBlock,
 )
+from PIL import Image, ImageStat
 from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.prompts import (
+    _GENERIC_STRUCTURED_PROMPT,
     CHART_REASONING_PROMPT,
     PAGE_REASONING_PROMPT,
     PAGE_SCREENSHOT_PROMPT,
@@ -31,35 +32,32 @@ from app.core.prompts import (
     TABLE_REASONING_PROMPT,
     build_artifact_enrichment_prompt,
     build_chart_caption_prompt,
-    _GENERIC_STRUCTURED_PROMPT,
 )
 from app.indexing.vector_store import vector_store_manager
 from app.ingestion.pdf_pipeline.contracts import ArtifactResult, ArtifactStage
 from app.ingestion.pdf_pipeline.helpers import (
     extract_units,
     header_signature,
-    numeric_density,
     normalize_table_rows,
     normalize_whitespace,
+    numeric_density,
     parse_table_like_text,
     table_rows_to_html,
     to_float_bbox,
     union_bbox,
 )
-from app.ingestion.pdf_pipeline.models import (
-    # Artifacts
-    FigureArtifact,
-    PageManifest,
-    ReasoningArtifact,
-    Region,
-    TableArtifact,
-    # Response Models
+from app.ingestion.pdf_pipeline.models import (  # Artifacts; Response Models
+    ArtifactEnrichmentResponse,
     ChartCaptionResponse,
     ChartDatapointResponse,
+    FigureArtifact,
+    PageManifest,
+    PageScreenshotResponse,
+    ReasoningArtifact,
     ReasoningInferenceResult,
     ReasoningStructuredResponse,
-    ArtifactEnrichmentResponse,
-    PageScreenshotResponse,
+    Region,
+    TableArtifact,
 )
 
 logger = logging.getLogger(__name__)

@@ -22,6 +22,7 @@ app = FastAPI(
 def _validate_runtime_config() -> None:
     validate_runtime_settings()
 
+
 # Auto-create all tables on startup
 Base.metadata.create_all(bind=engine)
 

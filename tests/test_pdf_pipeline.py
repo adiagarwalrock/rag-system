@@ -1,8 +1,12 @@
 from pathlib import Path
 
 from app.core.config import settings
-from app.ingestion.pdf_pipeline import artifact_builders
-from app.ingestion.pdf_pipeline import adapters, page_structure, repair
+from app.ingestion.pdf_pipeline import (
+    adapters,
+    artifact_builders,
+    page_structure,
+    repair,
+)
 from app.ingestion.pdf_pipeline.models import (
     FigureArtifact,
     PageManifest,

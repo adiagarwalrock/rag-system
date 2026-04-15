@@ -70,9 +70,7 @@ def test_parse_document_pdf_layout_path_emits_artifact_chunks(tmp_path):
     assert units
     chunk_types = {doc.metadata.get("chunk_type") for doc in docs}
     assert any(kind in chunk_types for kind in {"full_table", "table_segment"})
-    assert any(
-        kind in chunk_types for kind in {"figure_artifact", "visual_proxy_text"}
-    )
+    assert any(kind in chunk_types for kind in {"figure_artifact", "visual_proxy_text"})
     assert "chart_data_points" in chunk_types
     assert "page_card" in chunk_types
 
@@ -94,7 +92,9 @@ def test_parse_document_pdf_layout_strict_mode_raises(monkeypatch, tmp_path):
     def _raise_layout_error(*_args, **_kwargs):
         raise RuntimeError("layout parsing failed")
 
-    monkeypatch.setattr("app.ingestion.parser.parse_pdf_layout_aware", _raise_layout_error)
+    monkeypatch.setattr(
+        "app.ingestion.parser.parse_pdf_layout_aware", _raise_layout_error
+    )
     monkeypatch.setattr("app.ingestion.parser.settings.ENABLE_LAYOUT_AWARE_PDF", True)
     monkeypatch.setattr(
         "app.ingestion.parser.settings.STRICT_LAYOUT_AWARE_PDF_FAILURE", True
@@ -117,7 +117,9 @@ def test_parse_document_pdf_layout_non_strict_falls_back(monkeypatch, tmp_path):
     def _raise_layout_error(*_args, **_kwargs):
         raise RuntimeError("layout parsing failed")
 
-    monkeypatch.setattr("app.ingestion.parser.parse_pdf_layout_aware", _raise_layout_error)
+    monkeypatch.setattr(
+        "app.ingestion.parser.parse_pdf_layout_aware", _raise_layout_error
+    )
     monkeypatch.setattr("app.ingestion.parser.settings.ENABLE_LAYOUT_AWARE_PDF", True)
     monkeypatch.setattr(
         "app.ingestion.parser.settings.STRICT_LAYOUT_AWARE_PDF_FAILURE", False

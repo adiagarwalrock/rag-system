@@ -1,9 +1,8 @@
 import pytest
 
+from app.core.config import settings
 from app.db.models import ConflictLog, QueryLog, RetrievalLog, VectorNodeRegistry
 from app.services import query_service
-
-from app.core.config import settings
 
 VECTOR_COLLECTION = settings.VECTOR_COLLECTION
 

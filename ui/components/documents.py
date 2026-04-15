@@ -8,7 +8,9 @@ from ui.components.utils import get_client_options
 
 @st.dialog("Confirm Deletion")
 def confirm_delete_dialog(api, doc_id):
-    st.warning("Are you sure you want to delete this document? This removes the raw file and all vector references.")
+    st.warning(
+        "Are you sure you want to delete this document? This removes the raw file and all vector references."
+    )
     if st.button("Yes, delete document", type="primary", width="stretch"):
         with st.spinner("Deleting document..."):
             try:
@@ -152,13 +154,11 @@ def render_documents():
                         key="document_status_select",
                     )
                     selected_doc_id = doc_options[selected_doc]
-                    
+
                     status = api.get_document_status(selected_doc_id)
                     with st.container(border=True):
                         c1, c2, c3 = st.columns(3)
-                        c1.metric(
-                            ":material/flag: Status", status.get("status", "?")
-                        )
+                        c1.metric(":material/flag: Status", status.get("status", "?"))
                         c2.metric(
                             ":material/reorder: Vector points",
                             status.get("vector_point_count", 0),
@@ -171,9 +171,7 @@ def render_documents():
                         if err := status.get("error_message"):
                             st.error(err)
 
-                        if (
-                            is_current := status.get("is_current_version")
-                        ) is not None:
+                        if (is_current := status.get("is_current_version")) is not None:
                             text = (
                                 "Yes"
                                 if is_current
@@ -193,7 +191,12 @@ def render_documents():
 
                     action_cols = st.columns(2)
                     with action_cols[0]:
-                        if status.get("status") in ["failed", "indexed", "completed", "deleted"]:
+                        if status.get("status") in [
+                            "failed",
+                            "indexed",
+                            "completed",
+                            "deleted",
+                        ]:
                             if st.button(
                                 "Retry Ingestion",
                                 icon=":material/refresh:",
@@ -203,12 +206,15 @@ def render_documents():
                             ):
                                 with st.spinner("Retrying ingestion..."):
                                     try:
-                                        api.retry_document_ingestion(selected_doc_id, user_id=get_current_user_id())
+                                        api.retry_document_ingestion(
+                                            selected_doc_id,
+                                            user_id=get_current_user_id(),
+                                        )
                                         st.success("Ingestion retried successfully.")
                                         st.rerun()
                                     except Exception as e:
                                         st.error(f"Retry failed: {e}")
-                    
+
                     with action_cols[1]:
                         if st.button(
                             "Delete Document",

@@ -4,7 +4,9 @@ from app.retrieval.conflict_detector import detect_conflicts
 
 
 def _node(node_id: str, text: str, metadata: dict, score: float = 0.8) -> NodeWithScore:
-    return NodeWithScore(node=TextNode(id_=node_id, text=text, metadata=metadata), score=score)
+    return NodeWithScore(
+        node=TextNode(id_=node_id, text=text, metadata=metadata), score=score
+    )
 
 
 def test_detects_numeric_disagreement_within_version_family():
@@ -30,7 +32,9 @@ def test_detects_numeric_disagreement_within_version_family():
     )
 
     conflicts = detect_conflicts(
-        [newer, older], evidence_nodes=[newer, older], question="What changed across versions?"
+        [newer, older],
+        evidence_nodes=[newer, older],
+        question="What changed across versions?",
     )
 
     assert len(conflicts) == 1

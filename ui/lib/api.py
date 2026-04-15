@@ -17,9 +17,9 @@ from app.db.models.document import (
 from app.db.models.user import User
 from app.db.snowflake import SessionLocal
 from app.services.ingest_service import (
+    delete_document,
     ingest_document,
     retry_ingestion,
-    delete_document,
 )
 from app.services.query_history_service import QueryHistoryFilters, QueryHistoryService
 from app.services.query_service import execute_query
