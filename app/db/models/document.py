@@ -15,7 +15,6 @@ class Document(Base):
     file_type = Column(String, nullable=False)
     storage_path = Column(String, nullable=False)
     checksum = Column(String, nullable=True)
-    uploaded_by = Column(String, ForeignKey("users.id"), nullable=True)
     status = Column(String, nullable=False, default="uploaded")
     source_label = Column(String, nullable=True)
     document_family = Column(String, nullable=True)
@@ -68,7 +67,6 @@ class IngestionJob(Base):
     parser_name = Column(String, nullable=True)
     parser_version = Column(String, nullable=True)
     filesize_bytes = Column(Integer, nullable=True)
-    created_by = Column(String, ForeignKey("users.id"), nullable=True)
 
     document = relationship("Document", back_populates="ingestion_jobs")
 
@@ -92,7 +90,6 @@ class QueryLog(Base):
     __tablename__ = "query_logs"
 
     id = Column(String, primary_key=True)
-    user_id = Column(String, ForeignKey("users.id"), nullable=False)
     client_id = Column(String, ForeignKey("clients.id"), nullable=False)
     question = Column(String, nullable=False)
     answer = Column(String, nullable=True)

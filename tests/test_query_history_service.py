@@ -1,30 +1,21 @@
 from datetime import datetime, timedelta, timezone
 
-from app.db.models import Client, ConflictLog, QueryLog, RetrievalLog, User
+from app.db.models import Client, ConflictLog, QueryLog, RetrievalLog
 from app.services.query_history_service import QueryHistoryFilters, QueryHistoryService
 
 
 def _seed_history_rows(db_session):
-    user_two = User(
-        id="user-2",
-        email="user2@example.com",
-        password_hash="fake-hash",
-        is_active=True,
-        full_name="User Two",
-    )
     client_two = Client(
         id="client-2",
         name="Beta Co",
         description="Second client",
-        created_by="user-1",
         is_active=True,
     )
-    db_session.add_all([user_two, client_two])
+    db_session.add(client_two)
 
     base_time = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
     q1 = QueryLog(
         id="query-1",
-        user_id="user-1",
         client_id="client-1",
         question="What is the renewal deadline?",
         answer="Renewal is due in 30 days.",
@@ -34,7 +25,6 @@ def _seed_history_rows(db_session):
     )
     q2 = QueryLog(
         id="query-2",
-        user_id="user-2",
         client_id="client-1",
         question="Show policy v2 changes",
         answer="Error: upstream timeout",
@@ -44,7 +34,6 @@ def _seed_history_rows(db_session):
     )
     q3 = QueryLog(
         id="query-3",
-        user_id="user-1",
         client_id="client-2",
         question="Summarize latest terms",
         answer=None,

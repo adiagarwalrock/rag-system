@@ -10,7 +10,6 @@ VECTOR_COLLECTION = settings.VECTOR_COLLECTION
 def test_execute_query_persists_query_retrieval_and_conflict_logs(
     db_session, seeded_entities, monkeypatch
 ):
-    user = seeded_entities["user"]
     client = seeded_entities["client"]
     document = seeded_entities["document"]
 
@@ -56,7 +55,6 @@ def test_execute_query_persists_query_retrieval_and_conflict_logs(
     result = query_service.execute_query(
         question="What changed in v2?",
         client_id=client.id,
-        user_id=user.id,
         db=db_session,
     )
 
@@ -93,7 +91,6 @@ def test_execute_query_persists_query_retrieval_and_conflict_logs(
 def test_execute_query_marks_query_log_failed_on_retrieval_error(
     db_session, seeded_entities, monkeypatch
 ):
-    user = seeded_entities["user"]
     client = seeded_entities["client"]
 
     class FailingRetriever:
@@ -109,7 +106,6 @@ def test_execute_query_marks_query_log_failed_on_retrieval_error(
         query_service.execute_query(
             question="Why did this fail?",
             client_id=client.id,
-            user_id=user.id,
             db=db_session,
         )
 

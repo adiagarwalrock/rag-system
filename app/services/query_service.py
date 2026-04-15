@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 def execute_query(
     question: str,
     client_id: str,
-    user_id: str,
     db: Session,
 ) -> dict:
     """
@@ -38,7 +37,6 @@ def execute_query(
     # Create query log record
     query_log = QueryLog(
         id=query_log_id,
-        user_id=user_id,
         client_id=client_id,
         question=question,
         status="running",

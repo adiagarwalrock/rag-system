@@ -4,9 +4,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_active_user
 from app.db.models.client import Client
-from app.db.models.user import User
 from app.db.snowflake import get_db
 from app.schemas.client import ClientCreate, ClientResponse, ClientUpdate
 from app.services.client_service import delete_client as delete_client_with_cascade
@@ -15,9 +13,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=List[ClientResponse])
-def get_clients(
-    db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)
-):
+def get_clients(db: Session = Depends(get_db)):
     return db.query(Client).filter(Client.is_active == True).all()
 
 
@@ -25,7 +21,6 @@ def get_clients(
 def get_client(
     client_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
     client = db.query(Client).filter(Client.id == client_id).first()
     if not client:
@@ -37,13 +32,11 @@ def get_client(
 def create_client(
     client_in: ClientCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
     db_client = Client(
         id=str(uuid.uuid4()),
         name=client_in.name,
         description=client_in.description,
-        created_by=current_user.id,
     )
     db.add(db_client)
     db.commit()
@@ -56,7 +49,6 @@ def update_client(
     client_id: str,
     updates: ClientUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
     client = db.query(Client).filter(Client.id == client_id).first()
     if not client:
@@ -75,7 +67,6 @@ def update_client(
 def delete_client(
     client_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
     try:
         delete_client_with_cascade(client_id=client_id, db=db)

@@ -426,7 +426,6 @@ def ingest_document(
     filename: str,
     client_id: str,
     client_name: str,
-    user_id: str,
     db: Session,
 ) -> Document:
     """
@@ -448,7 +447,6 @@ def ingest_document(
         file_type=file_ext,
         storage_path="",
         checksum=checksum,
-        uploaded_by=user_id,
         status="processing",
     )
     db.add(db_doc)
@@ -464,7 +462,6 @@ def ingest_document(
         parser_name="rag_ingestion_pipeline",
         parser_version="2.0.0",
         filesize_bytes=file_size,
-        created_by=user_id,
     )
     db.add(job)
     db.commit()
@@ -496,7 +493,6 @@ def enqueue_document_ingestion(
     filename: str,
     client_id: str,
     client_name: str,
-    user_id: str,
     db: Session,
 ) -> tuple[Document, IngestionJob]:
     """
@@ -517,7 +513,6 @@ def enqueue_document_ingestion(
         file_type=file_ext,
         storage_path="",
         checksum=checksum,
-        uploaded_by=user_id,
         status="queued",
     )
     db.add(db_doc)
@@ -532,7 +527,6 @@ def enqueue_document_ingestion(
         parser_name="rag_ingestion_pipeline",
         parser_version="2.0.0",
         filesize_bytes=file_size,
-        created_by=user_id,
     )
     db.add(job)
     db.commit()
@@ -562,7 +556,7 @@ def enqueue_document_ingestion(
     return db_doc, job
 
 
-def retry_ingestion(document_id: str, user_id: str, db: Session) -> Document:
+def retry_ingestion(document_id: str, db: Session) -> Document:
     """
     Retry ingestion for a failed document.
     """
@@ -610,7 +604,6 @@ def retry_ingestion(document_id: str, user_id: str, db: Session) -> Document:
         parser_name="rag_ingestion_pipeline",
         parser_version="2.0.0",
         filesize_bytes=os.path.getsize(file_path),
-        created_by=user_id,
     )
     db.add(job)
     db.commit()

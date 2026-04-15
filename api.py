@@ -1,7 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes_auth import router as auth_router
 from app.api.routes_clients import router as clients_router
 from app.api.routes_documents import router as documents_router
 from app.api.routes_health import router as health_router
@@ -29,7 +28,6 @@ def _validate_runtime_config() -> None:
 Base.metadata.create_all(bind=engine)
 
 # Register routes
-app.include_router(auth_router, prefix=f"{settings.API_V1_STR}/auth", tags=["auth"])
 app.include_router(
     clients_router, prefix=f"{settings.API_V1_STR}/clients", tags=["clients"]
 )

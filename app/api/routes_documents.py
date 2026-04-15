@@ -7,7 +7,6 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_active_user
 from app.db.models.client import Client
 from app.db.models.document import (
     Document,
@@ -15,7 +14,6 @@ from app.db.models.document import (
     IngestionJob,
     VectorNodeRegistry,
 )
-from app.db.models.user import User
 from app.db.snowflake import get_db
 from app.schemas.document import DocumentListResponse, DocumentResponse
 from app.services.ingest_service import (
@@ -31,7 +29,6 @@ router = APIRouter()
 def list_documents(
     client_id: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
     """List documents, optionally filtered by client."""
     query = db.query(Document)
@@ -44,7 +41,6 @@ def list_documents(
 def get_document(
     document_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
     """Get a single document by ID."""
     doc = db.query(Document).filter(Document.id == document_id).first()
@@ -57,7 +53,6 @@ def get_document(
 def get_document_status(
     document_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
     """Get ingestion status for a document."""
     doc = db.query(Document).filter(Document.id == document_id).first()
@@ -106,7 +101,6 @@ async def ingest_doc(
     file: UploadFile = File(...),
     client_id: str = Form(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
     """Upload and ingest a document."""
     # Validate client exists
@@ -122,7 +116,6 @@ async def ingest_doc(
         filename=file.filename,
         client_id=client_id,
         client_name=client.name,
-        user_id=current_user.id,
         db=db,
     )
     return {
@@ -143,13 +136,10 @@ async def ingest_doc(
 def retry_doc_ingestion(
     document_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
     """Retry ingestion for a failed document."""
     try:
-        result = retry_ingestion(
-            document_id=document_id, user_id=current_user.id, db=db
-        )
+        result = retry_ingestion(document_id=document_id, db=db)
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -160,7 +150,6 @@ def delete_doc(
     document_id: str,
     hard: bool = Query(False),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
     """Delete a document and its associated vectors/data."""
     try:

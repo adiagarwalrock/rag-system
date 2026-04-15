@@ -65,13 +65,7 @@ After cloning, run the setup script to install all dependencies (requires `uv` a
    docker-compose up -d qdrant
    ```
 
-5. (Optional) Seed a local admin account if auth is enabled:
-
-   ```bash
-   uv run python -m app.scripts.seed_admin
-   ```
-
-6. Run setup checks for Snowflake, Qdrant, and LLM config:
+5. Run setup checks for Snowflake, Qdrant, and LLM config:
 
    ```bash
    uv run python -m app.scripts.setup_check

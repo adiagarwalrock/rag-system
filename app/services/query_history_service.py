@@ -44,7 +44,6 @@ class QueryHistoryService:
                 self.db.query(
                     QueryLog.id.label("query_id"),
                     QueryLog.created_at.label("created_at"),
-                    QueryLog.user_id.label("user_id"),
                     QueryLog.client_id.label("client_id"),
                     QueryLog.question.label("question"),
                     QueryLog.answer.label("answer"),
@@ -60,7 +59,6 @@ class QueryHistoryService:
             .group_by(
                 QueryLog.id,
                 QueryLog.created_at,
-                QueryLog.user_id,
                 QueryLog.client_id,
                 QueryLog.question,
                 QueryLog.answer,
@@ -78,7 +76,6 @@ class QueryHistoryService:
                 {
                     "query_id": row.query_id,
                     "created_at": row.created_at,
-                    "user_id": row.user_id,
                     "client_id": row.client_id,
                     "question": row.question,
                     "answer": row.answer,

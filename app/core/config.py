@@ -7,9 +7,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     PROJECT_NAME: str = "RAG Backend"
     API_V1_STR: str = "/api/v1"
-    SECRET_KEY: str = "supersecretkey_please_change"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8
-    AUTH_ENABLED: bool = True
 
     # Database
     SNOWFLAKE_ACCOUNT: str | None = None

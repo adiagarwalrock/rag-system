@@ -211,4 +211,3 @@ def render_query_history():
             with st.expander("Answer details", expanded=False):
                 st.write(row.get("answer") or "No answer stored.")
                 st.caption(f"Query ID: {row.get('query_id')}")
-                st.caption(f"User ID: {row.get('user_id')}")

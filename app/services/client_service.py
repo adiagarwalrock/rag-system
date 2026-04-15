@@ -18,7 +18,6 @@ from app.db.models.document import (
     RetrievalLog,
     VectorNodeRegistry,
 )
-from app.db.models.user import UserClientAccess
 from app.services.ingest_service import delete_document
 
 logger = logging.getLogger(__name__)
@@ -42,7 +41,6 @@ class ClientDeletionService:
         try:
             self._delete_client_documents(document_ids)
             self._delete_query_history(client_id)
-            self._delete_client_access_rows(client_id)
             self._delete_client_residual_rows(client_id, document_ids)
             self.db.delete(client)
             self.db.commit()
@@ -88,11 +86,6 @@ class ClientDeletionService:
         self.db.query(QueryLog).filter(QueryLog.client_id == client_id).delete(
             synchronize_session=False
         )
-
-    def _delete_client_access_rows(self, client_id: str) -> None:
-        self.db.query(UserClientAccess).filter(
-            UserClientAccess.client_id == client_id
-        ).delete(synchronize_session=False)
 
     def _delete_client_residual_rows(
         self, client_id: str, document_ids: list[str]

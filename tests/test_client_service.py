@@ -8,7 +8,6 @@ from app.db.models import (
     IngestionJob,
     QueryLog,
     RetrievalLog,
-    UserClientAccess,
     VectorNodeRegistry,
 )
 from app.services import client_service
@@ -17,7 +16,6 @@ from app.services import client_service
 def test_delete_client_cascades_documents_vectors_and_related_rows(
     db_session, seeded_entities, monkeypatch
 ):
-    user = seeded_entities["user"]
     target_client = seeded_entities["client"]
     first_doc = seeded_entities["document"]
 
@@ -33,7 +31,6 @@ def test_delete_client_cascades_documents_vectors_and_related_rows(
         id="client-keep",
         name="Keep Co",
         description="Must remain",
-        created_by=user.id,
         is_active=True,
     )
     untouched_doc = Document(
@@ -91,7 +88,6 @@ def test_delete_client_cascades_documents_vectors_and_related_rows(
             ),
             QueryLog(
                 id="query-target",
-                user_id=user.id,
                 client_id=target_client.id,
                 question="Target question",
                 status="completed",
@@ -110,7 +106,6 @@ def test_delete_client_cascades_documents_vectors_and_related_rows(
             ),
             QueryLog(
                 id="query-keep",
-                user_id=user.id,
                 client_id=untouched_client.id,
                 question="Keep question",
                 status="completed",
@@ -126,16 +121,6 @@ def test_delete_client_cascades_documents_vectors_and_related_rows(
                 id="conflict-keep",
                 query_log_id="query-keep",
                 conflict_type="policy_conflict",
-            ),
-            UserClientAccess(
-                user_id=user.id,
-                client_id=target_client.id,
-                granted_by=user.id,
-            ),
-            UserClientAccess(
-                user_id=user.id,
-                client_id=untouched_client.id,
-                granted_by=user.id,
             ),
         ]
     )
@@ -197,13 +182,6 @@ def test_delete_client_cascades_documents_vectors_and_related_rows(
         .count()
         == 0
     )
-    assert (
-        db_session.query(UserClientAccess)
-        .filter(UserClientAccess.client_id == target_client.id)
-        .count()
-        == 0
-    )
-
     assert (
         db_session.query(Client).filter(Client.id == untouched_client.id).count() == 1
     )

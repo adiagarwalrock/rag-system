@@ -10,7 +10,6 @@ def test_enqueue_document_ingestion_creates_queued_records(
     db_session, seeded_entities, monkeypatch, tmp_path: Path
 ):
     client = seeded_entities["client"]
-    user = seeded_entities["user"]
     captured_tasks = []
 
     class FakeQueueManager:
@@ -34,7 +33,6 @@ def test_enqueue_document_ingestion_creates_queued_records(
         filename="queued.pdf",
         client_id=client.id,
         client_name=client.name,
-        user_id=user.id,
         db=db_session,
     )
 
@@ -55,7 +53,6 @@ def test_enqueue_document_ingestion_marks_failure_when_queue_rejects(
     db_session, seeded_entities, monkeypatch, tmp_path: Path
 ):
     client = seeded_entities["client"]
-    user = seeded_entities["user"]
 
     class RejectingQueueManager:
         def enqueue(self, _task):
@@ -79,7 +76,6 @@ def test_enqueue_document_ingestion_marks_failure_when_queue_rejects(
             filename="queue_fail.pdf",
             client_id=client.id,
             client_name=client.name,
-            user_id=user.id,
             db=db_session,
         )
 

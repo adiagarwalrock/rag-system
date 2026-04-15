@@ -5,8 +5,8 @@ from datetime import datetime
 import streamlit as st
 
 from app.core.config import settings
-from ui.components.auth import get_api
-from ui.components.layout import get_current_user_id, render_page_shell
+from ui.components.api_client import get_api
+from ui.components.layout import render_page_shell
 from ui.components.utils import (
     CLIENTS_CACHE_KEY,
     DOCUMENTS_CACHE_KEY,
@@ -49,7 +49,7 @@ def confirm_delete_dialog(api, doc_id: str, doc_name: str):
     if st.button("Yes, delete document", type="primary", width="stretch"):
         with st.spinner("Deleting document..."):
             try:
-                api.delete_document(doc_id, hard=True, user_id=get_current_user_id())
+                api.delete_document(doc_id, hard=True)
                 bump_cache_revision(DOCUMENTS_CACHE_KEY)
                 bump_cache_revision(QUERY_HISTORY_CACHE_KEY)
                 st.success("Document deleted.")
@@ -171,7 +171,6 @@ def render_documents():
                                     active_client_id,
                                     uploaded_file.name,
                                     content,
-                                    user_id=get_current_user_id(),
                                 )
                                 queued += 1
                             except Exception as exc:
@@ -250,9 +249,7 @@ def render_documents():
                     ):
                         with st.spinner("Retrying ingestion..."):
                             try:
-                                api.retry_document_ingestion(
-                                    doc["id"], user_id=get_current_user_id()
-                                )
+                                api.retry_document_ingestion(doc["id"])
                                 bump_cache_revision(DOCUMENTS_CACHE_KEY)
                                 st.success("Ingestion retried successfully.")
                                 st.rerun()

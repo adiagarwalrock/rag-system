@@ -2,7 +2,7 @@ import streamlit as st
 
 from app.core.ai_provider import initialize_ai_provider
 from app.core.config import validate_runtime_settings
-from ui.components.layout import render_account_sidebar, require_auth
+from ui.components.layout import render_runtime_sidebar
 
 st.set_page_config(
     page_title="RAG-System",
@@ -40,8 +40,7 @@ pg = st.navigation(
 def main():
     validate_runtime_settings()
     initialize_ai_provider()
-    require_auth()
-    render_account_sidebar()
+    render_runtime_sidebar()
     pg.run()
 
 

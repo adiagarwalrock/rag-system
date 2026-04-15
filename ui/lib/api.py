@@ -6,7 +6,6 @@ This bypasses HTTP requests and talks directly natively to the app layers.
 import logging
 from typing import Any, Dict, List, Optional
 
-from app.core.security import verify_password
 from app.db.models.client import Client
 from app.db.models.document import (
     Document,
@@ -14,7 +13,6 @@ from app.db.models.document import (
     IngestionJob,
     VectorNodeRegistry,
 )
-from app.db.models.user import User
 from app.db.snowflake import SessionLocal
 from app.services.client_service import delete_client as delete_client_with_cascade
 from app.services.ingest_service import (
@@ -37,32 +35,6 @@ class VecteraCore:
         # We don't maintain a single session here to avoid side effects across
         # separate streamlit interactions. We instantiate it per call.
         pass
-
-    # --- Auth ---
-    def login(self, email: str, password: str) -> dict:
-        """Login natively by comparing password hash."""
-        with SessionLocal() as db:
-            user = db.query(User).filter(User.email == email).first()
-            if not user or not verify_password(password, user.password_hash):
-                raise ValueError("Incorrect email or password")
-            # Create a mock token data so the UI thinks auth succeeded
-            return {"access_token": user.id, "token_type": "internal"}
-
-    def get_me(self, user_id: str) -> dict:
-        """Fetch user by id (derived from mock internal token)"""
-        if not user_id:
-            raise ValueError("Not authenticated")
-        with SessionLocal() as db:
-            user = db.query(User).filter(User.id == user_id).first()
-            if not user:
-                raise ValueError("User not found")
-            return {
-                "id": user.id,
-                "email": user.email,
-                "full_name": user.full_name,
-                "is_active": user.is_active,
-                "role": "admin",  # Hardcoded default role since it depends on clients
-            }
 
     # --- Clients ---
     def list_clients(self) -> List[Dict[str, Any]]:
@@ -137,7 +109,6 @@ class VecteraCore:
         client_id: str,
         file_name: str,
         file_content: bytes,
-        user_id: str = "internal",
     ) -> dict:
         with SessionLocal() as db:
             # Need client_name for ingestion service metadata
@@ -149,7 +120,6 @@ class VecteraCore:
                 filename=file_name,
                 client_id=client_id,
                 client_name=client_name,
-                user_id=user_id,
                 db=db,
             )
             return {
@@ -206,27 +176,21 @@ class VecteraCore:
                 "is_current_version": version.is_current if version else None,
             }
 
-    def retry_document_ingestion(
-        self, document_id: str, user_id: str = "internal"
-    ) -> dict:
+    def retry_document_ingestion(self, document_id: str) -> dict:
         with SessionLocal() as db:
-            doc = retry_ingestion(document_id=document_id, user_id=user_id, db=db)
+            doc = retry_ingestion(document_id=document_id, db=db)
             return {"id": doc.id, "name": doc.name, "status": doc.status}
 
-    def delete_document(
-        self, document_id: str, hard: bool = False, user_id: str = "internal"
-    ) -> dict:
+    def delete_document(self, document_id: str, hard: bool = False) -> dict:
         with SessionLocal() as db:
             delete_document(document_id=document_id, db=db, hard=hard)
             return {"status": "success", "message": "Document deleted"}
 
     # --- Query ---
-    def query(self, client_id: str, question: str, user_id: str = "internal") -> dict:
+    def query(self, client_id: str, question: str) -> dict:
         with SessionLocal() as db:
             try:
-                response = execute_query(
-                    client_id=client_id, question=question, user_id=user_id, db=db
-                )
+                response = execute_query(client_id=client_id, question=question, db=db)
                 return response
             except Exception as e:
                 logger.error(f"Query Error: {e}")

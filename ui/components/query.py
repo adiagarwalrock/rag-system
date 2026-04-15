@@ -2,8 +2,8 @@ from pathlib import Path
 
 import streamlit as st
 
-from ui.components.auth import get_api
-from ui.components.layout import get_current_user_id, render_page_shell
+from ui.components.api_client import get_api
+from ui.components.layout import render_page_shell
 from ui.components.utils import CLIENTS_CACHE_KEY, bump_cache_revision, get_client_options
 
 
@@ -271,7 +271,7 @@ def _submit_question(api, client_id: str, question: str):
     with st.chat_message("assistant"):
         with st.spinner("Searching documents and drafting a sourced answer..."):
             try:
-                result = api.query(client_id, question, user_id=get_current_user_id())
+                result = api.query(client_id, question)
                 answer = result.get("answer", "No answer generated.")
                 streamed_answer = st.write_stream(_stream_text(answer))
                 _render_result_details(result)

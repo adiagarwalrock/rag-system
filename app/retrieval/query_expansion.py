@@ -72,7 +72,10 @@ def build_query_variants(question: str, max_rewrites: int = 2) -> list[str]:
         return variants
 
     try:
-        llm = get_llm(model=settings.QUERY_EXPANSION_MODEL)
+        llm = get_llm(
+            model=settings.QUERY_EXPANSION_MODEL,
+            api_key=settings.ai_api_key,
+        )
         response = llm.structured_predict(
             QueryRewriteResponse,
             QUERY_EXPANSION_PROMPT,

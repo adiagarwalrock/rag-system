@@ -21,10 +21,10 @@
 - `api.py` imports models and runs `Base.metadata.create_all(bind=engine)` at startup, so tables auto-create.
 - Qdrant vector dimensions are enforced; changing `VECTOR_DIMENSIONS`/`EMBEDDING_OUTPUT_DIMENSION` against an existing collection can require recreating that collection.
 
-## Auth + Seeding
+## Access Model
 
-- `AUTH_ENABLED=false` returns stub user `dev-user` from `app/core/dependencies.py`.
-- For auth-enabled local testing, seed roles/admin with `uv run python -m app.scripts.seed_admin` (`admin@user.local` / `admin123`).
+- Authentication and role-based authorization are removed.
+- All UI and API operations run in internal single-tenant mode.
 
 ## Verification
 

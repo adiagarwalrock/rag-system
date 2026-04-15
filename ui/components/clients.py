@@ -4,7 +4,7 @@ from datetime import datetime
 
 import streamlit as st
 
-from ui.components.auth import get_api
+from ui.components.api_client import get_api
 from ui.components.layout import render_page_shell
 from ui.components.utils import (
     CLIENTS_CACHE_KEY,
@@ -148,4 +148,3 @@ def render_clients():
             info_cols = st.columns(2)
             info_cols[0].caption(f"Created: {_format_dt(client.get('created_at'))}")
             info_cols[1].caption(f"ID: `{client['id']}`")
-

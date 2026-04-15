@@ -5,9 +5,7 @@ Query API route — separate from documents.
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_active_user
 from app.db.models.client import Client
-from app.db.models.user import User
 from app.db.snowflake import get_db
 from app.schemas.document import QueryRequest, QueryResponse
 from app.services.query_service import execute_query
@@ -19,7 +17,6 @@ router = APIRouter()
 def query_documents(
     request: QueryRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
     """Query documents scoped to a client."""
     # Validate client exists
@@ -30,7 +27,6 @@ def query_documents(
     result = execute_query(
         question=request.question,
         client_id=request.client_id,
-        user_id=current_user.id,
         db=db,
     )
     return QueryResponse(

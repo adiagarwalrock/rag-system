@@ -8,13 +8,8 @@ from app.db.models.document import (
     RetrievalLog,
     VectorNodeRegistry,
 )
-from app.db.models.user import Role, User, UserClientAccess, UserRole
 
 __all__ = [
-    "User",
-    "Role",
-    "UserRole",
-    "UserClientAccess",
     "Client",
     "Document",
     "DocumentVersion",

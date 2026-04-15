@@ -22,7 +22,6 @@ class ClientUpdate(BaseModel):
 
 class ClientResponse(ClientBase):
     id: str
-    created_by: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
