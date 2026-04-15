@@ -159,7 +159,7 @@ _MISSING_DOC_ID_SENTINELS = {"", "none", "null", "n/a", "na", "undefined"}
 
 def _build_non_layout_node_parser() -> Any:
     embed_model = getattr(LlamaSettings, "_embed_model", None)
-    if embed_model is None and not settings.is_google_api_key_placeholder:
+    if embed_model is None and not settings.is_openai_api_key_placeholder:
         vector_store_manager.configure_llama_settings()
         embed_model = getattr(LlamaSettings, "_embed_model", None)
 
@@ -655,8 +655,7 @@ def _handle_ingestion_failure(
     error_msg = str(e)[:1000]
     error_lower = error_msg.lower()
     if (
-        "google" in error_lower
-        or "gemini" in error_lower
+        "openai" in error_lower
         or "genai" in error_lower
         or "api key" in error_lower
         or "rate limit" in error_lower

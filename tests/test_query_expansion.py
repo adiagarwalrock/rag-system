@@ -10,19 +10,19 @@ def test_build_query_variants_uses_structured_output_and_enforces_dedupe_and_cap
         query_expansion,
         "settings",
         SimpleNamespace(
-            google_api_key="test-google-key",
-            QUERY_EXPANSION_MODEL="gemini-3-flash-preview",
+            ai_api_key="test-openai-key",
+            QUERY_EXPANSION_MODEL="gpt-4o-mini",
         ),
     )
 
-    class FakeGoogleGenAI:
+    class FakeOpenAI:
         instances = []
 
         def __init__(self, model: str, api_key: str):
             self.model = model
             self.api_key = api_key
             self.calls = []
-            FakeGoogleGenAI.instances.append(self)
+            FakeOpenAI.instances.append(self)
 
         def structured_predict(self, output_cls, prompt, **prompt_args):
             self.calls.append((output_cls, prompt, prompt_args))
@@ -36,7 +36,7 @@ def test_build_query_variants_uses_structured_output_and_enforces_dedupe_and_cap
                 ]
             )
 
-    monkeypatch.setattr(query_expansion, "GoogleGenAI", FakeGoogleGenAI)
+    monkeypatch.setattr(query_expansion, "OpenAI", FakeOpenAI)
 
     question = "Compare the current and older versions"
     variants = query_expansion.build_query_variants(question, max_rewrites=2)
@@ -47,10 +47,10 @@ def test_build_query_variants_uses_structured_output_and_enforces_dedupe_and_cap
         "Version delta summary for current vs older",
     ]
 
-    assert len(FakeGoogleGenAI.instances) == 1
-    instance = FakeGoogleGenAI.instances[0]
-    assert instance.model == "gemini-3-flash-preview"
-    assert instance.api_key == "test-google-key"
+    assert len(FakeOpenAI.instances) == 1
+    instance = FakeOpenAI.instances[0]
+    assert instance.model == "gpt-4o-mini"
+    assert instance.api_key == "test-openai-key"
     assert len(instance.calls) == 1
     _, _, prompt_args = instance.calls[0]
     assert prompt_args["question"] == question
@@ -62,12 +62,12 @@ def test_build_query_variants_falls_back_to_original_on_structured_error(monkeyp
         query_expansion,
         "settings",
         SimpleNamespace(
-            google_api_key="test-google-key",
-            QUERY_EXPANSION_MODEL="gemini-3-flash-preview",
+            ai_api_key="test-openai-key",
+            QUERY_EXPANSION_MODEL="gpt-4o-mini",
         ),
     )
 
-    class FailingGoogleGenAI:
+    class FailingOpenAI:
         def __init__(self, model: str, api_key: str):
             self.model = model
             self.api_key = api_key
@@ -75,18 +75,18 @@ def test_build_query_variants_falls_back_to_original_on_structured_error(monkeyp
         def structured_predict(self, output_cls, prompt, **prompt_args):
             raise RuntimeError("simulated structured prediction failure")
 
-    monkeypatch.setattr(query_expansion, "GoogleGenAI", FailingGoogleGenAI)
+    monkeypatch.setattr(query_expansion, "OpenAI", FailingOpenAI)
 
     question = "Compare versions across quarterly reports"
     assert query_expansion.build_query_variants(question) == [question]
 
 
 def test_build_query_variants_skips_llm_for_non_expansion_queries(monkeypatch):
-    class ShouldNotBeCalledGoogleGenAI:
+    class ShouldNotBeCalledOpenAI:
         def __init__(self, model: str, api_key: str):
-            raise AssertionError("GoogleGenAI should not be called for narrow queries")
+            raise AssertionError("OpenAI should not be called for narrow queries")
 
-    monkeypatch.setattr(query_expansion, "GoogleGenAI", ShouldNotBeCalledGoogleGenAI)
+    monkeypatch.setattr(query_expansion, "OpenAI", ShouldNotBeCalledOpenAI)
 
     question = "What is the renewal deadline?"
     assert query_expansion.build_query_variants(question) == [question]
@@ -94,11 +94,11 @@ def test_build_query_variants_skips_llm_for_non_expansion_queries(monkeypatch):
 
 def test_build_query_variants_skips_llm_for_empty_question(monkeypatch):
 
-    class ShouldNotBeCalledGoogleGenAI:
+    class ShouldNotBeCalledOpenAI:
         def __init__(self, model: str, api_key: str):
-            raise AssertionError("GoogleGenAI should not be called for empty question")
+            raise AssertionError("OpenAI should not be called for empty question")
 
-    monkeypatch.setattr(query_expansion, "GoogleGenAI", ShouldNotBeCalledGoogleGenAI)
+    monkeypatch.setattr(query_expansion, "OpenAI", ShouldNotBeCalledOpenAI)
 
     question = "   "
     assert query_expansion.build_query_variants(question) == [""]

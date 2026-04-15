@@ -16,6 +16,7 @@ from app.db.models.document import (
 )
 from app.db.models.user import User
 from app.db.snowflake import SessionLocal
+from app.services.client_service import delete_client as delete_client_with_cascade
 from app.services.ingest_service import (
     delete_document,
     ingest_document,
@@ -96,6 +97,15 @@ class VecteraCore:
                 "id": new_client.id,
                 "name": new_client.name,
                 "description": new_client.description,
+            }
+
+    def delete_client(self, client_id: str) -> dict:
+        with SessionLocal() as db:
+            delete_client_with_cascade(client_id=client_id, db=db)
+            return {
+                "status": "success",
+                "message": "Client deleted",
+                "client_id": client_id,
             }
 
     # --- Documents ---

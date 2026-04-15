@@ -5,6 +5,43 @@ from ui.components.auth import get_api
 from ui.components.layout import render_page_shell
 
 
+@st.dialog("Confirm Client Deletion")
+def confirm_client_delete_dialog(api, client_id: str, client_name: str):
+    st.error(
+        "Deleting this client permanently removes its documents, vector data, and query history."
+    )
+    st.caption(f"Client workspace: `{client_name}`")
+    st.caption("Type `DELETE` to confirm.")
+
+    confirmation = st.text_input(
+        "Confirmation",
+        placeholder="DELETE",
+        key=f"delete_client_confirmation_{client_id}",
+    )
+
+    if st.button(
+        "Delete client workspace",
+        type="primary",
+        icon=":material/delete_forever:",
+        width="stretch",
+        disabled=confirmation != "DELETE",
+        key=f"confirm_delete_client_{client_id}",
+    ):
+        with st.spinner("Deleting client workspace..."):
+            try:
+                api.delete_client(client_id)
+                st.success(f"{client_name} deleted.")
+                st.session_state.pop("clients", None)
+                st.session_state.pop("chat_history", None)
+                st.session_state.pop("chat_history_by_client", None)
+                st.session_state.pop("documents_client", None)
+                st.session_state.pop("query_history_client_filter", None)
+                st.session_state.pop("query_history_filter_signature", None)
+            except Exception as e:
+                st.error(f"Failed to delete client: {e}")
+        st.rerun()
+
+
 def render_clients():
     render_page_shell(
         "Manage workspaces.",
@@ -72,6 +109,29 @@ def render_clients():
                     },
                 )
                 st.session_state.clients = clients
+
+                with st.expander(":material/delete_forever: Delete a client"):
+                    delete_options = {c["name"]: c["id"] for c in clients}
+                    selected_name = st.selectbox(
+                        "Client workspace to delete",
+                        list(delete_options.keys()),
+                        key="delete_client_select",
+                    )
+                    st.warning(
+                        "This action is irreversible. All documents and vector indexes for this client will be removed."
+                    )
+                    if st.button(
+                        "Delete selected client",
+                        icon=":material/delete:",
+                        type="primary",
+                        width="stretch",
+                        key="delete_selected_client",
+                    ):
+                        confirm_client_delete_dialog(
+                            api=api,
+                            client_id=delete_options[selected_name],
+                            client_name=selected_name,
+                        )
             except Exception as e:
                 msg = str(e)
                 if "Connection" in msg:

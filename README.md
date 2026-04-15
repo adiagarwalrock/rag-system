@@ -49,7 +49,7 @@ After cloning, run the setup script to install all dependencies (requires `uv` a
 
 2. Update `.env` values:
    - Set all `SNOWFLAKE_*` fields for Snowflake.
-   - Set `GOOGLE_API_KEY` for real LLM and embedding responses.
+   - Set `OPENAI_API_KEY` for real LLM and embedding responses.
    - Keep `QDRANT_URL` as `http://localhost:6333` for local Docker.
    - If `SNOWFLAKE_*` values are omitted, the app uses local SQLite (`rag_local.db`) as a fallback.
 
@@ -80,7 +80,7 @@ After cloning, run the setup script to install all dependencies (requires `uv` a
    This validates:
    - Snowflake connectivity with `SELECT 1`
    - Qdrant connectivity and collection readiness
-   - Google API key validity against the Gemini API
+   - OpenAI API key validity against the OpenAI API
 
 ## Running the UI (Streamlit)
 
@@ -126,7 +126,7 @@ Please see [architecture.md](./architecture.md) for a comprehensive diagrammatic
 
 Retrieval relies on a specialized, multi-stage retrieval pipeline (`app/retrieval/retriever.py`):
 
-1. **Vector Retrieval**: Starts with client-isolated `ExactMatchFilter` retrieval executing against the Qdrant backend, pulling the top `K+5` nearest neighbors using `gemini-embedding-001`.
+1. **Vector Retrieval**: Starts with client-isolated `ExactMatchFilter` retrieval executing against the Qdrant backend, pulling the top `K+5` nearest neighbors using `text-embedding-3-large`.
 2. **Authority & Recency Reranking**: Re-scores outputs pushing documents with higher authority indicators or newer internal version rankings to the top (`reranker.py`).
 3. **Temporal Ranking**: Adjusts scores logically based on explicitly resolved `effective_from`/`effective_to` dates relative to the current UTC timestamp, penalizing expired sources (`temporal_ranker.py`).
 4. **Citation Building**: Translates standard chunk nodes into explicitly labeled citation structures that are fed directly inside the synthesized generation prompt, referencing source text precisely via `page_num` and `version_label`.
@@ -159,7 +159,7 @@ Retrieval relies on a specialized, multi-stage retrieval pipeline (`app/retrieva
 ### What I would improve with more time
 
 - **Asynchronous Task Processing**: Shift the ingestion pipeline (embedding, semantic extractions, vector insertions) into a Celery/Redis queue or background FastAPI task pattern to untether the UI thread.
-- **Multimodal Visual Embeddings**: Implement LlamaIndex's vision pipelines using a multimodal Gemini model to correctly ingest visual graphs and convert bounded tables into raw markdown formats during the ingestion phase for precise layout querying.
+- **Multimodal Visual Embeddings**: Implement LlamaIndex's vision pipelines using a multimodal OpenAI model to correctly ingest visual graphs and convert bounded tables into raw markdown formats during the ingestion phase for precise layout querying.
 - **Advanced Cross-Encoder Reranking**: Swap the basic additive metadata-heuristics reranker for a Neural Cross-Encoder logic model (like Cohere Rerank) that drastically improves top-k contextual sorting over plain embeddings without degrading performance.
 
 ## Operations & Document Lifecycle

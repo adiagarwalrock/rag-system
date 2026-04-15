@@ -1,0 +1,117 @@
+"""
+Client service: workflows related to client lifecycle operations.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from sqlalchemy.orm import Session
+
+from app.db.models.client import Client
+from app.db.models.document import (
+    ConflictLog,
+    Document,
+    DocumentVersion,
+    IngestionJob,
+    QueryLog,
+    RetrievalLog,
+    VectorNodeRegistry,
+)
+from app.db.models.user import UserClientAccess
+from app.services.ingest_service import delete_document
+
+logger = logging.getLogger(__name__)
+
+
+class ClientDeletionService:
+    """Delete a client and all associated records across SQL and vector store."""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def delete_client(self, client_id: str) -> None:
+        client = self._get_client(client_id)
+        document_ids = self._list_client_document_ids(client_id)
+        logger.info(
+            "Deleting client '%s' with %d documents.",
+            client_id,
+            len(document_ids),
+        )
+
+        try:
+            self._delete_client_documents(document_ids)
+            self._delete_query_history(client_id)
+            self._delete_client_access_rows(client_id)
+            self._delete_client_residual_rows(client_id, document_ids)
+            self.db.delete(client)
+            self.db.commit()
+            logger.info("Deleted client '%s' and associated records.", client_id)
+        except Exception as exc:
+            self.db.rollback()
+            raise ValueError(f"Failed to delete client {client_id}: {exc}") from exc
+
+    def _get_client(self, client_id: str) -> Client:
+        client = self.db.query(Client).filter(Client.id == client_id).first()
+        if not client:
+            raise ValueError(f"Client {client_id} not found.")
+        return client
+
+    def _list_client_document_ids(self, client_id: str) -> list[str]:
+        rows = (
+            self.db.query(Document.id).filter(Document.client_id == client_id).all()
+        )
+        return [row[0] for row in rows]
+
+    def _delete_client_documents(self, document_ids: list[str]) -> None:
+        for document_id in document_ids:
+            # Reuse the existing document hard-delete path to keep SQL + vector cleanup
+            # behavior consistent in one place.
+            delete_document(document_id=document_id, db=self.db, hard=True)
+
+    def _delete_query_history(self, client_id: str) -> None:
+        query_log_ids = [
+            row[0]
+            for row in self.db.query(QueryLog.id)
+            .filter(QueryLog.client_id == client_id)
+            .all()
+        ]
+
+        if query_log_ids:
+            self.db.query(RetrievalLog).filter(
+                RetrievalLog.query_log_id.in_(query_log_ids)
+            ).delete(synchronize_session=False)
+            self.db.query(ConflictLog).filter(
+                ConflictLog.query_log_id.in_(query_log_ids)
+            ).delete(synchronize_session=False)
+
+        self.db.query(QueryLog).filter(QueryLog.client_id == client_id).delete(
+            synchronize_session=False
+        )
+
+    def _delete_client_access_rows(self, client_id: str) -> None:
+        self.db.query(UserClientAccess).filter(
+            UserClientAccess.client_id == client_id
+        ).delete(synchronize_session=False)
+
+    def _delete_client_residual_rows(
+        self, client_id: str, document_ids: list[str]
+    ) -> None:
+        if document_ids:
+            self.db.query(DocumentVersion).filter(
+                DocumentVersion.document_id.in_(document_ids)
+            ).delete(synchronize_session=False)
+
+        self.db.query(VectorNodeRegistry).filter(
+            VectorNodeRegistry.client_id == client_id
+        ).delete(synchronize_session=False)
+        self.db.query(IngestionJob).filter(IngestionJob.client_id == client_id).delete(
+            synchronize_session=False
+        )
+        self.db.query(Document).filter(Document.client_id == client_id).delete(
+            synchronize_session=False
+        )
+
+
+def delete_client(client_id: str, db: Session) -> None:
+    ClientDeletionService(db).delete_client(client_id)

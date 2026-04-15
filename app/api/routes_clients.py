@@ -9,6 +9,7 @@ from app.db.models.client import Client
 from app.db.models.user import User
 from app.db.snowflake import get_db
 from app.schemas.client import ClientCreate, ClientResponse, ClientUpdate
+from app.services.client_service import delete_client as delete_client_with_cascade
 
 router = APIRouter()
 
@@ -68,3 +69,22 @@ def update_client(
     db.commit()
     db.refresh(client)
     return client
+
+
+@router.delete("/{client_id}")
+def delete_client(
+    client_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    try:
+        delete_client_with_cascade(client_id=client_id, db=db)
+        return {
+            "status": "success",
+            "message": "Client deleted",
+            "client_id": client_id,
+        }
+    except ValueError as e:
+        detail = str(e)
+        status_code = 404 if "not found" in detail.lower() else 400
+        raise HTTPException(status_code=status_code, detail=detail)

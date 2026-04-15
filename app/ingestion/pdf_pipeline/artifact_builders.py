@@ -237,7 +237,7 @@ def _run_structured_multimodal_inference(
 ) -> _Model | None:
     if (
         not image_path
-        or settings.is_google_api_key_placeholder
+        or settings.is_openai_api_key_placeholder
         or not Path(image_path).exists()
     ):
         return None
@@ -262,14 +262,14 @@ def _run_structured_multimodal_inference(
     except Exception as exc:
         if _is_transient_provider_error(exc):
             logger.warning(
-                "Google structured multimodal inference unavailable for %s (status=%s): %s",
+                "Structured multimodal inference unavailable for %s (status=%s): %s",
                 image_path,
                 getattr(exc, "status_code", None),
                 exc,
             )
         else:
             logger.exception(
-                "Google structured multimodal inference failed for %s", image_path
+                "Structured multimodal inference failed for %s", image_path
             )
 
     return None
@@ -529,7 +529,7 @@ def analyze_chart_artifacts(
     if not _llm_available_for_pipeline():
         for figure in chart_candidates:
             figure.llm_caption_status = "skipped"
-            figure.llm_caption_error = "google_api_key_unavailable"
+            figure.llm_caption_error = "openai_api_key_unavailable"
             _apply_heuristic_chart_fields(figure)
         return
 
@@ -994,10 +994,10 @@ def _run_chart_inference(prompt: str, image_path: str) -> ChartCaptionResponse |
     return _run_structured_text_inference(prompt, ChartCaptionResponse)
 
 
-def _run_google_multimodal_inference(prompt: str, image_path: str) -> str | None:
+def _run_multimodal_inference(prompt: str, image_path: str) -> str | None:
     if (
         not image_path
-        or settings.is_google_api_key_placeholder
+        or settings.is_openai_api_key_placeholder
         or not Path(image_path).exists()
     ):
         return None
@@ -1036,14 +1036,14 @@ def _run_google_multimodal_inference(prompt: str, image_path: str) -> str | None
     except Exception as exc:
         if _is_transient_provider_error(exc):
             logger.warning(
-                "Google multimodal inference unavailable for %s (status=%s): %s. "
+                "Multimodal inference unavailable for %s (status=%s): %s. "
                 "Falling back to text-only inference.",
                 image_path,
                 getattr(exc, "status_code", None),
                 exc,
             )
         else:
-            logger.exception("Google multimodal inference failed for %s", image_path)
+            logger.exception("Multimodal inference failed for %s", image_path)
     return None
 
 

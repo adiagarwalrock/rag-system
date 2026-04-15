@@ -319,14 +319,6 @@ class VecteraRetriever:
             }
 
     def _chat_with_optional_thinking(self, messages: list[ChatMessage]):
-        generation_config = _thinking_generation_config()
-        if generation_config is not None:
-            try:
-                return Settings.llm.chat(messages, generation_config=generation_config)
-            except Exception:
-                logger.exception(
-                    "Chat with Gemini thinking config failed; retrying without thinking config"
-                )
         return Settings.llm.chat(messages)
 
 
@@ -586,10 +578,6 @@ def _resolve_asset_path(raw_ref: Any, artifact_bundle_path: Any) -> Path | None:
             return resolved
 
     return None
-
-
-def _thinking_generation_config() -> dict[str, Any] | None:
-    return {"thinking_config": {"include_thoughts": True}}
 
 
 def _extract_answer_and_reasoning_from_chat(response: Any) -> tuple[str, str | None]:

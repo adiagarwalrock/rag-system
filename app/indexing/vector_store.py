@@ -6,12 +6,11 @@ import logging
 from typing import List
 
 import qdrant_client
-from google.genai import types as genai_types
 from llama_index.core import Settings, StorageContext, VectorStoreIndex
 from llama_index.core.schema import BaseNode
 from llama_index.core.vector_stores import MetadataFilters
-from llama_index.embeddings.google_genai import GoogleGenAIEmbedding
-from llama_index.llms.google_genai import GoogleGenAI
+from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.llms.openai import OpenAI
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from qdrant_client.http import models as qdrant_models
 
@@ -53,12 +52,10 @@ class VectorStoreManager:
         return cls._instance
 
     def configure_llama_settings(self) -> None:
-        """Configure LlamaIndex global LLM/embedding settings with Google GenAI."""
-        api_key = settings.google_api_key
-        if settings.is_google_api_key_placeholder:
-            raise RuntimeError(
-                "GOOGLE_API_KEY (or GEMINI_API_KEY) is required and cannot be a placeholder."
-            )
+        """Configure LlamaIndex global LLM/embedding settings with OpenAI."""
+        api_key = settings.ai_api_key
+        if settings.is_openai_api_key_placeholder:
+            raise RuntimeError("AI_API_KEY is required and cannot be a placeholder.")
 
         if (
             self._configured_key == api_key
@@ -67,21 +64,19 @@ class VectorStoreManager:
         ):
             return
 
-        embedding_config = None
+        embedding_kwargs = {}
         if settings.EMBEDDING_OUTPUT_DIMENSION is not None:
-            embedding_config = genai_types.EmbedContentConfig(
-                output_dimensionality=settings.EMBEDDING_OUTPUT_DIMENSION
-            )
+            embedding_kwargs["dimensions"] = settings.EMBEDDING_OUTPUT_DIMENSION
 
-        Settings.llm = GoogleGenAI(model=settings.LLM_MODEL, api_key=api_key)
-        Settings.embed_model = GoogleGenAIEmbedding(
-            model_name=settings.EMBEDDING_MODEL,
+        Settings.llm = OpenAI(model=settings.LLM_MODEL, api_key=api_key)
+        Settings.embed_model = OpenAIEmbedding(
+            model=settings.EMBEDDING_MODEL,
             api_key=api_key,
-            embedding_config=embedding_config,
+            **embedding_kwargs,
         )
         self._configured_key = api_key
         logger.info(
-            "Configured Google GenAI models (llm=%s, embedding=%s).",
+            "Configured OpenAI models (llm=%s, embedding=%s).",
             settings.LLM_MODEL,
             settings.EMBEDDING_MODEL,
         )

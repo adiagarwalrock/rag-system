@@ -96,30 +96,30 @@ def check_qdrant() -> bool:
 
 
 def check_llm() -> bool:
-    api_key = settings.google_api_key
-    if settings.is_google_api_key_placeholder:
-        print("[FAIL] LLM: GOOGLE_API_KEY is missing or placeholder")
+    api_key = settings.ai_api_key
+    if settings.is_openai_api_key_placeholder:
+        print("[FAIL] LLM: AI_API_KEY is missing or placeholder")
         return False
 
     try:
         response = requests.get(
-            "https://generativelanguage.googleapis.com/v1beta/models",
-            params={"key": api_key},
+            "https://api.openai.com/v1/models",
+            headers={"Authorization": f"Bearer {api_key}"},
             timeout=15,
         )
     except requests.RequestException as exc:
-        print(f"[FAIL] LLM: Gemini API unreachable ({exc})")
+        print(f"[FAIL] LLM: OpenAI API unreachable ({exc})")
         return False
 
     if response.status_code == 200:
-        print("[PASS] LLM: GOOGLE_API_KEY accepted by Gemini API")
+        print("[PASS] LLM: AI_API_KEY accepted by OpenAI API")
         return True
 
     if response.status_code in {401, 403}:
-        print("[FAIL] LLM: GOOGLE_API_KEY rejected by Gemini API")
+        print("[FAIL] LLM: AI_API_KEY rejected by OpenAI API")
         return False
 
-    print(f"[FAIL] LLM: Gemini API returned status {response.status_code}")
+    print(f"[FAIL] LLM: OpenAI API returned status {response.status_code}")
     return False
 
 

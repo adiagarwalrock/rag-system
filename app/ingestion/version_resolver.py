@@ -32,6 +32,32 @@ DATE_PATTERNS = [
 ]
 
 QUARTER_MAP = {"Q1": (1, 3), "Q2": (4, 6), "Q3": (7, 9), "Q4": (10, 12)}
+MONTH_MAP = {
+    "jan": 1,
+    "january": 1,
+    "feb": 2,
+    "february": 2,
+    "mar": 3,
+    "march": 3,
+    "apr": 4,
+    "april": 4,
+    "may": 5,
+    "jun": 6,
+    "june": 6,
+    "jul": 7,
+    "july": 7,
+    "aug": 8,
+    "august": 8,
+    "sep": 9,
+    "sept": 9,
+    "september": 9,
+    "oct": 10,
+    "october": 10,
+    "nov": 11,
+    "november": 11,
+    "dec": 12,
+    "december": 12,
+}
 
 
 def resolve_version(filename: str, content_preview: str = "") -> dict:
@@ -80,6 +106,28 @@ def resolve_version(filename: str, content_preview: str = "") -> dict:
                 "confidence_score": max(result["confidence_score"], 0.7),
             }
         )
+    elif m_match := re.search(
+        r"\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+        r"Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|"
+        r"Dec(?:ember)?)\s+(\d{4})\b",
+        combined,
+        re.IGNORECASE,
+    ):
+        month_token = m_match.group(1).lower()
+        year = int(m_match.group(2))
+        month = MONTH_MAP.get(month_token)
+        if month and 2000 <= year <= 2030:
+            display_month = m_match.group(1).strip()
+            result.update(
+                {
+                    "version_label": result["version_label"]
+                    or f"{display_month} {year}",
+                    "version_rank": year * 100 + month,
+                    "effective_from": datetime(year, month, 1),
+                    "effective_to": datetime(year, month, 28),
+                    "confidence_score": max(result["confidence_score"], 0.65),
+                }
+            )
 
     # 3. Year-only patterns
     elif y_match := (
@@ -119,7 +167,14 @@ def resolve_version(filename: str, content_preview: str = "") -> dict:
 
     # 6. Version group
     base = filename
-    for pat in [r"[vV]\d+(?:\.\d+)*", r"Q[1-4]\s*\d{4}", r"\d{4}[\-_]\d{2}[\-_]\d{2}"]:
+    for pat in [
+        r"[vV]\d+(?:\.\d+)*",
+        r"Q[1-4]\s*\d{4}",
+        r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+        r"Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|"
+        r"Dec(?:ember)?)\s+\d{4}",
+        r"\d{4}[\-_]\d{2}[\-_]\d{2}",
+    ]:
         base = re.sub(pat, "", base, flags=re.IGNORECASE)
 
     base = re.sub(r"[_\-\s]+", "_", base).strip("_.")

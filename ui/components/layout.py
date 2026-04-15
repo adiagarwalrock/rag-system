@@ -32,9 +32,9 @@ def render_account_sidebar():
     if not auth_enabled():
         st.sidebar.caption("Auth disabled: dev mode")
 
-    if settings.is_google_api_key_placeholder:
+    if settings.is_openai_api_key_placeholder:
         st.sidebar.warning(
-            "Google API key missing or placeholder. Runtime startup validation will fail until this is configured.",
+            "OpenAI API key missing or placeholder. Runtime startup validation will fail until this is configured.",
             icon=":material/warning:",
         )
 

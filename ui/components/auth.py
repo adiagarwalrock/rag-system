@@ -14,7 +14,7 @@ def get_api() -> VecteraCore:
     api = _create_api()
     # Streamlit can retain a cached instance across hot reloads while the class
     # definition has changed. Rebuild once if expected methods are missing.
-    if not hasattr(api, "list_query_history"):
+    if not hasattr(api, "list_query_history") or not hasattr(api, "delete_client"):
         _create_api.clear()
         api = _create_api()
     if st.session_state.get("token"):

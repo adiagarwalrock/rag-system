@@ -30,17 +30,22 @@ class Settings(BaseSettings):
         Path(__file__).resolve().parents[2] / "artifacts" / "parsed"
     )
 
-    # Google GenAI / LlamaIndex
-    GOOGLE_API_KEY: str | None = Field(
+    # OpenAI / LlamaIndex
+    AI_API_KEY: str | None = Field(
         default=None,
-        validation_alias=AliasChoices("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+        validation_alias=AliasChoices(
+            "OPENAI_API_KEY",
+            "AI_API_KEY",
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+        ),
     )
-    LLM_MODEL: str = "gemini-3-flash-preview"
-    QUERY_EXPANSION_MODEL: str = "gemini-3-flash-preview"
-    EMBEDDING_MODEL: str = "gemini-embedding-001"
+    LLM_MODEL: str = "gpt-5.1"
+    QUERY_EXPANSION_MODEL: str = "gpt-4o-mini"
+    EMBEDDING_MODEL: str = "text-embedding-3-large"
     EMBEDDING_OUTPUT_DIMENSION: int | None = None
 
-    COLLECTION_NAME: str = "rag_collection"
+    COLLECTION_NAME: str = "rag_collection_oai"
     VECTOR_DIMENSIONS: int = 3072
 
     # Layout-aware PDF ingestion
@@ -86,17 +91,17 @@ class Settings(BaseSettings):
         return key.strip("'\"").strip()
 
     @property
-    def google_api_key(self) -> str:
-        return self._normalize_secret(self.GOOGLE_API_KEY)
+    def ai_api_key(self) -> str:
+        return self._normalize_secret(self.AI_API_KEY)
 
     @property
-    def is_google_api_key_placeholder(self) -> bool:
-        key = self.google_api_key.lower()
+    def is_openai_api_key_placeholder(self) -> bool:
+        key = self.ai_api_key.lower()
         placeholders = {
-            "your_google_api_key_here",
-            "your_gemini_api_key_here",
+            "your_openai_api_key_here",
             "your_api_key_here",
             "your_api_key",
+            "your_ai_api_key",
         }
         return not key or key in placeholders or key.startswith("your_")
 
@@ -115,7 +120,5 @@ settings = Settings()
 
 def validate_runtime_settings() -> None:
     """Validate mandatory runtime configuration before serving requests."""
-    if settings.is_google_api_key_placeholder:
-        raise RuntimeError(
-            "GOOGLE_API_KEY (or GEMINI_API_KEY) must be set to a valid key before startup."
-        )
+    if settings.is_openai_api_key_placeholder:
+        raise RuntimeError("AI_API_KEY must be set to a valid key before startup.")

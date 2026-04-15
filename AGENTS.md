@@ -4,12 +4,12 @@
 
 - `cp .env.example .env && ./setup.sh` (requires `uv` + `npm`; installs Python deps and global `@llamaindex/liteparse`).
 - Start vector DB before ingestion/retrieval: `docker-compose up -d qdrant`.
-- Streamlit primary app: `uv run streamlit run app.py --server.port 8502`.
+- Streamlit primary app: `uv run streamlit run streamlit_app.py --server.port 8502`.
 - Optional API wrapper: `uv run uvicorn api:app --reload --port 8000`.
 
 ## Runtime Wiring
 
-- `app.py` is the main UX entrypoint; `ui/pages/*` use `ui/lib/api.py` (`VecteraCore`) to call `app/services/*` directly (no internal HTTP hop).
+- `streamlit_app.py` is the main UX entrypoint; `ui/pages/*` use `ui/lib/api.py` (`VecteraCore`) to call `app/services/*` directly (no internal HTTP hop).
 - `api.py` exposes the same workflows over REST (`/api/v1/*`); keep business logic in `app/services/`, not route handlers/UI pages.
 - Boundaries: orchestration `app/services/`, ingestion `app/ingestion/`, retrieval `app/retrieval/`, vector store `app/indexing/vector_store.py`, DB/session `app/db/`.
 
