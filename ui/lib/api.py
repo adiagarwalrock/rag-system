@@ -19,7 +19,7 @@ from app.db.snowflake import SessionLocal
 from app.services.client_service import delete_client as delete_client_with_cascade
 from app.services.ingest_service import (
     delete_document,
-    ingest_document,
+    enqueue_document_ingestion,
     retry_ingestion,
 )
 from app.services.query_history_service import QueryHistoryFilters, QueryHistoryService
@@ -114,7 +114,7 @@ class VecteraCore:
             query = db.query(Document)
             if client_id:
                 query = query.filter(Document.client_id == client_id)
-            documents = query.all()
+            documents = query.order_by(Document.created_at.desc()).all()
             results = []
             for d in documents:
                 results.append(
@@ -144,7 +144,7 @@ class VecteraCore:
             client = db.query(Client).filter(Client.id == client_id).first()
             client_name = client.name if client else "Unknown"
 
-            doc = ingest_document(
+            doc, job = enqueue_document_ingestion(
                 file_content=file_content,
                 filename=file_name,
                 client_id=client_id,
@@ -152,7 +152,12 @@ class VecteraCore:
                 user_id=user_id,
                 db=db,
             )
-            return {"id": doc.id, "name": doc.name, "status": doc.status}
+            return {
+                "id": doc.id,
+                "name": doc.name,
+                "status": doc.status,
+                "ingestion_job_id": job.id,
+            }
 
     def get_document_status(self, document_id: str) -> dict:
         with SessionLocal() as db:

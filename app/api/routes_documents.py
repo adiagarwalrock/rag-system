@@ -9,13 +9,18 @@ from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_active_user
 from app.db.models.client import Client
-from app.db.models.document import Document, DocumentVersion, VectorNodeRegistry
+from app.db.models.document import (
+    Document,
+    DocumentVersion,
+    IngestionJob,
+    VectorNodeRegistry,
+)
 from app.db.models.user import User
 from app.db.snowflake import get_db
 from app.schemas.document import DocumentListResponse, DocumentResponse
 from app.services.ingest_service import (
     delete_document,
-    ingest_document,
+    enqueue_document_ingestion,
     retry_ingestion,
 )
 
@@ -75,10 +80,19 @@ def get_document_status(
         .count()
     )
 
+    latest_job = (
+        db.query(IngestionJob)
+        .filter(IngestionJob.document_id == document_id)
+        .order_by(IngestionJob.started_at.desc(), IngestionJob.id.desc())
+        .first()
+    )
+
     return {
         "document_id": doc.id,
         "name": doc.name,
         "status": doc.status,
+        "ingestion_job_id": latest_job.id if latest_job else None,
+        "ingestion_job_status": latest_job.status if latest_job else None,
         "vector_point_count": vector_point_count,
         "document_family": doc.document_family,
         "version_label": version.version_label if version else None,
@@ -103,7 +117,7 @@ async def ingest_doc(
     # Read file content
     file_content = await file.read()
 
-    result = ingest_document(
+    result, job = enqueue_document_ingestion(
         file_content=file_content,
         filename=file.filename,
         client_id=client_id,
@@ -111,7 +125,18 @@ async def ingest_doc(
         user_id=current_user.id,
         db=db,
     )
-    return result
+    return {
+        "id": result.id,
+        "client_id": result.client_id,
+        "name": result.name,
+        "file_type": result.file_type,
+        "status": result.status,
+        "checksum": result.checksum,
+        "document_family": result.document_family,
+        "created_at": result.created_at,
+        "updated_at": result.updated_at,
+        "ingestion_job_id": job.id,
+    }
 
 
 @router.post("/{document_id}/retry", response_model=DocumentResponse)

@@ -1,7 +1,6 @@
 import streamlit as st
 
 from app.core.config import settings
-from ui.components.auth import render_login
 
 
 def auth_enabled() -> bool:
@@ -22,6 +21,9 @@ def require_auth():
         return
 
     if not st.session_state.get("authenticated"):
+        # Lazy import to avoid eager auth/api/db import chain during app startup.
+        from ui.components.auth import render_login
+
         render_login()
         st.stop()
 

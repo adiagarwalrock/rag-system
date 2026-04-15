@@ -7,7 +7,10 @@ Flow: validate -> save -> parse -> version resolve -> index -> persist mappings/
 import logging
 import os
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from queue import Full, Queue
+from threading import Lock, Thread
 from typing import Any, List
 
 from llama_index.core import Settings as LlamaSettings
@@ -31,6 +34,7 @@ from app.db.models.document import (
     IngestionJob,
     VectorNodeRegistry,
 )
+from app.db.snowflake import SessionLocal
 from app.indexing.vector_store import COLLECTION_NAME, vector_store_manager
 from app.ingestion.parser import parse_document, save_upload_file
 from app.ingestion.validator import (
@@ -155,6 +159,165 @@ NON_SEMANTIC_LLM_METADATA_KEYS = (
 )
 
 _MISSING_DOC_ID_SENTINELS = {"", "none", "null", "n/a", "na", "undefined"}
+
+
+@dataclass(frozen=True, slots=True)
+class IngestionQueueTask:
+    document_id: str
+    job_id: str
+    client_id: str
+    client_name: str
+
+
+class IngestionQueueManager:
+    """Background ingestion queue with bounded worker concurrency."""
+
+    def __init__(self, max_workers: int, max_queue_size: int):
+        self._max_workers = max(1, max_workers)
+        self._queue: Queue[IngestionQueueTask] = Queue(maxsize=max_queue_size)
+        self._workers_started = False
+        self._lock = Lock()
+
+    def enqueue(self, task: IngestionQueueTask) -> None:
+        self._ensure_workers_started()
+        try:
+            self._queue.put_nowait(task)
+        except Full as exc:
+            raise ValueError(
+                "Ingestion queue is full. Please retry in a moment."
+            ) from exc
+
+        logger.info(
+            "Queued ingestion task doc=%s job=%s queue_size=%d",
+            task.document_id,
+            task.job_id,
+            self._queue.qsize(),
+        )
+
+    def _ensure_workers_started(self) -> None:
+        if self._workers_started:
+            return
+
+        with self._lock:
+            if self._workers_started:
+                return
+
+            for worker_index in range(self._max_workers):
+                worker = Thread(
+                    target=self._worker_loop,
+                    args=(worker_index,),
+                    daemon=True,
+                    name=f"ingestion-worker-{worker_index + 1}",
+                )
+                worker.start()
+            self._workers_started = True
+            logger.info(
+                "Started ingestion queue workers: count=%d",
+                self._max_workers,
+            )
+
+    def _worker_loop(self, worker_index: int) -> None:
+        while True:
+            task = self._queue.get()
+            try:
+                self._run_task(task, worker_index=worker_index)
+            except Exception:
+                logger.exception(
+                    "Unhandled ingestion worker failure for doc=%s",
+                    task.document_id,
+                )
+            finally:
+                self._queue.task_done()
+
+    def _run_task(self, task: IngestionQueueTask, worker_index: int) -> None:
+        with SessionLocal() as db:
+            db_doc = db.query(Document).filter(Document.id == task.document_id).first()
+            job = db.query(IngestionJob).filter(IngestionJob.id == task.job_id).first()
+
+            if not db_doc or not job:
+                logger.warning(
+                    "Skipping queued task for missing entities doc=%s job=%s",
+                    task.document_id,
+                    task.job_id,
+                )
+                return
+
+            if db_doc.status in {"deleted", "deleting", "deleting_failed"}:
+                logger.info(
+                    "Skipping queued ingestion for document in terminal delete state: %s",
+                    db_doc.id,
+                )
+                return
+
+            file_path = db_doc.storage_path
+            if not file_path or not os.path.exists(file_path):
+                missing_error = ValueError(
+                    "Raw file is missing before queued ingestion started."
+                )
+                _handle_ingestion_failure(
+                    missing_error,
+                    db_doc.name,
+                    db_doc.id,
+                    job.id,
+                    db_doc,
+                    job,
+                    db,
+                )
+                return
+
+            db_doc.status = "processing"
+            job.status = "running"
+            job.started_at = datetime.now(timezone.utc)
+            db.commit()
+
+            logger.info(
+                "Worker %d started ingestion doc=%s job=%s",
+                worker_index + 1,
+                db_doc.id,
+                job.id,
+            )
+
+            try:
+                _execute_pipeline(
+                    db_doc,
+                    job,
+                    file_path,
+                    db_doc.name,
+                    task.client_id,
+                    task.client_name,
+                    db_doc.id,
+                    db_doc.file_type,
+                    db,
+                )
+            except Exception as exc:
+                _handle_ingestion_failure(
+                    exc,
+                    db_doc.name,
+                    db_doc.id,
+                    job.id,
+                    db_doc,
+                    job,
+                    db,
+                )
+
+
+_INGESTION_QUEUE_MANAGER: IngestionQueueManager | None = None
+_INGESTION_QUEUE_LOCK = Lock()
+
+
+def get_ingestion_queue_manager() -> IngestionQueueManager:
+    global _INGESTION_QUEUE_MANAGER
+    if _INGESTION_QUEUE_MANAGER is not None:
+        return _INGESTION_QUEUE_MANAGER
+
+    with _INGESTION_QUEUE_LOCK:
+        if _INGESTION_QUEUE_MANAGER is None:
+            _INGESTION_QUEUE_MANAGER = IngestionQueueManager(
+                max_workers=settings.INGESTION_MAX_WORKERS,
+                max_queue_size=settings.INGESTION_QUEUE_MAX_SIZE,
+            )
+
+    return _INGESTION_QUEUE_MANAGER
 
 
 def _build_non_layout_node_parser() -> Any:
@@ -326,6 +489,77 @@ def ingest_document(
     except Exception as e:
         _handle_ingestion_failure(e, filename, doc_id, job_id, db_doc, job, db)
         raise
+
+
+def enqueue_document_ingestion(
+    file_content: bytes,
+    filename: str,
+    client_id: str,
+    client_name: str,
+    user_id: str,
+    db: Session,
+) -> tuple[Document, IngestionJob]:
+    """
+    Queue document ingestion for background processing.
+
+    Returns:
+        Tuple of persisted (Document, IngestionJob) in queued/running lifecycle.
+    """
+    file_ext = validate_file_type(filename)
+    file_size = validate_file_size(file_content)
+    checksum = compute_checksum(file_content)
+
+    doc_id = str(uuid.uuid4())
+    db_doc = Document(
+        id=doc_id,
+        client_id=client_id,
+        name=filename,
+        file_type=file_ext,
+        storage_path="",
+        checksum=checksum,
+        uploaded_by=user_id,
+        status="queued",
+    )
+    db.add(db_doc)
+
+    job_id = str(uuid.uuid4())
+    job = IngestionJob(
+        id=job_id,
+        client_id=client_id,
+        document_id=doc_id,
+        status="queued",
+        started_at=None,
+        parser_name="rag_ingestion_pipeline",
+        parser_version="2.0.0",
+        filesize_bytes=file_size,
+        created_by=user_id,
+    )
+    db.add(job)
+    db.commit()
+
+    try:
+        file_path = save_upload_file(file_content, filename, RAW_DATA_DIR)
+        db_doc.storage_path = file_path
+        db.commit()
+    except Exception as exc:
+        _handle_ingestion_failure(exc, filename, doc_id, job_id, db_doc, job, db)
+        raise
+
+    task = IngestionQueueTask(
+        document_id=doc_id,
+        job_id=job_id,
+        client_id=client_id,
+        client_name=client_name,
+    )
+    try:
+        get_ingestion_queue_manager().enqueue(task)
+    except Exception as exc:
+        _handle_ingestion_failure(exc, filename, doc_id, job_id, db_doc, job, db)
+        raise ValueError(f"Failed to queue ingestion: {exc}") from exc
+
+    db.refresh(db_doc)
+    db.refresh(job)
+    return db_doc, job
 
 
 def retry_ingestion(document_id: str, user_id: str, db: Session) -> Document:

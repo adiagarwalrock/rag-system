@@ -6,6 +6,7 @@ from app.api.routes_clients import router as clients_router
 from app.api.routes_documents import router as documents_router
 from app.api.routes_health import router as health_router
 from app.api.routes_query import router as query_router
+from app.core.ai_provider import initialize_ai_provider
 from app.core.config import settings, validate_runtime_settings
 from app.db.base import Base
 
@@ -21,6 +22,7 @@ app = FastAPI(
 @app.on_event("startup")
 def _validate_runtime_config() -> None:
     validate_runtime_settings()
+    initialize_ai_provider()
 
 
 # Auto-create all tables on startup

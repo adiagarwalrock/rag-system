@@ -87,7 +87,7 @@ After cloning, run the setup script to install all dependencies (requires `uv` a
 The primary UI entry point leverages Streamlit. It directly utilizes internal models and services (`app.services.*`) without executing HTTP requests internally.
 
 ```bash
-uv run streamlit run app.py --server.port 8502
+uv run streamlit run streamlit_app.py --server.port 8502
 ```
 
 *UI will run on <http://localhost:8502>*

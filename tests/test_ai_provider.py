@@ -1,0 +1,104 @@
+from types import SimpleNamespace
+
+from app.core import ai_provider
+
+
+def _settings(**overrides):
+    base = {
+        "OPENAI_USE_RESPONSES": False,
+        "LLM_MODEL": "gpt-5.2",
+        "QUERY_EXPANSION_MODEL": "gpt-5.4-mini",
+        "EMBEDDING_MODEL": "text-embedding-3-large",
+        "EMBEDDING_OUTPUT_DIMENSION": None,
+        "ai_api_key": "test-key",
+        "is_openai_api_key_placeholder": False,
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def test_get_llm_uses_chat_completions_when_responses_disabled(monkeypatch):
+    monkeypatch.setattr(ai_provider, "settings", _settings(OPENAI_USE_RESPONSES=False))
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FakeOpenAIResponses:
+        def __init__(self, **kwargs):
+            raise AssertionError("responses class should not be used")
+
+    monkeypatch.setattr(ai_provider, "OpenAI", FakeOpenAI)
+    monkeypatch.setattr(ai_provider, "OpenAIResponses", FakeOpenAIResponses)
+
+    llm = ai_provider.get_llm()
+
+    assert isinstance(llm, FakeOpenAI)
+    assert llm.kwargs["model"] == "gpt-5.2"
+    assert llm.kwargs["api_key"] == "test-key"
+
+
+def test_get_llm_uses_responses_when_enabled(monkeypatch):
+    monkeypatch.setattr(ai_provider, "settings", _settings(OPENAI_USE_RESPONSES=True))
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            raise AssertionError("chat completions class should not be used")
+
+    class FakeOpenAIResponses:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(ai_provider, "OpenAI", FakeOpenAI)
+    monkeypatch.setattr(ai_provider, "OpenAIResponses", FakeOpenAIResponses)
+
+    llm = ai_provider.get_llm()
+
+    assert isinstance(llm, FakeOpenAIResponses)
+    assert llm.kwargs["model"] == "gpt-5.2"
+    assert llm.kwargs["api_key"] == "test-key"
+
+
+def test_get_embedding_model_passes_optional_dimensions(monkeypatch):
+    monkeypatch.setattr(ai_provider, "settings", _settings(EMBEDDING_OUTPUT_DIMENSION=1536))
+
+    class FakeEmbedding:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(ai_provider, "OpenAIEmbedding", FakeEmbedding)
+
+    embedding = ai_provider.get_embedding_model()
+
+    assert isinstance(embedding, FakeEmbedding)
+    assert embedding.kwargs["model"] == "text-embedding-3-large"
+    assert embedding.kwargs["api_key"] == "test-key"
+    assert embedding.kwargs["dimensions"] == 1536
+
+
+def test_initialize_ai_provider_sets_llama_settings_and_uses_cache(monkeypatch):
+    monkeypatch.setattr(ai_provider, "settings", _settings())
+    fake_llama_settings = SimpleNamespace(llm=None, embed_model=None)
+    monkeypatch.setattr(ai_provider, "LlamaSettings", fake_llama_settings)
+
+    calls = {"llm": 0, "embedding": 0}
+
+    def _fake_get_llm(**kwargs):
+        calls["llm"] += 1
+        return "llm-object"
+
+    def _fake_get_embedding(**kwargs):
+        calls["embedding"] += 1
+        return "embed-object"
+
+    monkeypatch.setattr(ai_provider, "get_llm", _fake_get_llm)
+    monkeypatch.setattr(ai_provider, "get_embedding_model", _fake_get_embedding)
+    monkeypatch.setattr(ai_provider, "_CONFIGURED_SIGNATURE", None)
+
+    ai_provider.initialize_ai_provider()
+    ai_provider.initialize_ai_provider()
+
+    assert fake_llama_settings.llm == "llm-object"
+    assert fake_llama_settings.embed_model == "embed-object"
+    assert calls["llm"] == 1
+    assert calls["embedding"] == 1

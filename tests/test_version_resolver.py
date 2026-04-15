@@ -31,6 +31,15 @@ def test_resolve_version_detects_fiscal_year_patterns():
     assert result["effective_to"] == datetime(2023, 12, 31)
 
 
+def test_resolve_version_detects_month_name_year_patterns():
+    result = resolve_version("Digital Realty_Investor Presentation March 2026.pdf")
+
+    assert result["version_label"] == "March 2026"
+    assert result["version_rank"] == 202603
+    assert result["effective_from"] == datetime(2026, 3, 1)
+    assert result["effective_to"] == datetime(2026, 3, 28)
+
+
 def test_resolve_version_extracts_published_date_from_filename():
     result = resolve_version("policy_2024-01-15.pdf")
 

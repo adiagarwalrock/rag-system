@@ -4,6 +4,7 @@ from app.retrieval.citation_builder import build_citations
 from app.retrieval.query_expansion import should_expand_query
 from app.retrieval.retriever import (
     VecteraRetriever,
+    _build_retrieval_diagnostics,
     _collect_image_evidence_paths,
     _fuse_node_batches,
     _split_reasoning_from_text,
@@ -23,6 +24,7 @@ def test_query_expansion_routes_broad_and_version_questions_only():
     assert should_expand_query("Compare the current version against the older version")
     assert should_expand_query("Summarize trends across the uploaded reports")
     assert should_expand_query("Show me the chart for quarterly revenue")
+    assert should_expand_query("How did customer count change over time?")
     assert not should_expand_query("What is the renewal deadline?")
 
 
@@ -143,6 +145,80 @@ def test_comparison_queries_select_multiple_versions_for_citations():
 
     assert "v1" in versions
     assert "v2" in versions
+
+
+def test_comparison_query_deprioritizes_reasoning_chunks_for_factual_delta_questions():
+    retriever = VecteraRetriever("client-1", top_k=10)
+    ranked = [
+        _node(
+            "reasoning-v2",
+            0.95,
+            {
+                "chunk_type": "reasoning_chart",
+                "version_label": "v2",
+                "document_id": "doc-v2",
+                "document_version_group": "policy",
+            },
+        ),
+        _node(
+            "reasoning-v1",
+            0.93,
+            {
+                "chunk_type": "reasoning_chart",
+                "version_label": "v1",
+                "document_id": "doc-v1",
+                "document_version_group": "policy",
+            },
+        ),
+        _node(
+            "factual-v2",
+            0.9,
+            {
+                "chunk_type": "body_text",
+                "version_label": "v2",
+                "document_id": "doc-v2",
+                "document_version_group": "policy",
+            },
+        ),
+        _node(
+            "factual-v1",
+            0.88,
+            {
+                "chunk_type": "body_text",
+                "version_label": "v1",
+                "document_id": "doc-v1",
+                "document_version_group": "policy",
+            },
+        ),
+    ]
+
+    evidence_nodes = retriever._select_evidence_nodes(
+        "How much did customer count change between v1 and v2?",
+        ranked,
+    )
+
+    selected_ids = [node.node.node_id for node in evidence_nodes]
+    assert selected_ids[:2] == ["factual-v2", "factual-v1"]
+
+
+def test_retrieval_diagnostics_reports_reasoning_and_document_diversity():
+    ranked = [
+        _node(
+            "reasoning-1",
+            0.8,
+            {"chunk_type": "reasoning_chart", "document_id": "doc-1"},
+        ),
+        _node("body-1", 0.7, {"chunk_type": "body_text", "document_id": "doc-1"}),
+        _node("body-2", 0.6, {"chunk_type": "body_text", "document_id": "doc-2"}),
+    ]
+    evidence = [ranked[1], ranked[2]]
+
+    diagnostics = _build_retrieval_diagnostics(ranked, evidence)
+
+    assert diagnostics["ranked_document_count"] == 2
+    assert diagnostics["evidence_document_count"] == 2
+    assert diagnostics["ranked_reasoning_count"] == 1
+    assert diagnostics["evidence_reasoning_count"] == 0
 
 
 def test_conflict_query_diversifies_evidence_when_versions_are_missing():

@@ -12,6 +12,7 @@ class DocumentResponse(BaseModel):
     status: str
     checksum: Optional[str] = None
     document_family: Optional[str] = None
+    ingestion_job_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

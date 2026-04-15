@@ -1,30 +1,86 @@
-import pandas as pd
+from __future__ import annotations
+
+from datetime import datetime
+
 import streamlit as st
 
+from app.core.config import settings
 from ui.components.auth import get_api
 from ui.components.layout import get_current_user_id, render_page_shell
-from ui.components.utils import get_client_options
+from ui.components.utils import (
+    CLIENTS_CACHE_KEY,
+    DOCUMENTS_CACHE_KEY,
+    QUERY_HISTORY_CACHE_KEY,
+    bump_cache_revision,
+    get_client_options,
+    get_documents,
+)
+
+
+def _format_dt(value: str | None) -> str:
+    if not value:
+        return "n/a"
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed.astimezone().strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return value
+
+
+def _status_chip(status: str) -> tuple[str, str]:
+    normalized = (status or "").lower()
+    if normalized in {"indexed", "completed"}:
+        return "Ready", ":material/check_circle:"
+    if normalized in {"queued", "processing", "running"}:
+        return "In progress", ":material/progress_activity:"
+    if normalized in {"failed", "deleting_failed"}:
+        return "Needs attention", ":material/error:"
+    if normalized in {"deleted"}:
+        return "Deleted", ":material/delete:"
+    return normalized or "unknown", ":material/help:"
 
 
 @st.dialog("Confirm Deletion")
-def confirm_delete_dialog(api, doc_id):
+def confirm_delete_dialog(api, doc_id: str, doc_name: str):
     st.warning(
         "Are you sure you want to delete this document? This removes the raw file and all vector references."
     )
+    st.caption(f"Document: `{doc_name}`")
     if st.button("Yes, delete document", type="primary", width="stretch"):
         with st.spinner("Deleting document..."):
             try:
                 api.delete_document(doc_id, hard=True, user_id=get_current_user_id())
+                bump_cache_revision(DOCUMENTS_CACHE_KEY)
+                bump_cache_revision(QUERY_HISTORY_CACHE_KEY)
                 st.success("Document deleted.")
             except Exception as e:
                 st.error(f"Failed to delete document: {e}")
         st.rerun()
 
 
+def _render_activity(docs: list[dict]):
+    active_docs = [
+        doc
+        for doc in docs
+        if doc.get("status") in {"queued", "processing", "running", "failed"}
+    ]
+    if not active_docs:
+        st.info("No active ingestion jobs right now.")
+        return
+
+    st.caption("Active ingestion jobs")
+    for doc in active_docs:
+        label, icon = _status_chip(doc.get("status", ""))
+        with st.container(border=True):
+            st.markdown(f"**{doc.get('name', 'Unknown document')}**")
+            st.badge(label, icon=icon, color="blue")
+            st.caption(f"Uploaded: {_format_dt(doc.get('created_at'))}")
+
+
 def render_documents():
     render_page_shell(
         "Add source material for chat.",
-        "Upload client files, confirm ingestion status, then return to Chat for source-grounded answers.",
+        "Queue uploads instantly, monitor indexing in background, and manage document lifecycle.",
         "Documents",
         icon="folder",
     )
@@ -35,24 +91,54 @@ def render_documents():
         st.info("Create a client before uploading documents.")
         return
 
-    toolbar = st.columns([0.72, 0.28], vertical_alignment="bottom")
-    with toolbar[0]:
+    st.session_state.setdefault("documents_active_client_name", client_names[0])
+    if st.session_state["documents_active_client_name"] not in client_names:
+        st.session_state["documents_active_client_name"] = client_names[0]
+    st.session_state.setdefault(
+        "documents_active_client_id",
+        client_options[st.session_state["documents_active_client_name"]],
+    )
+    st.session_state["documents_active_client_id"] = client_options[
+        st.session_state["documents_active_client_name"]
+    ]
+
+    with st.form("documents_client_scope"):
         selected_name = st.selectbox(
-            "Client workspace", client_names, key="documents_client"
+            "Client workspace",
+            client_names,
+            index=max(
+                0,
+                client_names.index(st.session_state["documents_active_client_name"])
+                if st.session_state["documents_active_client_name"] in client_names
+                else 0,
+            ),
+            key="documents_workspace_pending",
         )
-        selected_client_id = client_options[selected_name]
-    with toolbar[1]:
-        if st.button(
-            "Refresh documents",
-            icon=":material/refresh:",
-            key="refresh_documents",
+        apply_scope = st.form_submit_button(
+            "Apply workspace",
+            icon=":material/check:",
+            type="primary",
             width="stretch",
-        ):
+        )
+        if apply_scope:
+            st.session_state["documents_active_client_name"] = selected_name
+            st.session_state["documents_active_client_id"] = client_options[selected_name]
+            st.session_state.pop("documents_selected_doc_id", None)
             st.rerun()
 
-    upload_tab, library_tab = st.tabs(["Upload files", "Document library"])
+    active_client_name = st.session_state["documents_active_client_name"]
+    active_client_id = st.session_state["documents_active_client_id"]
+    st.caption(f"Active workspace: **{active_client_name}**")
 
-    with upload_tab:
+    view_mode = st.radio(
+        "View",
+        ["Upload", "Activity", "Library"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="documents_view_mode",
+    )
+
+    if view_mode == "Upload":
         with st.container(border=True):
             st.markdown("#### :material/upload_file: Upload files")
             st.caption("Supported formats: PDF, DOCX, PPTX.")
@@ -65,7 +151,7 @@ def render_documents():
             )
 
             if st.button(
-                "Upload and ingest",
+                "Queue ingestion",
                 type="primary",
                 icon=":material/upload:",
                 key="upload_and_ingest",
@@ -74,159 +160,126 @@ def render_documents():
                 if not uploaded_files:
                     st.error("Select at least one file to upload.")
                 else:
-                    progress = st.progress(0)
-                    with st.status("Ingesting documents...", expanded=True) as status:
-                        failures = 0
-                        for i, uploaded_file in enumerate(uploaded_files):
+                    queued = 0
+                    failed = 0
+                    with st.status("Queueing uploads...", expanded=True):
+                        for uploaded_file in uploaded_files:
                             st.write(f":material/description: {uploaded_file.name}")
                             try:
                                 content = uploaded_file.read()
-                                result = api.upload_document(
-                                    selected_client_id,
+                                api.upload_document(
+                                    active_client_id,
                                     uploaded_file.name,
                                     content,
                                     user_id=get_current_user_id(),
                                 )
-                                st.success(
-                                    f"{uploaded_file.name} ingested as {result.get('status', 'done')}."
-                                )
+                                queued += 1
                             except Exception as exc:
-                                failures += 1
+                                failed += 1
                                 st.error(f"{uploaded_file.name} failed: {exc}")
-                            progress.progress((i + 1) / len(uploaded_files))
 
-                        status.update(
-                            label=(
-                                "Ingestion completed with errors."
-                                if failures
-                                else "Ingestion complete."
-                            ),
-                            state="error" if failures else "complete",
-                            expanded=bool(failures),
-                        )
+                    bump_cache_revision(DOCUMENTS_CACHE_KEY)
+                    if queued:
+                        st.success(f"Queued {queued} document(s) for background indexing.")
+                    if failed:
+                        st.warning(f"{failed} document(s) failed to queue.")
+                    st.session_state["documents_view_mode"] = "Activity"
+                    st.rerun()
 
-    with library_tab:
+        return
+
+    docs = get_documents(active_client_id)
+
+    if view_mode == "Activity":
         with st.container(border=True):
-            st.markdown("#### :material/folder: Document library")
+            st.markdown("#### :material/sync: Ingestion activity")
+
+            @st.fragment(run_every=f"{settings.UI_POLL_INTERVAL_SECONDS}s")
+            def _live_activity_fragment():
+                latest_docs = get_documents(active_client_id, force_refresh=True)
+                _render_activity(latest_docs)
+
+            _live_activity_fragment()
+        return
+
+    with st.container(border=True):
+        st.markdown("#### :material/folder: Document library")
+        if st.button(
+            "Refresh library",
+            icon=":material/refresh:",
+            width="stretch",
+            key="refresh_documents",
+        ):
+            bump_cache_revision(DOCUMENTS_CACHE_KEY)
+            st.rerun()
+
+        if not docs:
+            st.info("No documents uploaded for this client yet.")
+            return
+
+        selected_doc_id = st.session_state.get("documents_selected_doc_id")
+        for doc in docs:
+            status_label, icon = _status_chip(doc.get("status", ""))
+            with st.container(border=True):
+                header_cols = st.columns([0.6, 0.4], vertical_alignment="center")
+                with header_cols[0]:
+                    st.markdown(f"**{doc['name']}**")
+                    st.caption(
+                        f"{doc.get('file_type', '')} · Uploaded {_format_dt(doc.get('created_at'))}"
+                    )
+                with header_cols[1]:
+                    st.badge(status_label, icon=icon, color="blue")
+
+                action_cols = st.columns(3)
+                with action_cols[0]:
+                    if st.button(
+                        "Details",
+                        icon=":material/info:",
+                        key=f"details_{doc['id']}",
+                        width="stretch",
+                    ):
+                        st.session_state["documents_selected_doc_id"] = doc["id"]
+                        st.rerun()
+                with action_cols[1]:
+                    if st.button(
+                        "Retry",
+                        icon=":material/refresh:",
+                        key=f"retry_{doc['id']}",
+                        width="stretch",
+                        disabled=doc.get("status") not in {"failed", "indexed", "completed"},
+                    ):
+                        with st.spinner("Retrying ingestion..."):
+                            try:
+                                api.retry_document_ingestion(
+                                    doc["id"], user_id=get_current_user_id()
+                                )
+                                bump_cache_revision(DOCUMENTS_CACHE_KEY)
+                                st.success("Ingestion retried successfully.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Retry failed: {e}")
+                with action_cols[2]:
+                    if st.button(
+                        "Delete",
+                        icon=":material/delete:",
+                        key=f"delete_{doc['id']}",
+                        width="stretch",
+                    ):
+                        confirm_delete_dialog(api, doc["id"], doc["name"])
+
+        if selected_doc_id:
+            st.divider()
+            st.markdown("#### :material/info: Selected document details")
             try:
-                docs = api.list_documents(selected_client_id)
-                if not docs:
-                    st.info("No documents uploaded for this client yet.")
-                    return
+                status = api.get_document_status(selected_doc_id)
+                metric_cols = st.columns(3)
+                metric_cols[0].metric("Status", status.get("status", "?"))
+                metric_cols[1].metric("Vector points", status.get("vector_point_count", 0))
+                metric_cols[2].metric("Version", status.get("version_label") or "-")
 
-                df = pd.DataFrame(docs)
-                status_counts = df["status"].fillna("unknown").value_counts().to_dict()
-
-                with st.container(border=True):
-                    stats = st.columns(3)
-                    stats[0].metric(":material/description: Documents", len(docs))
-                    ready = status_counts.get("completed", 0) + status_counts.get(
-                        "indexed", 0
-                    )
-                    proc = status_counts.get("processing", 0) + status_counts.get(
-                        "running", 0
-                    )
-                    stats[1].metric(":material/check_circle: Ready", ready)
-                    stats[2].metric(":material/sync: Processing", proc)
-
-                cols = ["name", "file_type", "status", "document_family", "created_at"]
-                display_df = df[[c for c in cols if c in df.columns]]
-
-                st.dataframe(
-                    display_df,
-                    width="stretch",
-                    hide_index=True,
-                    key="documents_table",
-                    column_config={
-                        "name": st.column_config.TextColumn("Document"),
-                        "file_type": st.column_config.TextColumn("Type"),
-                        "status": st.column_config.TextColumn("Status"),
-                        "document_family": st.column_config.TextColumn("Family"),
-                        "created_at": st.column_config.TextColumn("Uploaded"),
-                    },
-                )
-
-                with st.expander(":material/info: Check document details"):
-                    doc_options = {d["name"]: d["id"] for d in docs}
-                    selected_doc = st.selectbox(
-                        "Document",
-                        list(doc_options.keys()),
-                        key="document_status_select",
-                    )
-                    selected_doc_id = doc_options[selected_doc]
-
-                    status = api.get_document_status(selected_doc_id)
-                    with st.container(border=True):
-                        c1, c2, c3 = st.columns(3)
-                        c1.metric(":material/flag: Status", status.get("status", "?"))
-                        c2.metric(
-                            ":material/reorder: Vector points",
-                            status.get("vector_point_count", 0),
-                        )
-                        c3.metric(
-                            ":material/history: Version",
-                            status.get("version_label") or "-",
-                        )
-
-                        if err := status.get("error_message"):
-                            st.error(err)
-
-                        if (is_current := status.get("is_current_version")) is not None:
-                            text = (
-                                "Yes"
-                                if is_current
-                                else "No, this version was superseded"
-                            )
-                            icon = (
-                                ":material/check_circle:"
-                                if is_current
-                                else ":material/cancel:"
-                            )
-                            st.info(f"{icon} Current version: {text}")
-
-                        if family := status.get("version_group"):
-                            st.caption(
-                                f":material/family_restroom: Document family: {family}"
-                            )
-
-                    action_cols = st.columns(2)
-                    with action_cols[0]:
-                        if status.get("status") in [
-                            "failed",
-                            "indexed",
-                            "completed",
-                            "deleted",
-                        ]:
-                            if st.button(
-                                "Retry Ingestion",
-                                icon=":material/refresh:",
-                                type="primary",
-                                width="stretch",
-                                key=f"retry_{selected_doc_id}",
-                            ):
-                                with st.spinner("Retrying ingestion..."):
-                                    try:
-                                        api.retry_document_ingestion(
-                                            selected_doc_id,
-                                            user_id=get_current_user_id(),
-                                        )
-                                        st.success("Ingestion retried successfully.")
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Retry failed: {e}")
-
-                    with action_cols[1]:
-                        if st.button(
-                            "Delete Document",
-                            icon=":material/delete:",
-                            width="stretch",
-                            key=f"delete_{selected_doc_id}",
-                        ):
-                            confirm_delete_dialog(api, selected_doc_id)
-
-            except Exception as e:
-                msg = str(e)
-                if "Connection" in msg:
-                    st.warning("Cannot connect to backend.")
-                else:
-                    st.error(f"Failed to load documents: {msg}")
+                if err := status.get("error_message"):
+                    st.error(err)
+                if family := status.get("version_group"):
+                    st.caption(f"Document family: {family}")
+            except Exception as exc:
+                st.error(f"Failed to load document details: {exc}")

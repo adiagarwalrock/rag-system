@@ -4,7 +4,7 @@ import streamlit as st
 
 from ui.components.auth import get_api
 from ui.components.layout import get_current_user_id, render_page_shell
-from ui.components.utils import get_client_options
+from ui.components.utils import CLIENTS_CACHE_KEY, bump_cache_revision, get_client_options
 
 
 def _ensure_chat_history():
@@ -299,14 +299,42 @@ def render_query():
         st.info("Create a client before starting a chat.")
         return
 
+    st.session_state.setdefault("query_active_client_name", client_names[0])
+    if st.session_state["query_active_client_name"] not in client_names:
+        st.session_state["query_active_client_name"] = client_names[0]
+    st.session_state.setdefault(
+        "query_active_client_id",
+        client_options[st.session_state["query_active_client_name"]],
+    )
+    st.session_state["query_active_client_id"] = client_options[
+        st.session_state["query_active_client_name"]
+    ]
+
     with st.sidebar:
-        selected_name = st.selectbox(
-            "Client workspace",
-            client_names,
-            key="query_client",
-            help="Every answer is limited to documents for this client.",
-        )
-        selected_client_id = client_options[selected_name]
+        with st.form("query_workspace_form"):
+            selected_name = st.selectbox(
+                "Client workspace",
+                client_names,
+                index=max(
+                    0,
+                    client_names.index(st.session_state["query_active_client_name"])
+                    if st.session_state["query_active_client_name"] in client_names
+                    else 0,
+                ),
+                help="Every answer is limited to documents for this client.",
+            )
+            if st.form_submit_button(
+                "Apply workspace",
+                icon=":material/check:",
+                type="primary",
+                width="stretch",
+            ):
+                st.session_state["query_active_client_name"] = selected_name
+                st.session_state["query_active_client_id"] = client_options[selected_name]
+                st.rerun()
+
+        selected_name = st.session_state["query_active_client_name"]
+        selected_client_id = st.session_state["query_active_client_id"]
 
         if st.button(
             "Clear chat",
@@ -323,18 +351,15 @@ def render_query():
             key="refresh_query_clients",
             width="stretch",
         ):
-            st.session_state.pop("clients", None)
+            bump_cache_revision(CLIENTS_CACHE_KEY)
             st.rerun()
 
     chat_history = _get_chat_history(selected_client_id)
-
-    if pending := st.session_state.pop("pending_question", None):
-        _submit_question(api, selected_client_id, pending)
-        st.rerun()
 
     for message in chat_history:
         _render_chat_message(message)
 
     if question := st.chat_input(f"Ask about {selected_name}'s documents"):
-        _submit_question(api, selected_client_id, question.strip())
-        st.rerun()
+        trimmed = question.strip()
+        if trimmed:
+            _submit_question(api, selected_client_id, trimmed)

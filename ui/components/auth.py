@@ -1,15 +1,21 @@
 import streamlit as st
+from typing import TYPE_CHECKING
 
 from app.core.config import settings
-from ui.lib.api import VecteraCore
+
+if TYPE_CHECKING:
+    from ui.lib.api import VecteraCore
 
 
 @st.cache_resource
-def _create_api() -> VecteraCore:
+def _create_api() -> "VecteraCore":
+    # Lazy import to avoid pulling DB/network modules during UI module import.
+    from ui.lib.api import VecteraCore
+
     return VecteraCore()
 
 
-def get_api() -> VecteraCore:
+def get_api() -> "VecteraCore":
     """Get or create the API client."""
     api = _create_api()
     # Streamlit can retain a cached instance across hot reloads while the class

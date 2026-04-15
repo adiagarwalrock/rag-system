@@ -40,8 +40,9 @@ class Settings(BaseSettings):
             "GOOGLE_API_KEY",
         ),
     )
-    LLM_MODEL: str = "gpt-5.1"
-    QUERY_EXPANSION_MODEL: str = "gpt-4o-mini"
+    LLM_MODEL: str = "gpt-5.2"
+    QUERY_EXPANSION_MODEL: str = "gpt-5.4-mini"
+    OPENAI_USE_RESPONSES: bool = False
     EMBEDDING_MODEL: str = "text-embedding-3-large"
     EMBEDDING_OUTPUT_DIMENSION: int | None = None
 
@@ -78,6 +79,13 @@ class Settings(BaseSettings):
     REASONING_MAX_OUTPUT_CHARS: int = 2000
     REASONING_TIMEOUT_SECONDS: int = 30
     REASONING_MODEL: str | None = None  # defaults to LLM_MODEL if None
+
+    # Background ingestion
+    INGESTION_MAX_WORKERS: int = 2
+    INGESTION_QUEUE_MAX_SIZE: int = 128
+
+    # UI responsiveness
+    UI_POLL_INTERVAL_SECONDS: int = 3
 
     model_config = SettingsConfigDict(
         env_file=".env",

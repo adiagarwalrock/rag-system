@@ -40,7 +40,7 @@ COPY --from=builder /app/.venv /app/.venv
 # Copy the application code
 COPY app /app/app
 COPY ui /app/ui
-COPY app.py api.py init_db.py ./
+COPY streamlit_app.py api.py init_db.py ./
 
 # Ensure local storage roots exist in container runtime.
 RUN mkdir -p /app/data/raw /app/artifacts/parsed
@@ -49,4 +49,4 @@ RUN mkdir -p /app/data/raw /app/artifacts/parsed
 EXPOSE 8501
 
 # Run the Streamlit application
-CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+CMD ["streamlit", "run", "streamlit_app.py", "--server.port=8501", "--server.address=0.0.0.0"]

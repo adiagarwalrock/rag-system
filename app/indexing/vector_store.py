@@ -6,14 +6,13 @@ import logging
 from typing import List
 
 import qdrant_client
-from llama_index.core import Settings, StorageContext, VectorStoreIndex
+from llama_index.core import StorageContext, VectorStoreIndex
 from llama_index.core.schema import BaseNode
 from llama_index.core.vector_stores import MetadataFilters
-from llama_index.embeddings.openai import OpenAIEmbedding
-from llama_index.llms.openai import OpenAI
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from qdrant_client.http import models as qdrant_models
 
+from app.core.ai_provider import initialize_ai_provider
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -39,7 +38,6 @@ class VectorStoreManager:
     _instance: "VectorStoreManager | None" = None
 
     def __init__(self) -> None:
-        self._configured_key = ""
         self._client = None
         self._vector_store = None
         self._storage_context = None
@@ -52,38 +50,11 @@ class VectorStoreManager:
         return cls._instance
 
     def configure_llama_settings(self) -> None:
-        """Configure LlamaIndex global LLM/embedding settings with OpenAI."""
-        api_key = settings.ai_api_key
-        if settings.is_openai_api_key_placeholder:
-            raise RuntimeError("AI_API_KEY is required and cannot be a placeholder.")
-
-        if (
-            self._configured_key == api_key
-            and Settings.llm is not None
-            and Settings.embed_model is not None
-        ):
-            return
-
-        embedding_kwargs = {}
-        if settings.EMBEDDING_OUTPUT_DIMENSION is not None:
-            embedding_kwargs["dimensions"] = settings.EMBEDDING_OUTPUT_DIMENSION
-
-        Settings.llm = OpenAI(model=settings.LLM_MODEL, api_key=api_key)
-        Settings.embed_model = OpenAIEmbedding(
-            model=settings.EMBEDDING_MODEL,
-            api_key=api_key,
-            **embedding_kwargs,
-        )
-        self._configured_key = api_key
-        logger.info(
-            "Configured OpenAI models (llm=%s, embedding=%s).",
-            settings.LLM_MODEL,
-            settings.EMBEDDING_MODEL,
-        )
+        """Backward-compatible wrapper for centralized provider initialization."""
+        initialize_ai_provider()
 
     def _get_qdrant_client(self):
         if self._client is None:
-            self.configure_llama_settings()
             self._client = qdrant_client.QdrantClient(
                 url=settings.QDRANT_URL,
                 api_key=settings.QDRANT_API_KEY,

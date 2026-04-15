@@ -32,14 +32,44 @@ from app.retrieval.reranker import rerank_nodes
 logger = logging.getLogger(__name__)
 
 DEFAULT_EVIDENCE_LIMIT = 7
-COMPARATIVE_EVIDENCE_LIMIT = 6
+COMPARATIVE_EVIDENCE_LIMIT = 10
 CONFLICT_EVIDENCE_LIMIT = 8
 MAX_MULTIMODAL_IMAGES = 6
 SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+REASONING_CHUNK_TYPES = {
+    "reasoning_table",
+    "reasoning_chart",
+    "reasoning_figure",
+    "reasoning_page",
+}
+REASONING_PRIORITY_TERMS = (
+    "chart",
+    "charts",
+    "graph",
+    "graphs",
+    "table",
+    "tables",
+    "figure",
+    "figures",
+    "diagram",
+    "diagrams",
+    "image",
+    "images",
+    "screenshot",
+    "screenshots",
+    "visual",
+    "trend",
+    "trends",
+    "why",
+    "reason",
+    "analysis",
+    "explain",
+)
 COMPARATIVE_TERMS = (
     "compare",
     "comparison",
     "difference",
+    "change",
     "changes",
     "changed",
     "conflict",
@@ -89,6 +119,8 @@ class VecteraRetriever:
                 "source_count": 0,
                 "images_used": [],
                 "image_evidence_count": 0,
+                "retrieval_diagnostics": _build_retrieval_diagnostics([], []),
+                **retrieval_metadata,
             }
 
         # Step 2: Rank candidates with semantic + temporal/version signals.
@@ -96,6 +128,9 @@ class VecteraRetriever:
 
         # Step 3: Select bounded evidence used for answer synthesis/citations.
         evidence_nodes = self._select_evidence_nodes(question, ranked_nodes)
+        retrieval_diagnostics = _build_retrieval_diagnostics(
+            ranked_nodes, evidence_nodes
+        )
 
         # Step 4: Conflict detection (advisory, scoped to evidence + near-miss nodes).
         conflicts = detect_conflicts(
@@ -117,6 +152,7 @@ class VecteraRetriever:
             "evidence_count": len(evidence_nodes),
             "images_used": synthesis.get("images_used", []),
             "image_evidence_count": len(synthesis.get("images_used", [])),
+            "retrieval_diagnostics": retrieval_diagnostics,
             **retrieval_metadata,
         }
 
@@ -222,34 +258,51 @@ class VecteraRetriever:
             ]
             candidate_nodes = numeric_nodes + non_numeric_nodes
 
+        primary_candidates = candidate_nodes
+        secondary_candidates: list[Any] = []
+        if not _is_reasoning_priority_query(question):
+            primary_candidates = [
+                node for node in candidate_nodes if not _is_reasoning_chunk(node)
+            ]
+            secondary_candidates = [
+                node for node in candidate_nodes if _is_reasoning_chunk(node)
+            ]
+
         selected = []
         selected_keys: set[str] = set()
         selected_diversity_keys: set[str] = set()
+        candidate_batches = [primary_candidates]
+        if secondary_candidates:
+            candidate_batches.append(secondary_candidates)
 
         if comparative_query:
             # Prefer source diversity first: version label when available, otherwise
             # document family/document ID as fallback.
-            for node in candidate_nodes:
-                diversity_key = _evidence_diversity_key(node)
-                if diversity_key in selected_diversity_keys:
-                    continue
+            for batch in candidate_batches:
+                for node in batch:
+                    diversity_key = _evidence_diversity_key(node)
+                    if diversity_key in selected_diversity_keys:
+                        continue
+                    key = _node_unique_key(node)
+                    if key in selected_keys:
+                        continue
+                    selected.append(node)
+                    selected_keys.add(key)
+                    selected_diversity_keys.add(diversity_key)
+                    if len(selected) >= evidence_cap:
+                        return selected
+
+        for batch in candidate_batches:
+            for node in batch:
+                if len(selected) >= evidence_cap:
+                    break
                 key = _node_unique_key(node)
                 if key in selected_keys:
                     continue
                 selected.append(node)
                 selected_keys.add(key)
-                selected_diversity_keys.add(diversity_key)
-                if len(selected) >= evidence_cap:
-                    return selected
-
-        for node in candidate_nodes:
             if len(selected) >= evidence_cap:
                 break
-            key = _node_unique_key(node)
-            if key in selected_keys:
-                continue
-            selected.append(node)
-            selected_keys.add(key)
 
         return selected
 
@@ -398,6 +451,67 @@ def _has_numeric_signal(node: Any) -> bool:
     return False
 
 
+def _is_reasoning_chunk(node: Any) -> bool:
+    metadata = node.node.metadata or {}
+    return str(metadata.get("chunk_type") or "") in REASONING_CHUNK_TYPES
+
+
+def _is_reasoning_priority_query(question: str) -> bool:
+    normalized = question.lower()
+    return any(term in normalized for term in REASONING_PRIORITY_TERMS)
+
+
+def _build_retrieval_diagnostics(
+    ranked_nodes: list[Any],
+    evidence_nodes: list[Any],
+) -> dict[str, Any]:
+    ranked_chunk_types = _chunk_type_counts(ranked_nodes)
+    evidence_chunk_types = _chunk_type_counts(evidence_nodes)
+    ranked_reasoning = sum(
+        count
+        for chunk_type, count in ranked_chunk_types.items()
+        if chunk_type in REASONING_CHUNK_TYPES
+    )
+    evidence_reasoning = sum(
+        count
+        for chunk_type, count in evidence_chunk_types.items()
+        if chunk_type in REASONING_CHUNK_TYPES
+    )
+
+    return {
+        "ranked_document_count": len(_document_diversity_keys(ranked_nodes)),
+        "evidence_document_count": len(_document_diversity_keys(evidence_nodes)),
+        "ranked_chunk_types": ranked_chunk_types,
+        "evidence_chunk_types": evidence_chunk_types,
+        "ranked_reasoning_count": ranked_reasoning,
+        "evidence_reasoning_count": evidence_reasoning,
+    }
+
+
+def _chunk_type_counts(nodes: list[Any]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for node in nodes:
+        metadata = node.node.metadata or {}
+        chunk_type = str(metadata.get("chunk_type") or "unknown")
+        counts[chunk_type] = counts.get(chunk_type, 0) + 1
+    return counts
+
+
+def _document_diversity_keys(nodes: list[Any]) -> set[str]:
+    keys: set[str] = set()
+    for node in nodes:
+        metadata = node.node.metadata or {}
+        value = (
+            metadata.get("document_id")
+            or metadata.get("document_name")
+            or metadata.get("source_file")
+            or getattr(node.node, "node_id", None)
+        )
+        if value:
+            keys.add(str(value))
+    return keys
+
+
 def _evidence_diversity_key(node: Any) -> str:
     metadata = node.node.metadata or {}
     version_label = (metadata.get("version_label") or "").strip().lower()
@@ -492,11 +606,7 @@ def _prompt_excerpt(citation: dict[str, Any]) -> str:
         "chart_context",
         "chart_data_points",
         "visual_proxy_text",
-        "reasoning_table",
-        "reasoning_chart",
-        "reasoning_figure",
-        "reasoning_page",
-    }
+    } | REASONING_CHUNK_TYPES
     limit = 2400 if chunk_type in rich_types else 1400
     text = (citation.get("text") or "").strip()
     if len(text) <= limit:
