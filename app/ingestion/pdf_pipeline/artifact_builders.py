@@ -4,6 +4,7 @@ import json
 import logging
 import mimetypes
 import re
+import hashlib
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
@@ -420,6 +421,7 @@ def build_figure_artifacts(
     figure_dir: Path,
 ) -> list[FigureArtifact]:
     artifacts: list[FigureArtifact] = []
+    seen_image_hashes: set[str] = set()
     by_page = _regions_by_page(regions)
     manifests = {manifest.page_num: manifest for manifest in page_manifests}
 
@@ -475,6 +477,16 @@ def build_figure_artifacts(
                         continue
 
                     crop_path = ""
+                else:
+                    image_hash = _hash_file(crop_path)
+                    if image_hash and image_hash in seen_image_hashes:
+                        try:
+                            Path(crop_path).unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                        continue
+                    if image_hash:
+                        seen_image_hashes.add(image_hash)
 
             artifacts.append(
                 FigureArtifact(
@@ -938,6 +950,18 @@ def _dedupe_strings(values: list[str]) -> list[str]:
         seen.add(key)
         result.append(key)
     return result
+
+
+def _hash_file(path: str) -> str | None:
+    if not path:
+        return None
+    target = Path(path)
+    if not target.exists() or not target.is_file():
+        return None
+    try:
+        return hashlib.sha256(target.read_bytes()).hexdigest()
+    except OSError:
+        return None
 
 
 def _dedupe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:

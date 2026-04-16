@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel
 
@@ -36,6 +36,7 @@ class DocumentListResponse(BaseModel):
 class QueryRequest(BaseModel):
     client_id: str
     question: str
+    reasoning_effort: Literal["low", "medium", "high"] = "medium"
 
 
 class CitationDetail(BaseModel):
@@ -81,3 +82,5 @@ class QueryResponse(BaseModel):
     evidence_count: int = 0
     images_used: List[str] = []
     image_evidence_count: int = 0
+    reasoning_effort: Literal["low", "medium", "high"] = "medium"
+    reasoning_effort_applied: bool = False

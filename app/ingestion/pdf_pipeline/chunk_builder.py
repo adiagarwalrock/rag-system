@@ -572,7 +572,8 @@ def _figure_to_chunks(
     metadata["llm_caption_status"] = figure.llm_caption_status
     metadata["llm_caption_error"] = figure.llm_caption_error
 
-    assets = [ref for ref in [figure.crop_path, figure.page_screenshot_path] if ref]
+    preferred_assets = [figure.crop_path] if figure.crop_path else [figure.page_screenshot_path]
+    assets = _dedupe_asset_refs(preferred_assets)
     chunks = [
         ChunkArtifact(
             chunk_id=str(uuid.uuid4()),
@@ -704,6 +705,20 @@ def _normalize_chunk_texts(parts: Iterable[Any]) -> list[str]:
         if text:
             values.append(text)
     return values
+
+
+def _dedupe_asset_refs(values: Iterable[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        cleaned = value.strip()
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        deduped.append(cleaned)
+    return deduped
 
 
 def _format_chart_datapoints_text(figure: FigureArtifact) -> str:

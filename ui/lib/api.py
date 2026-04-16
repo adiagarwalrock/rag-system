@@ -187,10 +187,17 @@ class VecteraCore:
             return {"status": "success", "message": "Document deleted"}
 
     # --- Query ---
-    def query(self, client_id: str, question: str) -> dict:
+    def query(
+        self, client_id: str, question: str, reasoning_effort: str = "medium"
+    ) -> dict:
         with SessionLocal() as db:
             try:
-                response = execute_query(client_id=client_id, question=question, db=db)
+                response = execute_query(
+                    client_id=client_id,
+                    question=question,
+                    reasoning_effort=reasoning_effort,
+                    db=db,
+                )
                 return response
             except Exception as e:
                 logger.error(f"Query Error: {e}")

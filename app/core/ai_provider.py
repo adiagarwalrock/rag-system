@@ -14,17 +14,40 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 _CONFIGURED_SIGNATURE: tuple[Any, ...] | None = None
+DEFAULT_REASONING_EFFORT = "medium"
+SUPPORTED_REASONING_EFFORTS = {"low", "medium", "high"}
 
 
-def get_llm(*, model: str | None = None, api_key: str | None = None):
+def normalize_reasoning_effort(reasoning_effort: str | None) -> str:
+    effort = (reasoning_effort or "").strip().lower()
+    if effort in SUPPORTED_REASONING_EFFORTS:
+        return effort
+    return DEFAULT_REASONING_EFFORT
+
+
+def reasoning_effort_supported() -> bool:
+    return settings.OPENAI_USE_RESPONSES
+
+
+def get_llm(
+    *,
+    model: str | None = None,
+    api_key: str | None = None,
+    reasoning_effort: str | None = None,
+):
     """Return an OpenAI-compatible LLM instance for the configured API mode."""
     llm_model = model or settings.LLM_MODEL
     resolved_key = api_key or settings.ai_api_key
     llm_class = OpenAIResponses if settings.OPENAI_USE_RESPONSES else OpenAI
-    return llm_class(model=llm_model, api_key=resolved_key)
+    kwargs: dict[str, Any] = {"model": llm_model, "api_key": resolved_key}
+    if llm_class is OpenAIResponses and reasoning_effort is not None:
+        kwargs["reasoning_options"] = {
+            "effort": normalize_reasoning_effort(reasoning_effort)
+        }
+    return llm_class(**kwargs)
 
 
-def get_embedding_model(*, model: str | None = None, api_key: str | None = None):
+def get_embeddings(*, model: str | None = None, api_key: str | None = None):
     """Return an OpenAI embedding model instance with configured dimensions."""
     embedding_model = model or settings.EMBEDDING_MODEL
     resolved_key = api_key or settings.ai_api_key
@@ -37,6 +60,11 @@ def get_embedding_model(*, model: str | None = None, api_key: str | None = None)
         api_key=resolved_key,
         **embedding_kwargs,
     )
+
+
+def get_embedding_model(*, model: str | None = None, api_key: str | None = None):
+    """Backward-compatible alias for `get_embeddings`."""
+    return get_embeddings(model=model, api_key=api_key)
 
 
 def initialize_ai_provider(force: bool = False) -> None:
@@ -63,7 +91,7 @@ def initialize_ai_provider(force: bool = False) -> None:
         return
 
     LlamaSettings.llm = get_llm(api_key=api_key)
-    LlamaSettings.embed_model = get_embedding_model(api_key=api_key)
+    LlamaSettings.embed_model = get_embeddings(api_key=api_key)
     _CONFIGURED_SIGNATURE = signature
 
     llm_api_mode = "responses" if settings.OPENAI_USE_RESPONSES else "chat_completions"

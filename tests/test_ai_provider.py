@@ -59,7 +59,43 @@ def test_get_llm_uses_responses_when_enabled(monkeypatch):
     assert llm.kwargs["api_key"] == "test-key"
 
 
-def test_get_embedding_model_passes_optional_dimensions(monkeypatch):
+def test_get_llm_passes_reasoning_effort_when_responses_enabled(monkeypatch):
+    monkeypatch.setattr(ai_provider, "settings", _settings(OPENAI_USE_RESPONSES=True))
+
+    class FakeOpenAIResponses:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(ai_provider, "OpenAIResponses", FakeOpenAIResponses)
+
+    llm = ai_provider.get_llm(reasoning_effort="high")
+
+    assert isinstance(llm, FakeOpenAIResponses)
+    assert llm.kwargs["reasoning_options"] == {"effort": "high"}
+
+
+def test_get_llm_ignores_reasoning_effort_when_responses_disabled(monkeypatch):
+    monkeypatch.setattr(ai_provider, "settings", _settings(OPENAI_USE_RESPONSES=False))
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(ai_provider, "OpenAI", FakeOpenAI)
+
+    llm = ai_provider.get_llm(reasoning_effort="high")
+
+    assert isinstance(llm, FakeOpenAI)
+    assert "reasoning_options" not in llm.kwargs
+
+
+def test_normalize_reasoning_effort_defaults_for_unknown_values():
+    assert ai_provider.normalize_reasoning_effort("low") == "low"
+    assert ai_provider.normalize_reasoning_effort("HIGH") == "high"
+    assert ai_provider.normalize_reasoning_effort("unknown") == "medium"
+
+
+def test_get_embeddings_passes_optional_dimensions(monkeypatch):
     monkeypatch.setattr(ai_provider, "settings", _settings(EMBEDDING_OUTPUT_DIMENSION=1536))
 
     class FakeEmbedding:
@@ -68,7 +104,7 @@ def test_get_embedding_model_passes_optional_dimensions(monkeypatch):
 
     monkeypatch.setattr(ai_provider, "OpenAIEmbedding", FakeEmbedding)
 
-    embedding = ai_provider.get_embedding_model()
+    embedding = ai_provider.get_embeddings()
 
     assert isinstance(embedding, FakeEmbedding)
     assert embedding.kwargs["model"] == "text-embedding-3-large"
@@ -92,7 +128,7 @@ def test_initialize_ai_provider_sets_llama_settings_and_uses_cache(monkeypatch):
         return "embed-object"
 
     monkeypatch.setattr(ai_provider, "get_llm", _fake_get_llm)
-    monkeypatch.setattr(ai_provider, "get_embedding_model", _fake_get_embedding)
+    monkeypatch.setattr(ai_provider, "get_embeddings", _fake_get_embedding)
     monkeypatch.setattr(ai_provider, "_CONFIGURED_SIGNATURE", None)
 
     ai_provider.initialize_ai_provider()

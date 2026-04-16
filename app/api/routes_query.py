@@ -27,6 +27,7 @@ def query_documents(
     result = execute_query(
         question=request.question,
         client_id=request.client_id,
+        reasoning_effort=request.reasoning_effort,
         db=db,
     )
     return QueryResponse(
@@ -40,4 +41,6 @@ def query_documents(
         evidence_count=result.get("evidence_count", 0),
         images_used=result.get("images_used", []),
         image_evidence_count=result.get("image_evidence_count", 0),
+        reasoning_effort=result.get("reasoning_effort", "medium"),
+        reasoning_effort_applied=result.get("reasoning_effort_applied", False),
     )

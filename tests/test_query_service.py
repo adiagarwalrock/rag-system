@@ -26,11 +26,13 @@ def test_execute_query_persists_query_retrieval_and_conflict_logs(
     db_session.commit()
 
     class FakeRetriever:
-        def __init__(self, client_id: str):
+        def __init__(self, client_id: str, reasoning_effort: str = "medium"):
             self.client_id = client_id
+            self.reasoning_effort = reasoning_effort
 
         def query(self, question: str) -> dict:
             assert self.client_id == client.id
+            assert self.reasoning_effort == "medium"
             assert question == "What changed in v2?"
             return {
                 "answer": "Policy v2 changes renewal terms.",
@@ -94,8 +96,9 @@ def test_execute_query_marks_query_log_failed_on_retrieval_error(
     client = seeded_entities["client"]
 
     class FailingRetriever:
-        def __init__(self, client_id: str):
+        def __init__(self, client_id: str, reasoning_effort: str = "medium"):
             self.client_id = client_id
+            self.reasoning_effort = reasoning_effort
 
         def query(self, question: str) -> dict:
             raise RuntimeError("simulated retrieval failure")

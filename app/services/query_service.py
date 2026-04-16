@@ -24,6 +24,7 @@ def execute_query(
     question: str,
     client_id: str,
     db: Session,
+    reasoning_effort: str = "medium",
 ) -> dict:
     """
     Execute a full query pipeline: retrieve, answer, log.
@@ -46,7 +47,10 @@ def execute_query(
 
     try:
         # Execute retrieval pipeline
-        retriever = VecteraRetriever(client_id=client_id)
+        retriever = VecteraRetriever(
+            client_id=client_id,
+            reasoning_effort=reasoning_effort,
+        )
         result = retriever.query(question)
 
         latency_ms = int((time.time() - start_time) * 1000)

@@ -219,6 +219,8 @@ def test_retrieval_diagnostics_reports_reasoning_and_document_diversity():
     assert diagnostics["evidence_document_count"] == 2
     assert diagnostics["ranked_reasoning_count"] == 1
     assert diagnostics["evidence_reasoning_count"] == 0
+    assert diagnostics["ranked_image_chunk_count"] == 0
+    assert diagnostics["evidence_image_chunk_count"] == 0
 
 
 def test_conflict_query_diversifies_evidence_when_versions_are_missing():
@@ -288,6 +290,32 @@ def test_build_citations_includes_asset_refs_and_visual_metadata():
     assert citations[0]["chart_type"] == "line"
 
 
+def test_build_citations_dedupes_asset_refs_across_citations():
+    citations = build_citations(
+        [
+            _node(
+                "figure-1",
+                0.8,
+                {
+                    "chunk_type": "figure_artifact",
+                    "asset_refs": ["/tmp/shared-image.png"],
+                },
+            ),
+            _node(
+                "figure-2",
+                0.7,
+                {
+                    "chunk_type": "chart_context",
+                    "asset_refs": ["/tmp/shared-image.png"],
+                },
+            ),
+        ]
+    )
+
+    assert citations[0]["asset_refs"] == ["/tmp/shared-image.png"]
+    assert citations[1]["asset_refs"] == []
+
+
 def test_collect_image_evidence_paths_resolves_relative_and_dedupes(tmp_path):
     absolute_image = tmp_path / "absolute.png"
     absolute_image.write_bytes(b"fake")
@@ -312,7 +340,67 @@ def test_collect_image_evidence_paths_resolves_relative_and_dedupes(tmp_path):
 
     paths = _collect_image_evidence_paths(citations, max_images=10)
 
-    assert paths == [str(absolute_image.resolve()), str(relative_image.resolve())]
+    # Same image bytes should be de-duplicated even when paths differ.
+    assert paths == [str(absolute_image.resolve())]
+
+
+def test_collect_image_evidence_paths_includes_unique_image_content(tmp_path):
+    first_image = tmp_path / "first.png"
+    first_image.write_bytes(b"first")
+    second_image = tmp_path / "second.png"
+    second_image.write_bytes(b"second")
+
+    citations = [
+        {"asset_refs": [str(first_image)], "artifact_bundle_path": None},
+        {"asset_refs": [str(second_image)], "artifact_bundle_path": None},
+    ]
+
+    paths = _collect_image_evidence_paths(citations, max_images=10)
+
+    assert paths == [str(first_image.resolve()), str(second_image.resolve())]
+
+
+def test_visual_query_injects_image_evidence_when_top_evidence_has_no_images():
+    retriever = VecteraRetriever("client-1", top_k=10)
+    ranked = [
+        _node(
+            f"text-{i}",
+            1.0 - (i * 0.01),
+            {
+                "chunk_type": "body_text",
+                "document_id": f"doc-{i}",
+            },
+        )
+        for i in range(7)
+    ]
+    ranked.extend(
+        [
+            _node(
+                "image-1",
+                0.5,
+                {
+                    "chunk_type": "figure_artifact",
+                    "document_id": "img-doc-1",
+                    "asset_refs": ["/tmp/figure-1.png"],
+                },
+            ),
+            _node(
+                "image-2",
+                0.49,
+                {
+                    "chunk_type": "chart_context",
+                    "document_id": "img-doc-2",
+                    "asset_refs": ["/tmp/figure-2.png"],
+                },
+            ),
+        ]
+    )
+
+    evidence = retriever._select_evidence_nodes("What does the chart image show?", ranked)
+    image_evidence = [node for node in evidence if node.node.metadata.get("asset_refs")]
+
+    assert len(evidence) == retriever.evidence_limit
+    assert len(image_evidence) >= 2
 
 
 def test_split_reasoning_from_text_extracts_thinking_and_answer():

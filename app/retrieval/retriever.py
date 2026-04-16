@@ -7,10 +7,10 @@ Flow: vector retrieval -> ranking -> evidence selection -> conflict checks -> ci
 import logging
 import mimetypes
 import re
+import hashlib
 from pathlib import Path
 from typing import Any, Dict, List
 
-from llama_index.core import Settings
 from llama_index.core.base.llms.types import (
     ChatMessage,
     ImageBlock,
@@ -22,6 +22,11 @@ from llama_index.core.retrievers import QueryFusionRetriever
 from llama_index.core.retrievers.fusion_retriever import FUSION_MODES
 from llama_index.core.vector_stores import ExactMatchFilter, MetadataFilters
 
+from app.core.ai_provider import (
+    normalize_reasoning_effort,
+    reasoning_effort_supported,
+    get_llm,
+)
 from app.core.prompts import build_grounded_answer_prompt
 from app.indexing.vector_store import vector_store_manager
 from app.retrieval.citation_builder import build_citations
@@ -79,6 +84,23 @@ COMPARATIVE_TERMS = (
     "vs",
     "between",
 )
+VISUAL_QUERY_TERMS = (
+    "image",
+    "images",
+    "figure",
+    "figures",
+    "chart",
+    "charts",
+    "graph",
+    "graphs",
+    "diagram",
+    "diagrams",
+    "map",
+    "maps",
+    "screenshot",
+    "screenshots",
+    "visual",
+)
 
 
 class VecteraRetriever:
@@ -87,9 +109,15 @@ class VecteraRetriever:
     reranking, temporal awareness, conflict detection, and citations.
     """
 
-    def __init__(self, client_id: str, top_k: int = 15):
+    def __init__(
+        self,
+        client_id: str,
+        top_k: int = 15,
+        reasoning_effort: str = "medium",
+    ):
         self.client_id = client_id
         self.top_k = top_k
+        self.reasoning_effort = normalize_reasoning_effort(reasoning_effort)
         self.prefetch_top_k = top_k + 5
         self.evidence_limit = DEFAULT_EVIDENCE_LIMIT
         self.comparative_evidence_limit = COMPARATIVE_EVIDENCE_LIMIT
@@ -119,6 +147,8 @@ class VecteraRetriever:
                 "source_count": 0,
                 "images_used": [],
                 "image_evidence_count": 0,
+                "reasoning_effort": self.reasoning_effort,
+                "reasoning_effort_applied": False,
                 "retrieval_diagnostics": _build_retrieval_diagnostics([], []),
                 **retrieval_metadata,
             }
@@ -152,6 +182,10 @@ class VecteraRetriever:
             "evidence_count": len(evidence_nodes),
             "images_used": synthesis.get("images_used", []),
             "image_evidence_count": len(synthesis.get("images_used", [])),
+            "reasoning_effort": self.reasoning_effort,
+            "reasoning_effort_applied": synthesis.get(
+                "reasoning_effort_applied", False
+            ),
             "retrieval_diagnostics": retrieval_diagnostics,
             **retrieval_metadata,
         }
@@ -304,6 +338,13 @@ class VecteraRetriever:
             if len(selected) >= evidence_cap:
                 break
 
+        selected = _ensure_image_evidence(
+            question=question,
+            selected_nodes=selected,
+            ranked_nodes=ranked_nodes,
+            evidence_cap=evidence_cap,
+        )
+
         return selected
 
     def _synthesize_answer(
@@ -312,6 +353,9 @@ class VecteraRetriever:
         citations: list[dict[str, Any]],
         conflicts: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        llm = self._build_answer_llm()
+        effort_applied = reasoning_effort_supported()
+
         if not citations:
             return {
                 "answer": (
@@ -320,6 +364,7 @@ class VecteraRetriever:
                 ),
                 "reasoning": None,
                 "images_used": [],
+                "reasoning_effort_applied": effort_applied,
             }
 
         image_paths = _collect_image_evidence_paths(citations)
@@ -339,26 +384,28 @@ class VecteraRetriever:
 
         for attempt_name, message, used_images in attempts:
             try:
-                response = self._chat_with_optional_thinking([message])
+                response = self._chat_with_optional_thinking(llm, [message])
                 answer, reasoning = _extract_answer_and_reasoning_from_chat(response)
                 if answer:
                     return {
                         "answer": answer,
                         "reasoning": reasoning,
                         "images_used": used_images,
+                        "reasoning_effort_applied": effort_applied,
                     }
                 raise ValueError("LLM returned empty answer")
             except Exception:
                 logger.exception("%s answer synthesis failed", attempt_name)
 
         try:
-            response = Settings.llm.complete(prompt)
+            response = llm.complete(prompt)
             answer, reasoning = _split_reasoning_from_text(str(response).strip())
             if answer:
                 return {
                     "answer": answer,
                     "reasoning": reasoning,
                     "images_used": [],
+                    "reasoning_effort_applied": effort_applied,
                 }
             raise ValueError("LLM returned empty answer")
         except Exception:
@@ -369,10 +416,14 @@ class VecteraRetriever:
                 "answer": _build_source_grounded_fallback(citations),
                 "reasoning": None,
                 "images_used": image_paths,
+                "reasoning_effort_applied": effort_applied,
             }
 
-    def _chat_with_optional_thinking(self, messages: list[ChatMessage]):
-        return Settings.llm.chat(messages)
+    def _build_answer_llm(self):
+        return get_llm(reasoning_effort=self.reasoning_effort)
+
+    def _chat_with_optional_thinking(self, llm, messages: list[ChatMessage]):
+        return llm.chat(messages)
 
 
 def _fuse_node_batches(node_batches: list[list]) -> list:
@@ -451,6 +502,16 @@ def _has_numeric_signal(node: Any) -> bool:
     return False
 
 
+def _node_has_image_assets(node: Any) -> bool:
+    metadata = node.node.metadata or {}
+    refs = metadata.get("asset_refs")
+    if isinstance(refs, str):
+        return bool(refs.strip())
+    if isinstance(refs, list):
+        return any(isinstance(ref, str) and ref.strip() for ref in refs)
+    return False
+
+
 def _is_reasoning_chunk(node: Any) -> bool:
     metadata = node.node.metadata or {}
     return str(metadata.get("chunk_type") or "") in REASONING_CHUNK_TYPES
@@ -459,6 +520,60 @@ def _is_reasoning_chunk(node: Any) -> bool:
 def _is_reasoning_priority_query(question: str) -> bool:
     normalized = question.lower()
     return any(term in normalized for term in REASONING_PRIORITY_TERMS)
+
+
+def _is_visual_or_image_query(question: str) -> bool:
+    normalized = question.lower()
+    return any(term in normalized for term in VISUAL_QUERY_TERMS)
+
+
+def _ensure_image_evidence(
+    *,
+    question: str,
+    selected_nodes: list[Any],
+    ranked_nodes: list[Any],
+    evidence_cap: int,
+) -> list[Any]:
+    if not _is_visual_or_image_query(question):
+        return selected_nodes
+
+    desired_image_nodes = min(2, evidence_cap)
+    selected = list(selected_nodes)
+    selected_keys = {_node_unique_key(node) for node in selected}
+
+    def _image_count() -> int:
+        return sum(1 for node in selected if _node_has_image_assets(node))
+
+    for candidate in ranked_nodes:
+        if _image_count() >= desired_image_nodes:
+            break
+        if not _node_has_image_assets(candidate):
+            continue
+        candidate_key = _node_unique_key(candidate)
+        if candidate_key in selected_keys:
+            continue
+
+        if len(selected) < evidence_cap:
+            selected.append(candidate)
+            selected_keys.add(candidate_key)
+            continue
+
+        replace_idx = next(
+            (
+                idx
+                for idx in range(len(selected) - 1, -1, -1)
+                if not _node_has_image_assets(selected[idx])
+            ),
+            None,
+        )
+        if replace_idx is None:
+            break
+
+        selected_keys.discard(_node_unique_key(selected[replace_idx]))
+        selected[replace_idx] = candidate
+        selected_keys.add(candidate_key)
+
+    return selected
 
 
 def _build_retrieval_diagnostics(
@@ -477,6 +592,12 @@ def _build_retrieval_diagnostics(
         for chunk_type, count in evidence_chunk_types.items()
         if chunk_type in REASONING_CHUNK_TYPES
     )
+    ranked_image_count = sum(
+        1 for node in ranked_nodes if _node_has_image_assets(node)
+    )
+    evidence_image_count = sum(
+        1 for node in evidence_nodes if _node_has_image_assets(node)
+    )
 
     return {
         "ranked_document_count": len(_document_diversity_keys(ranked_nodes)),
@@ -485,6 +606,8 @@ def _build_retrieval_diagnostics(
         "evidence_chunk_types": evidence_chunk_types,
         "ranked_reasoning_count": ranked_reasoning,
         "evidence_reasoning_count": evidence_reasoning,
+        "ranked_image_chunk_count": ranked_image_count,
+        "evidence_image_chunk_count": evidence_image_count,
     }
 
 
@@ -631,6 +754,7 @@ def _collect_image_evidence_paths(
     citations: list[dict[str, Any]], max_images: int = MAX_MULTIMODAL_IMAGES
 ) -> list[str]:
     seen: set[str] = set()
+    seen_hashes: set[str] = set()
     image_paths: list[str] = []
 
     for citation in citations:
@@ -651,7 +775,14 @@ def _collect_image_evidence_paths(
             path_str = str(resolved)
             if path_str in seen:
                 continue
+            try:
+                content_hash = hashlib.sha256(resolved.read_bytes()).hexdigest()
+            except OSError:
+                continue
+            if content_hash in seen_hashes:
+                continue
             seen.add(path_str)
+            seen_hashes.add(content_hash)
             image_paths.append(path_str)
 
             if len(image_paths) >= max_images:

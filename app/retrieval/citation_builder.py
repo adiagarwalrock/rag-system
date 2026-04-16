@@ -2,7 +2,9 @@
 Citation builder: constructs structured citations from retrieved source nodes.
 """
 
+import hashlib
 import logging
+from pathlib import Path
 from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
@@ -38,13 +40,18 @@ def build_citations(source_nodes: list) -> List[Dict[str, Any]]:
         List of citation dicts.
     """
     citations = []
+    seen_asset_signatures: set[str] = set()
 
     for i, node in enumerate(source_nodes):
         metadata = node.node.metadata or {}
         text = node.node.text or ""
         chunk_type = metadata.get("chunk_type", "text")
         text_limit = _text_limit_for_chunk(chunk_type)
-        asset_refs = _coerce_asset_refs(metadata.get("asset_refs"))
+        asset_refs = _coerce_asset_refs(
+            metadata.get("asset_refs"),
+            artifact_bundle_path=metadata.get("artifact_bundle_path"),
+            global_seen_signatures=seen_asset_signatures,
+        )
 
         citation = {
             "rank": i + 1,
@@ -119,7 +126,11 @@ def _text_limit_for_chunk(chunk_type: str) -> int:
     return RICH_TEXT_LIMIT if chunk_type in RICH_CHUNK_TYPES else DEFAULT_TEXT_LIMIT
 
 
-def _coerce_asset_refs(raw_refs: Any) -> list[str]:
+def _coerce_asset_refs(
+    raw_refs: Any,
+    artifact_bundle_path: str | None = None,
+    global_seen_signatures: set[str] | None = None,
+) -> list[str]:
     if isinstance(raw_refs, str):
         refs = [raw_refs]
     elif isinstance(raw_refs, list):
@@ -128,10 +139,56 @@ def _coerce_asset_refs(raw_refs: Any) -> list[str]:
         return []
 
     normalized: list[str] = []
+    local_signatures: set[str] = set()
     for ref in refs:
         if not isinstance(ref, str):
             continue
         cleaned = ref.strip()
-        if cleaned:
-            normalized.append(cleaned)
+        if not cleaned:
+            continue
+        normalized_ref = _normalize_asset_ref(cleaned, artifact_bundle_path)
+        signature = _asset_signature(normalized_ref)
+        if signature in local_signatures:
+            continue
+        if global_seen_signatures is not None and signature in global_seen_signatures:
+            continue
+        local_signatures.add(signature)
+        if global_seen_signatures is not None:
+            global_seen_signatures.add(signature)
+        normalized.append(normalized_ref)
+
     return normalized
+
+
+def _normalize_asset_ref(ref: str, artifact_bundle_path: str | None) -> str:
+    raw_path = Path(ref).expanduser()
+    candidates: list[Path] = []
+
+    if raw_path.is_absolute():
+        candidates.append(raw_path)
+    else:
+        if artifact_bundle_path:
+            candidates.append(Path(artifact_bundle_path).expanduser() / raw_path)
+        candidates.append(raw_path)
+        candidates.append(Path.cwd() / raw_path)
+
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if resolved.exists() and resolved.is_file():
+            return str(resolved)
+
+    return ref
+
+
+def _asset_signature(ref: str) -> str:
+    path = Path(ref)
+    if path.exists() and path.is_file():
+        try:
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            return f"sha256:{digest}"
+        except OSError:
+            return f"path:{path.expanduser().as_posix().lower()}"
+    return f"path:{Path(ref).expanduser().as_posix().lower()}"

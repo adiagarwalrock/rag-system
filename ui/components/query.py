@@ -4,7 +4,13 @@ import streamlit as st
 
 from ui.components.api_client import get_api
 from ui.components.layout import render_page_shell
-from ui.components.utils import CLIENTS_CACHE_KEY, bump_cache_revision, get_client_options
+from ui.components.utils import (
+    CLIENTS_CACHE_KEY,
+    bump_cache_revision,
+    get_client_options,
+)
+
+REASONING_EFFORT_OPTIONS = ("low", "medium", "high")
 
 
 def _ensure_chat_history():
@@ -140,6 +146,21 @@ def _render_result_details(result: dict):
             )
         )
 
+    reasoning_effort = result.get("reasoning_effort")
+    if reasoning_effort:
+        effort_applied = bool(result.get("reasoning_effort_applied"))
+        summary_badges.append(
+            (
+                (
+                    f"Reasoning {reasoning_effort}"
+                    if effort_applied
+                    else f"Reasoning {reasoning_effort} (not applied)"
+                ),
+                ":material/psychology:",
+                "gray",
+            )
+        )
+
     _badge_rows(summary_badges, per_row=4)
 
     reasoning = (result.get("reasoning") or "").strip()
@@ -261,7 +282,7 @@ def _render_chat_message(message: dict):
             _render_result_details(result)
 
 
-def _submit_question(api, client_id: str, question: str):
+def _submit_question(api, client_id: str, question: str, reasoning_effort: str):
     chat_history = _get_chat_history(client_id)
     chat_history.append({"role": "user", "content": question})
 
@@ -271,7 +292,11 @@ def _submit_question(api, client_id: str, question: str):
     with st.chat_message("assistant"):
         with st.spinner("Searching documents and drafting a sourced answer..."):
             try:
-                result = api.query(client_id, question)
+                result = api.query(
+                    client_id,
+                    question,
+                    reasoning_effort=reasoning_effort,
+                )
                 answer = result.get("answer", "No answer generated.")
                 streamed_answer = st.write_stream(_stream_text(answer))
                 _render_result_details(result)
@@ -306,6 +331,7 @@ def render_query():
         "query_active_client_id",
         client_options[st.session_state["query_active_client_name"]],
     )
+    st.session_state.setdefault("query_reasoning_effort", "medium")
     st.session_state["query_active_client_id"] = client_options[
         st.session_state["query_active_client_name"]
     ]
@@ -317,9 +343,11 @@ def render_query():
                 client_names,
                 index=max(
                     0,
-                    client_names.index(st.session_state["query_active_client_name"])
-                    if st.session_state["query_active_client_name"] in client_names
-                    else 0,
+                    (
+                        client_names.index(st.session_state["query_active_client_name"])
+                        if st.session_state["query_active_client_name"] in client_names
+                        else 0
+                    ),
                 ),
                 help="Every answer is limited to documents for this client.",
             )
@@ -330,11 +358,30 @@ def render_query():
                 width="stretch",
             ):
                 st.session_state["query_active_client_name"] = selected_name
-                st.session_state["query_active_client_id"] = client_options[selected_name]
+                st.session_state["query_active_client_id"] = client_options[
+                    selected_name
+                ]
                 st.rerun()
 
         selected_name = st.session_state["query_active_client_name"]
         selected_client_id = st.session_state["query_active_client_id"]
+        selected_reasoning_effort = st.selectbox(
+            "Reasoning effort",
+            REASONING_EFFORT_OPTIONS,
+            index=max(
+                0,
+                (
+                    REASONING_EFFORT_OPTIONS.index(
+                        st.session_state.get("query_reasoning_effort", "medium")
+                    )
+                    if st.session_state.get("query_reasoning_effort", "medium")
+                    in REASONING_EFFORT_OPTIONS
+                    else 1
+                ),
+            ),
+            help="Controls response depth. Applied when OpenAI Responses mode is enabled.",
+        )
+        st.session_state["query_reasoning_effort"] = selected_reasoning_effort
 
         if st.button(
             "Clear chat",
@@ -362,4 +409,9 @@ def render_query():
     if question := st.chat_input(f"Ask about {selected_name}'s documents"):
         trimmed = question.strip()
         if trimmed:
-            _submit_question(api, selected_client_id, trimmed)
+            _submit_question(
+                api,
+                selected_client_id,
+                trimmed,
+                st.session_state.get("query_reasoning_effort", "medium"),
+            )
