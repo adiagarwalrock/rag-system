@@ -26,9 +26,15 @@ def test_execute_query_persists_query_retrieval_and_conflict_logs(
     db_session.commit()
 
     class FakeRetriever:
-        def __init__(self, client_id: str, reasoning_effort: str = "medium"):
+        def __init__(
+            self,
+            client_id: str,
+            reasoning_effort: str = "medium",
+            conversation_context: dict | None = None,
+        ):
             self.client_id = client_id
             self.reasoning_effort = reasoning_effort
+            self.conversation_context = conversation_context
 
         def query(self, question: str) -> dict:
             assert self.client_id == client.id
@@ -96,9 +102,15 @@ def test_execute_query_marks_query_log_failed_on_retrieval_error(
     client = seeded_entities["client"]
 
     class FailingRetriever:
-        def __init__(self, client_id: str, reasoning_effort: str = "medium"):
+        def __init__(
+            self,
+            client_id: str,
+            reasoning_effort: str = "medium",
+            conversation_context: dict | None = None,
+        ):
             self.client_id = client_id
             self.reasoning_effort = reasoning_effort
+            self.conversation_context = conversation_context
 
         def query(self, question: str) -> dict:
             raise RuntimeError("simulated retrieval failure")

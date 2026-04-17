@@ -17,7 +17,15 @@ def _create_api() -> "VecteraCore":
 def get_api() -> "VecteraCore":
     """Get or create the API client."""
     api = _create_api()
-    if not hasattr(api, "list_query_history") or not hasattr(api, "delete_client"):
+    required_methods = (
+        "list_query_history",
+        "delete_client",
+        "list_chat_sessions",
+        "create_chat_session",
+        "list_chat_messages",
+        "clear_chat_session",
+    )
+    if not all(hasattr(api, method_name) for method_name in required_methods):
         _create_api.clear()
         api = _create_api()
     return api

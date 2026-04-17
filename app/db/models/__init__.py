@@ -1,3 +1,4 @@
+from app.db.models.chat import ChatMessage, ChatSession
 from app.db.models.client import Client
 from app.db.models.document import (
     ConflictLog,
@@ -11,6 +12,8 @@ from app.db.models.document import (
 
 __all__ = [
     "Client",
+    "ChatSession",
+    "ChatMessage",
     "Document",
     "DocumentVersion",
     "IngestionJob",

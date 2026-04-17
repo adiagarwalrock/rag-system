@@ -114,10 +114,12 @@ class VecteraRetriever:
         client_id: str,
         top_k: int = 15,
         reasoning_effort: str = "medium",
+        conversation_context: dict[str, Any] | None = None,
     ):
         self.client_id = client_id
         self.top_k = top_k
         self.reasoning_effort = normalize_reasoning_effort(reasoning_effort)
+        self.conversation_context = conversation_context or {}
         self.prefetch_top_k = top_k + 5
         self.evidence_limit = DEFAULT_EVIDENCE_LIMIT
         self.comparative_evidence_limit = COMPARATIVE_EVIDENCE_LIMIT
@@ -373,6 +375,7 @@ class VecteraRetriever:
             citations,
             conflicts,
             image_attachment_count=len(image_paths),
+            conversation_context=self.conversation_context,
         )
 
         attempts = [
@@ -674,6 +677,7 @@ def _build_grounded_prompt(
     citations: list[dict[str, Any]],
     conflicts: list[dict[str, Any]],
     image_attachment_count: int = 0,
+    conversation_context: dict[str, Any] | None = None,
 ) -> str:
     evidence_lines = []
     for index, citation in enumerate(citations, start=1):
@@ -710,13 +714,64 @@ def _build_grounded_prompt(
         )
     )
     evidence_block = "\n".join(evidence_lines)
+    conversation_block = _build_conversation_context_block(conversation_context or {})
 
     return build_grounded_answer_prompt(
         question=question,
         image_attachment_count=image_attachment_count,
         evidence_block=evidence_block,
         conflict_block=conflict_block,
+        conversation_context_block=conversation_block,
     )
+
+
+def _build_conversation_context_block(conversation_context: dict[str, Any]) -> str:
+    summary = str(conversation_context.get("session_summary") or "").strip()
+    recent_turns = conversation_context.get("recent_turns") or []
+    cross_session_pairs = conversation_context.get("cross_session_pairs") or []
+
+    sections: list[str] = []
+    if summary:
+        sections.append(f"Session summary:\n{summary}")
+
+    if recent_turns:
+        lines = []
+        for turn in recent_turns:
+            role = str(turn.get("role") or "unknown").lower()
+            role_label = "User" if role == "user" else "Assistant"
+            content = " ".join(str(turn.get("content") or "").split())
+            if not content:
+                continue
+            if len(content) > 320:
+                content = f"{content[:317].rstrip()}..."
+            lines.append(f"- {role_label}: {content}")
+        if lines:
+            sections.append("Recent turns in this session:\n" + "\n".join(lines))
+
+    if cross_session_pairs:
+        lines = []
+        for pair in cross_session_pairs:
+            user_text = " ".join(str(pair.get("user_text") or "").split())
+            assistant_text = " ".join(str(pair.get("assistant_text") or "").split())
+            if not user_text or not assistant_text:
+                continue
+            if len(user_text) > 220:
+                user_text = f"{user_text[:217].rstrip()}..."
+            if len(assistant_text) > 260:
+                assistant_text = f"{assistant_text[:257].rstrip()}..."
+            score = pair.get("score")
+            score_text = (
+                f" (similarity={float(score):.3f})"
+                if isinstance(score, (int, float))
+                else ""
+            )
+            lines.append(f"- Prior Q{score_text}: {user_text}\n  Prior A: {assistant_text}")
+        if lines:
+            sections.append("Relevant prior context from other sessions:\n" + "\n".join(lines))
+
+    if not sections:
+        return "No prior conversational context available."
+    return "\n\n".join(sections)
 
 
 def _prompt_excerpt(citation: dict[str, Any]) -> str:

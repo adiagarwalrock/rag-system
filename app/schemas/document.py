@@ -36,6 +36,7 @@ class DocumentListResponse(BaseModel):
 class QueryRequest(BaseModel):
     client_id: str
     question: str
+    session_id: Optional[str] = None
     reasoning_effort: Literal["low", "medium", "high"] = "medium"
 
 
@@ -84,3 +85,6 @@ class QueryResponse(BaseModel):
     image_evidence_count: int = 0
     reasoning_effort: Literal["low", "medium", "high"] = "medium"
     reasoning_effort_applied: bool = False
+    session_id: Optional[str] = None
+    user_message_id: Optional[str] = None
+    assistant_message_id: Optional[str] = None

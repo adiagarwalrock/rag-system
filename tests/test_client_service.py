@@ -1,6 +1,8 @@
 import pytest
 
 from app.db.models import (
+    ChatMessage,
+    ChatSession,
     Client,
     ConflictLog,
     Document,
@@ -104,11 +106,39 @@ def test_delete_client_cascades_documents_vectors_and_related_rows(
                 query_log_id="query-target",
                 conflict_type="numeric_conflict",
             ),
+            ChatSession(
+                id="session-target",
+                client_id=target_client.id,
+                title="Target session",
+            ),
+            ChatMessage(
+                id="message-target",
+                client_id=target_client.id,
+                session_id="session-target",
+                role="assistant",
+                content="Prior answer",
+                turn_index=1,
+                query_log_id="query-target",
+            ),
             QueryLog(
                 id="query-keep",
                 client_id=untouched_client.id,
                 question="Keep question",
                 status="completed",
+            ),
+            ChatSession(
+                id="session-keep",
+                client_id=untouched_client.id,
+                title="Keep session",
+            ),
+            ChatMessage(
+                id="message-keep",
+                client_id=untouched_client.id,
+                session_id="session-keep",
+                role="assistant",
+                content="Keep answer",
+                turn_index=1,
+                query_log_id="query-keep",
             ),
             RetrievalLog(
                 id="retrieval-keep",
@@ -141,6 +171,11 @@ def test_delete_client_cascades_documents_vectors_and_related_rows(
         db.commit()
 
     monkeypatch.setattr(client_service, "delete_document", _fake_delete_document)
+    monkeypatch.setattr(
+        client_service.chat_history_store,
+        "delete_client",
+        lambda client_id: None,
+    )
 
     client_service.ClientDeletionService(db_session).delete_client(target_client.id)
 
@@ -183,6 +218,18 @@ def test_delete_client_cascades_documents_vectors_and_related_rows(
         == 0
     )
     assert (
+        db_session.query(ChatSession)
+        .filter(ChatSession.client_id == target_client.id)
+        .count()
+        == 0
+    )
+    assert (
+        db_session.query(ChatMessage)
+        .filter(ChatMessage.client_id == target_client.id)
+        .count()
+        == 0
+    )
+    assert (
         db_session.query(Client).filter(Client.id == untouched_client.id).count() == 1
     )
     assert (
@@ -194,6 +241,18 @@ def test_delete_client_cascades_documents_vectors_and_related_rows(
     assert (
         db_session.query(QueryLog)
         .filter(QueryLog.client_id == untouched_client.id)
+        .count()
+        == 1
+    )
+    assert (
+        db_session.query(ChatSession)
+        .filter(ChatSession.client_id == untouched_client.id)
+        .count()
+        == 1
+    )
+    assert (
+        db_session.query(ChatMessage)
+        .filter(ChatMessage.client_id == untouched_client.id)
         .count()
         == 1
     )

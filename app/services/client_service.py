@@ -8,6 +8,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
+from app.db.models.chat import ChatMessage, ChatSession
 from app.db.models.client import Client
 from app.db.models.document import (
     ConflictLog,
@@ -18,6 +19,7 @@ from app.db.models.document import (
     RetrievalLog,
     VectorNodeRegistry,
 )
+from app.indexing.chat_history_store import chat_history_store
 from app.services.ingest_service import delete_document
 
 logger = logging.getLogger(__name__)
@@ -83,9 +85,16 @@ class ClientDeletionService:
                 ConflictLog.query_log_id.in_(query_log_ids)
             ).delete(synchronize_session=False)
 
+        self.db.query(ChatMessage).filter(ChatMessage.client_id == client_id).delete(
+            synchronize_session=False
+        )
         self.db.query(QueryLog).filter(QueryLog.client_id == client_id).delete(
             synchronize_session=False
         )
+        self.db.query(ChatSession).filter(ChatSession.client_id == client_id).delete(
+            synchronize_session=False
+        )
+        chat_history_store.delete_client(client_id)
 
     def _delete_client_residual_rows(
         self, client_id: str, document_ids: list[str]

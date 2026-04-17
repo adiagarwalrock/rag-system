@@ -25,6 +25,8 @@ def execute_query(
     client_id: str,
     db: Session,
     reasoning_effort: str = "medium",
+    session_id: str | None = None,
+    conversation_context: dict | None = None,
 ) -> dict:
     """
     Execute a full query pipeline: retrieve, answer, log.
@@ -39,6 +41,8 @@ def execute_query(
     query_log = QueryLog(
         id=query_log_id,
         client_id=client_id,
+        user_id="internal",
+        session_id=session_id,
         question=question,
         status="running",
     )
@@ -50,6 +54,7 @@ def execute_query(
         retriever = VecteraRetriever(
             client_id=client_id,
             reasoning_effort=reasoning_effort,
+            conversation_context=conversation_context,
         )
         result = retriever.query(question)
 

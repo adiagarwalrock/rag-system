@@ -91,6 +91,10 @@ class QueryLog(Base):
 
     id = Column(String, primary_key=True)
     client_id = Column(String, ForeignKey("clients.id"), nullable=False)
+    # Legacy Snowflake deployments may still require USER_ID to be non-null.
+    # In single-tenant mode we keep a system sentinel.
+    user_id = Column(String, nullable=True, default="internal")
+    session_id = Column(String, ForeignKey("chat_sessions.id"), nullable=True)
     question = Column(String, nullable=False)
     answer = Column(String, nullable=True)
     status = Column(String, nullable=False, default="completed")
@@ -101,6 +105,8 @@ class QueryLog(Base):
 
     retrieval_logs = relationship("RetrievalLog", back_populates="query_log")
     conflict_logs = relationship("ConflictLog", back_populates="query_log")
+    chat_messages = relationship("ChatMessage", back_populates="query_log")
+    session = relationship("ChatSession", back_populates="query_logs")
 
 
 class RetrievalLog(Base):

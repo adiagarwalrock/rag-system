@@ -7,7 +7,7 @@ from app.api.routes_health import router as health_router
 from app.api.routes_query import router as query_router
 from app.core.ai_provider import initialize_ai_provider
 from app.core.config import settings, validate_runtime_settings
-from app.db.base import Base
+from app.db.schema import ensure_runtime_schema
 
 # Import all models so Base.metadata knows about every table
 from app.db.models import *  # noqa: F401, F403
@@ -25,7 +25,7 @@ def _validate_runtime_config() -> None:
 
 
 # Auto-create all tables on startup
-Base.metadata.create_all(bind=engine)
+ensure_runtime_schema(engine)
 
 # Register routes
 app.include_router(

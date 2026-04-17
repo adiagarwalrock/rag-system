@@ -13,7 +13,9 @@ from app.db.models.document import (
     IngestionJob,
     VectorNodeRegistry,
 )
-from app.db.snowflake import SessionLocal
+from app.db.snowflake import SessionLocal, engine
+from app.db.schema import ensure_runtime_schema
+from app.services.chat_conversation_service import ChatConversationService
 from app.services.client_service import delete_client as delete_client_with_cascade
 from app.services.ingest_service import (
     delete_document,
@@ -21,7 +23,6 @@ from app.services.ingest_service import (
     retry_ingestion,
 )
 from app.services.query_history_service import QueryHistoryFilters, QueryHistoryService
-from app.services.query_service import execute_query
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ class VecteraCore:
     def __init__(self):
         # We don't maintain a single session here to avoid side effects across
         # separate streamlit interactions. We instantiate it per call.
-        pass
+        ensure_runtime_schema(engine)
 
     # --- Clients ---
     def list_clients(self) -> List[Dict[str, Any]]:
@@ -188,20 +189,96 @@ class VecteraCore:
 
     # --- Query ---
     def query(
-        self, client_id: str, question: str, reasoning_effort: str = "medium"
+        self,
+        client_id: str,
+        question: str,
+        reasoning_effort: str = "medium",
+        session_id: str | None = None,
     ) -> dict:
         with SessionLocal() as db:
             try:
-                response = execute_query(
+                response = ChatConversationService(db).execute_client_query(
                     client_id=client_id,
                     question=question,
                     reasoning_effort=reasoning_effort,
-                    db=db,
+                    session_id=session_id,
                 )
                 return response
             except Exception as e:
                 logger.error(f"Query Error: {e}")
                 raise ValueError(str(e))
+
+    def list_chat_sessions(self, client_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        with SessionLocal() as db:
+            sessions = ChatConversationService(db).list_sessions(
+                client_id=client_id,
+                limit=limit,
+            )
+            return [
+                {
+                    "id": session.id,
+                    "client_id": session.client_id,
+                    "title": session.title,
+                    "summary_text": session.summary_text,
+                    "created_at": (
+                        session.created_at.isoformat() if session.created_at else None
+                    ),
+                    "updated_at": (
+                        session.updated_at.isoformat() if session.updated_at else None
+                    ),
+                    "last_activity_at": (
+                        session.last_activity_at.isoformat()
+                        if session.last_activity_at
+                        else None
+                    ),
+                }
+                for session in sessions
+            ]
+
+    def create_chat_session(self, client_id: str, title: str | None = None) -> Dict[str, Any]:
+        with SessionLocal() as db:
+            session = ChatConversationService(db).create_session(
+                client_id=client_id, title=title
+            )
+            return {
+                "id": session.id,
+                "client_id": session.client_id,
+                "title": session.title,
+                "summary_text": session.summary_text,
+                "created_at": session.created_at.isoformat() if session.created_at else None,
+                "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+                "last_activity_at": (
+                    session.last_activity_at.isoformat()
+                    if session.last_activity_at
+                    else None
+                ),
+            }
+
+    def list_chat_messages(self, session_id: str, limit: int = 200) -> List[Dict[str, Any]]:
+        with SessionLocal() as db:
+            messages = ChatConversationService(db).list_messages(
+                session_id=session_id, limit=limit
+            )
+            return [
+                {
+                    "id": message.id,
+                    "client_id": message.client_id,
+                    "session_id": message.session_id,
+                    "role": message.role,
+                    "content": message.content,
+                    "turn_index": message.turn_index,
+                    "query_log_id": message.query_log_id,
+                    "created_at": (
+                        message.created_at.isoformat() if message.created_at else None
+                    ),
+                }
+                for message in messages
+            ]
+
+    def clear_chat_session(self, session_id: str) -> Dict[str, Any]:
+        with SessionLocal() as db:
+            ChatConversationService(db).clear_session(session_id=session_id)
+            return {"status": "success", "session_id": session_id}
 
     def list_query_history(
         self,

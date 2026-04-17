@@ -55,6 +55,9 @@ def confirm_client_delete_dialog(api, client_id: str, client_name: str):
                 bump_cache_revision(QUERY_HISTORY_CACHE_KEY)
                 st.session_state.pop("chat_history", None)
                 st.session_state.pop("chat_history_by_client", None)
+                for key in list(st.session_state.keys()):
+                    if key.startswith("query_active_session_"):
+                        st.session_state.pop(key, None)
                 st.success(f"{client_name} deleted.")
             except Exception as e:
                 st.error(f"Failed to delete client: {e}")

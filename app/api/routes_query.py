@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.db.models.client import Client
 from app.db.snowflake import get_db
 from app.schemas.document import QueryRequest, QueryResponse
-from app.services.query_service import execute_query
+from app.services.chat_conversation_service import ChatConversationService
 
 router = APIRouter()
 
@@ -24,11 +24,11 @@ def query_documents(
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    result = execute_query(
+    result = ChatConversationService(db).execute_client_query(
         question=request.question,
         client_id=request.client_id,
         reasoning_effort=request.reasoning_effort,
-        db=db,
+        session_id=request.session_id,
     )
     return QueryResponse(
         answer=result["answer"],
@@ -43,4 +43,7 @@ def query_documents(
         image_evidence_count=result.get("image_evidence_count", 0),
         reasoning_effort=result.get("reasoning_effort", "medium"),
         reasoning_effort_applied=result.get("reasoning_effort_applied", False),
+        session_id=result.get("session_id"),
+        user_message_id=result.get("user_message_id"),
+        assistant_message_id=result.get("assistant_message_id"),
     )

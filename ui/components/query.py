@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import datetime
 
 import streamlit as st
 
@@ -11,15 +12,6 @@ from ui.components.utils import (
 )
 
 REASONING_EFFORT_OPTIONS = ("low", "medium", "high")
-
-
-def _ensure_chat_history():
-    st.session_state.setdefault("chat_history_by_client", {})
-
-
-def _get_chat_history(client_id: str) -> list[dict]:
-    _ensure_chat_history()
-    return st.session_state.chat_history_by_client.setdefault(client_id, [])
 
 
 def _stream_text(text: str):
@@ -282,31 +274,58 @@ def _render_chat_message(message: dict):
             _render_result_details(result)
 
 
-def _submit_question(api, client_id: str, question: str, reasoning_effort: str):
-    chat_history = _get_chat_history(client_id)
-    chat_history.append({"role": "user", "content": question})
-
+def _submit_question(
+    api,
+    client_id: str,
+    question: str,
+    reasoning_effort: str,
+    session_id: str | None,
+) -> dict:
     with st.chat_message("user"):
         st.markdown(question)
 
     with st.chat_message("assistant"):
         with st.spinner("Searching documents and drafting a sourced answer..."):
-            try:
-                result = api.query(
-                    client_id,
-                    question,
-                    reasoning_effort=reasoning_effort,
-                )
-                answer = result.get("answer", "No answer generated.")
-                streamed_answer = st.write_stream(_stream_text(answer))
-                _render_result_details(result)
-                chat_history.append(
-                    {"role": "assistant", "content": streamed_answer, "result": result}
-                )
-            except Exception as exc:
-                error_msg = f"I could not complete that search: {exc}"
-                st.error(error_msg)
-                chat_history.append({"role": "assistant", "content": error_msg})
+            result = api.query(
+                client_id,
+                question,
+                reasoning_effort=reasoning_effort,
+                session_id=session_id,
+            )
+            answer = result.get("answer", "No answer generated.")
+            st.write_stream(_stream_text(answer))
+            _render_result_details(result)
+            return result
+
+
+def _format_session_timestamp(raw_value: str | None) -> str:
+    if not raw_value:
+        return "n/a"
+    try:
+        parsed = datetime.fromisoformat(raw_value.replace("Z", "+00:00"))
+        return parsed.astimezone().strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return raw_value
+
+
+def _session_label(session: dict) -> str:
+    title = session.get("title") or "Untitled session"
+    timestamp = _format_session_timestamp(session.get("last_activity_at"))
+    return f"{title} · {timestamp}"
+
+
+def _active_session_key(client_id: str) -> str:
+    return f"query_active_session_{client_id}"
+
+
+def _resolve_active_session_id(client_id: str, sessions: list[dict]) -> str | None:
+    key = _active_session_key(client_id)
+    available_ids = [session["id"] for session in sessions]
+    if key not in st.session_state:
+        st.session_state[key] = available_ids[0] if available_ids else None
+    if st.session_state[key] not in available_ids:
+        st.session_state[key] = available_ids[0] if available_ids else None
+    return st.session_state.get(key)
 
 
 def render_query():
@@ -365,6 +384,32 @@ def render_query():
 
         selected_name = st.session_state["query_active_client_name"]
         selected_client_id = st.session_state["query_active_client_id"]
+        sessions = api.list_chat_sessions(selected_client_id, limit=100)
+        active_session_id = _resolve_active_session_id(selected_client_id, sessions)
+
+        if sessions:
+            session_ids = [session["id"] for session in sessions]
+            selected_session_id = st.selectbox(
+                "Session",
+                session_ids,
+                index=max(
+                    0,
+                    (
+                        session_ids.index(active_session_id)
+                        if active_session_id in session_ids
+                        else 0
+                    ),
+                ),
+                format_func=lambda sid: _session_label(
+                    next(session for session in sessions if session["id"] == sid)
+                ),
+                help="Sessions are isolated by client. Semantic memory still draws relevant context from other sessions.",
+            )
+            st.session_state[_active_session_key(selected_client_id)] = selected_session_id
+            active_session_id = selected_session_id
+        else:
+            st.caption("No session yet. Ask a question to start one automatically.")
+
         selected_reasoning_effort = st.selectbox(
             "Reasoning effort",
             REASONING_EFFORT_OPTIONS,
@@ -384,12 +429,25 @@ def render_query():
         st.session_state["query_reasoning_effort"] = selected_reasoning_effort
 
         if st.button(
-            "Clear chat",
+            "New session",
+            icon=":material/add_circle:",
+            key="new_chat_session",
+            width="stretch",
+        ):
+            created_session = api.create_chat_session(selected_client_id)
+            st.session_state[_active_session_key(selected_client_id)] = created_session[
+                "id"
+            ]
+            st.rerun()
+
+        if st.button(
+            "Clear session",
             icon=":material/delete:",
             key="clear_chat",
             width="stretch",
+            disabled=not bool(active_session_id),
         ):
-            st.session_state.chat_history_by_client[selected_client_id] = []
+            api.clear_chat_session(active_session_id)
             st.rerun()
 
         if st.button(
@@ -401,17 +459,31 @@ def render_query():
             bump_cache_revision(CLIENTS_CACHE_KEY)
             st.rerun()
 
-    chat_history = _get_chat_history(selected_client_id)
-
+    sessions = api.list_chat_sessions(selected_client_id, limit=100)
+    active_session_id = _resolve_active_session_id(selected_client_id, sessions)
+    chat_history = (
+        api.list_chat_messages(active_session_id, limit=500)
+        if active_session_id
+        else []
+    )
     for message in chat_history:
         _render_chat_message(message)
 
     if question := st.chat_input(f"Ask about {selected_name}'s documents"):
         trimmed = question.strip()
         if trimmed:
-            _submit_question(
-                api,
-                selected_client_id,
-                trimmed,
-                st.session_state.get("query_reasoning_effort", "medium"),
-            )
+            try:
+                result = _submit_question(
+                    api,
+                    selected_client_id,
+                    trimmed,
+                    st.session_state.get("query_reasoning_effort", "medium"),
+                    active_session_id,
+                )
+                returned_session_id = result.get("session_id")
+                if returned_session_id:
+                    st.session_state[_active_session_key(selected_client_id)] = (
+                        returned_session_id
+                    )
+            except Exception as exc:
+                st.error(str(exc))

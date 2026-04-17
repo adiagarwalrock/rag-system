@@ -163,10 +163,13 @@ def build_grounded_answer_prompt(
     image_attachment_count: int,
     evidence_block: str,
     conflict_block: str,
+    conversation_context_block: str,
 ) -> str:
     return (
         "You are a retrieval-grounded assistant for sensitive enterprise documents.\n"
         "Answer using only the provided evidence snippets and attached images.\n"
+        "You may use conversational context only to resolve references "
+        "(e.g., pronouns, follow-ups), not as a factual source.\n"
         "Rules:\n"
         "1) If evidence is insufficient or contradictory, say so explicitly.\n"
         "2) For each factual claim, cite at least one source index like [1].\n"
@@ -185,6 +188,7 @@ def build_grounded_answer_prompt(
         "</answer>\n\n"
         f"Question:\n{question}\n\n"
         f"Attached image count: {image_attachment_count}\n\n"
+        f"Conversation context:\n{conversation_context_block}\n\n"
         f"Evidence:\n{evidence_block}\n\n"
         f"Conflict hints:\n{conflict_block}\n\n"
         "Answer:"

@@ -24,3 +24,5 @@ class Client(Base):
     is_active = Column(Boolean, default=True)
 
     documents = relationship("Document", back_populates="client")
+    chat_sessions = relationship("ChatSession", back_populates="client")
+    chat_messages = relationship("ChatMessage", back_populates="client")

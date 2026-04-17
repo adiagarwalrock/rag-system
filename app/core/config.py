@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     EMBEDDING_OUTPUT_DIMENSION: int | None = None
 
     COLLECTION_NAME: str = "rag_collection_oai"
+    CHAT_HISTORY_COLLECTION_NAME: str = "chat_history"
     VECTOR_DIMENSIONS: int = 3072
 
     # Layout-aware PDF ingestion
@@ -83,6 +84,9 @@ class Settings(BaseSettings):
 
     # UI responsiveness
     UI_POLL_INTERVAL_SECONDS: int = 3
+    CHAT_SESSION_RECENT_TURNS: int = 8
+    CHAT_CROSS_SESSION_TOP_K: int = 4
+    CHAT_SUMMARY_MAX_CHARS: int = 1200
 
     model_config = SettingsConfigDict(
         env_file=".env",
