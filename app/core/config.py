@@ -39,9 +39,19 @@ class Settings(BaseSettings):
     )
     LLM_MODEL: str = "gpt-5.2"
     QUERY_EXPANSION_MODEL: str = "gpt-5.4-mini"
+    SESSION_SUMMARY_MODEL: str = "gpt-5.4-mini"
     OPENAI_USE_RESPONSES: bool = False
     EMBEDDING_MODEL: str = "text-embedding-3-large"
     EMBEDDING_OUTPUT_DIMENSION: int | None = None
+    RESPONSE_INPUT_BUDGET_RATIO: float = 0.8
+    RESPONSE_MAX_OUTPUT_TOKENS: int = 1200
+    RESPONSE_PROMPT_CACHE_KEY: str = "vectera:grounded-answer:v2"
+    RESPONSE_PROMPT_CACHE_RETENTION: str = "24h"
+    RESPONSE_USER_TAG: str = "developer"
+    RESPONSE_SAFETY_IDENTIFIER_PREFIX: str = "vectera-client"
+    LLM_CONTEXT_WINDOW_TOKENS: int = 200000
+    SESSION_SUMMARY_MAX_OUTPUT_TOKENS: int = 300
+    SESSION_SUMMARY_TIMEOUT_SECONDS: int = 15
 
     COLLECTION_NAME: str = "rag_collection_oai"
     CHAT_HISTORY_COLLECTION_NAME: str = "chat_history"
@@ -65,6 +75,9 @@ class Settings(BaseSettings):
     LLM_CAPTION_MAX_PAGES: int = 3
     LLM_CAPTION_MAX_ARTIFACTS_PER_PAGE: int = 3
     LLM_CAPTION_TIMEOUT_SECONDS: int = 25
+    LLM_SCREENSHOT_TIMEOUT_SECONDS: int = 45
+    LLM_SCREENSHOT_MAX_WORKERS: int = 2
+    LLM_SCREENSHOT_RETRIES: int = 2
 
     # Non-layout parsing strategy (semantic splitter only)
     SEMANTIC_SPLITTER_BREAKPOINT_PERCENTILE: int = 95

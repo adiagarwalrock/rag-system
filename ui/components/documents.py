@@ -8,7 +8,6 @@ from app.core.config import settings
 from ui.components.api_client import get_api
 from ui.components.layout import render_page_shell
 from ui.components.utils import (
-    CLIENTS_CACHE_KEY,
     DOCUMENTS_CACHE_KEY,
     QUERY_HISTORY_CACHE_KEY,
     bump_cache_revision,
@@ -58,6 +57,24 @@ def confirm_delete_dialog(api, doc_id: str, doc_name: str):
         st.rerun()
 
 
+@st.dialog("Document Details")
+def show_document_details_dialog(api, doc_id: str, doc_name: str):
+    st.caption(f"Document: `{doc_name}`")
+    try:
+        status = api.get_document_status(doc_id)
+        metric_cols = st.columns(3)
+        metric_cols[0].metric("Status", status.get("status", "?"))
+        metric_cols[1].metric("Vector points", status.get("vector_point_count", 0))
+        metric_cols[2].metric("Version", status.get("version_label") or "-")
+
+        if err := status.get("error_message"):
+            st.error(err)
+        if family := status.get("version_group"):
+            st.caption(f"Document family: {family}")
+    except Exception as exc:
+        st.error(f"Failed to load document details: {exc}")
+
+
 def _render_activity(docs: list[dict]):
     active_docs = [
         doc
@@ -101,44 +118,27 @@ def render_documents():
     st.session_state["documents_active_client_id"] = client_options[
         st.session_state["documents_active_client_name"]
     ]
-
-    with st.form("documents_client_scope"):
-        selected_name = st.selectbox(
-            "Client workspace",
-            client_names,
-            index=max(
-                0,
-                client_names.index(st.session_state["documents_active_client_name"])
-                if st.session_state["documents_active_client_name"] in client_names
-                else 0,
-            ),
-            key="documents_workspace_pending",
-        )
-        apply_scope = st.form_submit_button(
-            "Apply workspace",
-            icon=":material/check:",
-            type="primary",
-            width="stretch",
-        )
-        if apply_scope:
-            st.session_state["documents_active_client_name"] = selected_name
-            st.session_state["documents_active_client_id"] = client_options[selected_name]
-            st.session_state.pop("documents_selected_doc_id", None)
-            st.rerun()
+    if st.session_state.get("documents_workspace_selector") not in client_names:
+        st.session_state["documents_workspace_selector"] = st.session_state[
+            "documents_active_client_name"
+        ]
+    selected_name = st.selectbox(
+        "Client workspace",
+        client_names,
+        key="documents_workspace_selector",
+    )
+    if selected_name != st.session_state["documents_active_client_name"]:
+        st.session_state["documents_active_client_name"] = selected_name
+        st.session_state["documents_active_client_id"] = client_options[selected_name]
+        st.rerun()
 
     active_client_name = st.session_state["documents_active_client_name"]
     active_client_id = st.session_state["documents_active_client_id"]
     st.caption(f"Active workspace: **{active_client_name}**")
 
-    view_mode = st.radio(
-        "View",
-        ["Upload", "Activity", "Library"],
-        horizontal=True,
-        label_visibility="collapsed",
-        key="documents_view_mode",
-    )
+    upload_tab, activity_tab, library_tab = st.tabs(["Upload", "Activity", "Library"])
 
-    if view_mode == "Upload":
+    with upload_tab:
         with st.container(border=True):
             st.markdown("#### :material/upload_file: Upload files")
             st.caption("Supported formats: PDF, DOCX, PPTX.")
@@ -182,14 +182,9 @@ def render_documents():
                         st.success(f"Queued {queued} document(s) for background indexing.")
                     if failed:
                         st.warning(f"{failed} document(s) failed to queue.")
-                    st.session_state["documents_view_mode"] = "Activity"
                     st.rerun()
 
-        return
-
-    docs = get_documents(active_client_id)
-
-    if view_mode == "Activity":
+    with activity_tab:
         with st.container(border=True):
             st.markdown("#### :material/sync: Ingestion activity")
 
@@ -199,84 +194,67 @@ def render_documents():
                 _render_activity(latest_docs)
 
             _live_activity_fragment()
-        return
 
-    with st.container(border=True):
-        st.markdown("#### :material/folder: Document library")
-        if st.button(
-            "Refresh library",
-            icon=":material/refresh:",
-            width="stretch",
-            key="refresh_documents",
-        ):
-            bump_cache_revision(DOCUMENTS_CACHE_KEY)
-            st.rerun()
+    with library_tab:
+        docs = get_documents(active_client_id)
+        with st.container(border=True):
+            st.markdown(f"#### :material/folder: Document library // {len(docs)}")
+            if st.button(
+                "Refresh library",
+                icon=":material/refresh:",
+                width="stretch",
+                key="refresh_documents",
+            ):
+                bump_cache_revision(DOCUMENTS_CACHE_KEY)
+                st.rerun()
 
-        if not docs:
-            st.info("No documents uploaded for this client yet.")
-            return
+            if not docs:
+                st.info("No documents uploaded for this client yet.")
+                return
 
-        selected_doc_id = st.session_state.get("documents_selected_doc_id")
-        for doc in docs:
-            status_label, icon = _status_chip(doc.get("status", ""))
-            with st.container(border=True):
-                header_cols = st.columns([0.6, 0.4], vertical_alignment="center")
-                with header_cols[0]:
-                    st.markdown(f"**{doc['name']}**")
-                    st.caption(
-                        f"{doc.get('file_type', '')} · Uploaded {_format_dt(doc.get('created_at'))}"
-                    )
-                with header_cols[1]:
-                    st.badge(status_label, icon=icon, color="blue")
+            for doc in docs:
+                status_label, icon = _status_chip(doc.get("status", ""))
+                with st.container(border=True):
+                    header_cols = st.columns([0.6, 0.4], vertical_alignment="center")
+                    with header_cols[0]:
+                        st.markdown(f"**{doc['name']}**")
+                        st.caption(
+                            f"{doc.get('file_type', '')} · Uploaded {_format_dt(doc.get('created_at'))}"
+                        )
+                    with header_cols[1]:
+                        st.badge(status_label, icon=icon, color="blue")
 
-                action_cols = st.columns(3)
-                with action_cols[0]:
-                    if st.button(
-                        "Details",
-                        icon=":material/info:",
-                        key=f"details_{doc['id']}",
-                        width="stretch",
-                    ):
-                        st.session_state["documents_selected_doc_id"] = doc["id"]
-                        st.rerun()
-                with action_cols[1]:
-                    if st.button(
-                        "Retry",
-                        icon=":material/refresh:",
-                        key=f"retry_{doc['id']}",
-                        width="stretch",
-                        disabled=doc.get("status") not in {"failed", "indexed", "completed"},
-                    ):
-                        with st.spinner("Retrying ingestion..."):
-                            try:
-                                api.retry_document_ingestion(doc["id"])
-                                bump_cache_revision(DOCUMENTS_CACHE_KEY)
-                                st.success("Ingestion retried successfully.")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Retry failed: {e}")
-                with action_cols[2]:
-                    if st.button(
-                        "Delete",
-                        icon=":material/delete:",
-                        key=f"delete_{doc['id']}",
-                        width="stretch",
-                    ):
-                        confirm_delete_dialog(api, doc["id"], doc["name"])
-
-        if selected_doc_id:
-            st.divider()
-            st.markdown("#### :material/info: Selected document details")
-            try:
-                status = api.get_document_status(selected_doc_id)
-                metric_cols = st.columns(3)
-                metric_cols[0].metric("Status", status.get("status", "?"))
-                metric_cols[1].metric("Vector points", status.get("vector_point_count", 0))
-                metric_cols[2].metric("Version", status.get("version_label") or "-")
-
-                if err := status.get("error_message"):
-                    st.error(err)
-                if family := status.get("version_group"):
-                    st.caption(f"Document family: {family}")
-            except Exception as exc:
-                st.error(f"Failed to load document details: {exc}")
+                    action_cols = st.columns(3)
+                    with action_cols[0]:
+                        if st.button(
+                            "Details",
+                            icon=":material/info:",
+                            key=f"details_{doc['id']}",
+                            width="stretch",
+                        ):
+                            show_document_details_dialog(api, doc["id"], doc["name"])
+                    with action_cols[1]:
+                        if st.button(
+                            "Retry",
+                            icon=":material/refresh:",
+                            key=f"retry_{doc['id']}",
+                            width="stretch",
+                            disabled=doc.get("status")
+                            not in {"failed", "indexed", "completed"},
+                        ):
+                            with st.spinner("Retrying ingestion..."):
+                                try:
+                                    api.retry_document_ingestion(doc["id"])
+                                    bump_cache_revision(DOCUMENTS_CACHE_KEY)
+                                    st.success("Ingestion retried successfully.")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Retry failed: {e}")
+                    with action_cols[2]:
+                        if st.button(
+                            "Delete",
+                            icon=":material/delete:",
+                            key=f"delete_{doc['id']}",
+                            width="stretch",
+                        ):
+                            confirm_delete_dialog(api, doc["id"], doc["name"])

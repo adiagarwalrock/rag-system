@@ -19,6 +19,12 @@ from app.ingestion.pdf_pipeline.registry import PDFPipelineRegistry
 
 logger = logging.getLogger(__name__)
 
+_TABLE_DETECTION_STRATEGIES: tuple[tuple[str, dict[str, Any]], ...] = (
+    ("default", {}),
+    ("lines", {"strategy": "lines"}),
+    ("text", {"strategy": "text"}),
+)
+
 
 class DefaultPDFExtractionStage(PDFExtractionStage):
     def extract(
@@ -345,38 +351,116 @@ def _extract_vector_bboxes(page: fitz.Page) -> list[list[float]] | None:
 
 
 def _extract_table_candidates(page: fitz.Page) -> list[dict[str, Any]] | None:
-    try:
-        candidates: list[dict[str, Any]] = []
-        finder = page.find_tables()
-        tables = getattr(finder, "tables", []) if finder is not None else []
-        for index, table in enumerate(tables, start=1):
-            bbox = getattr(table, "bbox", None)
-            try:
-                rows = table.extract() or []
-            except Exception:
-                rows = []
+    page_num = _page_number_for_logs(page)
+    successful_detection = False
+    strategy_failures = 0
+    last_failure: tuple[str, Exception] | None = None
 
-            normalized_rows: list[list[str]] = []
-            for row in rows:
-                if not row:
-                    continue
-                normalized_rows.append(
-                    [normalize_whitespace(str(cell or "")) for cell in row]
-                )
-            if not normalized_rows:
-                continue
-
-            candidates.append(
-                {
-                    "candidate_id": f"table_candidate_{index}",
-                    "bbox": to_float_bbox(bbox),
-                    "rows": normalized_rows,
-                }
+    for strategy_name, kwargs in _TABLE_DETECTION_STRATEGIES:
+        try:
+            finder = page.find_tables(**kwargs)
+            successful_detection = True
+        except Exception as exc:
+            strategy_failures += 1
+            last_failure = (strategy_name, exc)
+            logger.debug(
+                "PyMuPDF table detection strategy failed (page=%d strategy=%s error=%s: %s)",
+                page_num,
+                strategy_name,
+                type(exc).__name__,
+                exc,
             )
-        return candidates
-    except Exception:
-        logger.warning("PyMuPDF table detection failed for page")
+            continue
+
+        try:
+            candidates = _build_table_candidates_from_tables(
+                tables=getattr(finder, "tables", []) if finder is not None else [],
+                strategy_name=strategy_name,
+                page_num=page_num,
+            )
+        except Exception as exc:
+            strategy_failures += 1
+            last_failure = (strategy_name, exc)
+            logger.debug(
+                "PyMuPDF table candidate normalization failed (page=%d strategy=%s error=%s: %s)",
+                page_num,
+                strategy_name,
+                type(exc).__name__,
+                exc,
+            )
+            continue
+        if candidates:
+            return candidates
+
+    if not successful_detection and strategy_failures:
+        strategy_label = last_failure[0] if last_failure is not None else "unknown"
+        failure_label = (
+            type(last_failure[1]).__name__ if last_failure is not None else "unknown"
+        )
+        failure_message = str(last_failure[1]) if last_failure is not None else "n/a"
+        logger.warning(
+            "PyMuPDF table detection failed for page %d after %d strategies (last_strategy=%s error=%s: %s)",
+            page_num,
+            strategy_failures,
+            strategy_label,
+            failure_label,
+            failure_message,
+        )
         return None
+
+    return []
+
+
+def _build_table_candidates_from_tables(
+    *,
+    tables: list[Any],
+    strategy_name: str,
+    page_num: int,
+) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for index, table in enumerate(tables, start=1):
+        try:
+            bbox = to_float_bbox(getattr(table, "bbox", None))
+        except Exception as exc:
+            logger.warning(
+                "Skipping malformed PyMuPDF table candidate (page=%d strategy=%s candidate_index=%d stage=bbox error=%s: %s)",
+                page_num,
+                strategy_name,
+                index,
+                type(exc).__name__,
+                exc,
+            )
+            continue
+        try:
+            rows = table.extract() or []
+        except Exception:
+            rows = []
+
+        normalized_rows: list[list[str]] = []
+        for row in rows:
+            if not row:
+                continue
+            normalized_rows.append(
+                [normalize_whitespace(str(cell or "")) for cell in row]
+            )
+        if not normalized_rows:
+            continue
+
+        candidates.append(
+            {
+                "candidate_id": f"{strategy_name}_table_candidate_{index}",
+                "bbox": bbox,
+                "rows": normalized_rows,
+            }
+        )
+    return candidates
+
+
+def _page_number_for_logs(page: fitz.Page) -> int:
+    page_index = getattr(page, "number", None)
+    if isinstance(page_index, int):
+        return page_index + 1
+    return -1
 
 
 def _extract_layout_predictions(page: fitz.Page) -> list[dict[str, Any]]:

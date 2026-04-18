@@ -3,6 +3,7 @@ Core Python service interface for the RAG-System Streamlit UI.
 This bypasses HTTP requests and talks directly natively to the app layers.
 """
 
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -259,8 +260,9 @@ class VecteraCore:
             messages = ChatConversationService(db).list_messages(
                 session_id=session_id, limit=limit
             )
-            return [
-                {
+            response_messages: List[Dict[str, Any]] = []
+            for message in messages:
+                payload: Dict[str, Any] = {
                     "id": message.id,
                     "client_id": message.client_id,
                     "session_id": message.session_id,
@@ -272,8 +274,30 @@ class VecteraCore:
                         message.created_at.isoformat() if message.created_at else None
                     ),
                 }
-                for message in messages
-            ]
+                if message.role == "assistant":
+                    citations: List[Dict[str, Any]] = []
+                    if message.citations_json:
+                        try:
+                            decoded = json.loads(message.citations_json)
+                            if isinstance(decoded, list):
+                                citations = [
+                                    item
+                                    for item in decoded
+                                    if isinstance(item, dict)
+                                ]
+                        except Exception:
+                            citations = []
+
+                    reasoning = (message.reasoning or "").strip() or None
+                    if reasoning or citations or message.query_log_id:
+                        payload["result"] = {
+                            "reasoning": reasoning,
+                            "citations": citations,
+                            "query_id": message.query_log_id,
+                        }
+
+                response_messages.append(payload)
+            return response_messages
 
     def clear_chat_session(self, session_id: str) -> Dict[str, Any]:
         with SessionLocal() as db:

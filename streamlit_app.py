@@ -1,8 +1,11 @@
 import streamlit as st
 
+from app.core.logging_config import configure_logging
 from app.core.ai_provider import initialize_ai_provider
 from app.core.config import validate_runtime_settings
 from ui.components.layout import render_runtime_sidebar
+
+configure_logging()
 
 st.set_page_config(
     page_title="RAG-System",

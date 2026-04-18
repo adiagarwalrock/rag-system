@@ -47,6 +47,8 @@ class PageManifest:
     pdf_repair_error: str | None = None
     llm_page_summary: str | None = None
     llm_enriched: bool = False
+    llm_page_summary_status: str = "not_run"
+    llm_page_summary_error: str | None = None
 
 
 @dataclass(slots=True)

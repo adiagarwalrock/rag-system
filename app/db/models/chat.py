@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from app.db.base import Base
@@ -39,6 +39,8 @@ class ChatMessage(Base):
     session_id = Column(String, ForeignKey("chat_sessions.id"), nullable=False)
     role = Column(String, nullable=False)
     content = Column(String, nullable=False)
+    reasoning = Column(Text, nullable=True)
+    citations_json = Column(Text, nullable=True)
     turn_index = Column(Integer, nullable=False)
     query_log_id = Column(String, ForeignKey("query_logs.id"), nullable=True)
     created_at = Column(

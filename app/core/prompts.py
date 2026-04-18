@@ -157,6 +157,33 @@ Be precise. Every claim must reference specific artifacts and their data. Do not
 """
 
 
+GROUNDED_ANSWER_DEVELOPER_PROMPT = (
+    "You are a retrieval-grounded assistant for sensitive enterprise documents.\n"
+    "Use only RETRIEVAL_EVIDENCE for factual claims. "
+    "SESSION_SUMMARY and historical context can resolve references only.\n"
+    "Rules:\n"
+    "1) If evidence is insufficient or contradictory, say so explicitly.\n"
+    "2) For each factual claim, cite at least one source index like [1].\n"
+    "3) Do not cite sources that are not in RETRIEVAL_EVIDENCE.\n"
+    "4) Prefer the most current/effective version unless asked to compare.\n"
+    "5) If conflict hints are empty, avoid absolute claims about no conflicts.\n"
+    "6) When images are attached, use them for chart/table/map interpretation.\n"
+    "7) Return this exact format:\n"
+    "<thinking>\n"
+    "step-by-step grounded reasoning with source indices\n"
+    "</thinking>\n"
+    "<answer>\n"
+    "final answer with inline citations like [1], [2]\n"
+    "</answer>"
+)
+
+SESSION_SUMMARY_DEVELOPER_PROMPT = (
+    "You maintain a concise running conversation summary for enterprise chat.\n"
+    "Keep entities, decisions, constraints, and unresolved asks.\n"
+    "Output plain text only, max 8 short lines, no markdown."
+)
+
+
 def build_grounded_answer_prompt(
     *,
     question: str,
@@ -165,33 +192,17 @@ def build_grounded_answer_prompt(
     conflict_block: str,
     conversation_context_block: str,
 ) -> str:
+    """
+    Backward-compatible combined prompt builder.
+
+    New synthesis path uses static developer prompt + structured user content.
+    """
     return (
-        "You are a retrieval-grounded assistant for sensitive enterprise documents.\n"
-        "Answer using only the provided evidence snippets and attached images.\n"
-        "You may use conversational context only to resolve references "
-        "(e.g., pronouns, follow-ups), not as a factual source.\n"
-        "Rules:\n"
-        "1) If evidence is insufficient or contradictory, say so explicitly.\n"
-        "2) For each factual claim, cite at least one source index like [1].\n"
-        "3) Do not cite sources that are not in the evidence list.\n"
-        "4) Prefer the most current/effective version unless the question asks for comparison.\n"
-        "5) If conflict hints are empty, avoid absolute claims such as "
-        "'no conflicts exist'; state only what was or was not detected in "
-        "the retrieved evidence.\n"
-        "6) Use attached images when they help resolve chart/table/map questions.\n"
-        "7) Return output using this exact format:\n"
-        "<thinking>\n"
-        "your step-by-step reasoning grounded in source indices\n"
-        "</thinking>\n"
-        "<answer>\n"
-        "final answer with inline citations like [1], [2]\n"
-        "</answer>\n\n"
-        f"Question:\n{question}\n\n"
-        f"Attached image count: {image_attachment_count}\n\n"
-        f"Conversation context:\n{conversation_context_block}\n\n"
-        f"Evidence:\n{evidence_block}\n\n"
-        f"Conflict hints:\n{conflict_block}\n\n"
-        "Answer:"
+        f"CURRENT_QUERY:\n{question}\n\n"
+        f"ATTACHED_IMAGE_COUNT:\n{image_attachment_count}\n\n"
+        f"CONVERSATION_CONTEXT:\n{conversation_context_block}\n\n"
+        f"RETRIEVAL_EVIDENCE:\n{evidence_block}\n\n"
+        f"CONFLICT_HINTS:\n{conflict_block}\n"
     )
 
 

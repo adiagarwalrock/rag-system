@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 
 from app.db.models import ChatMessage, ChatSession
@@ -30,7 +31,14 @@ def test_execute_client_query_creates_session_and_persists_turns(
         captured["conversation_context"] = conversation_context
         return {
             "answer": "Policy v2 changed retention clauses.",
-            "citations": [],
+            "reasoning": "Policy v2 updated retention from 30 to 45 days.",
+            "citations": [
+                {
+                    "citation_label": "policy_v2.pdf - p.3 - chunk 1",
+                    "text": "Retention period is 45 days.",
+                    "vector_node_id": "node-1",
+                }
+            ],
             "conflicts": [],
             "query_id": "query-123",
             "latency_ms": 123,
@@ -54,11 +62,16 @@ def test_execute_client_query_creates_session_and_persists_turns(
         lambda **kwargs: indexed.update(kwargs),
     )
 
-    class _FakeLLM:
-        def complete(self, prompt: str):
-            return "Updated session summary"
-
-    monkeypatch.setattr(chat_conversation_service, "get_llm", lambda **kwargs: _FakeLLM())
+    monkeypatch.setattr(
+        chat_conversation_service,
+        "create_responses_completion",
+        lambda **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        chat_conversation_service,
+        "extract_response_output_text",
+        lambda response: "Updated session summary",
+    )
 
     result = service.execute_client_query(
         client_id=client.id,
@@ -88,6 +101,14 @@ def test_execute_client_query_creates_session_and_persists_turns(
     assert messages[0].content == "What changed in policy v2?"
     assert messages[1].role == "assistant"
     assert messages[1].query_log_id == "query-123"
+    assert messages[1].reasoning == "Policy v2 updated retention from 30 to 45 days."
+    assert json.loads(messages[1].citations_json or "[]") == [
+        {
+            "citation_label": "policy_v2.pdf - p.3 - chunk 1",
+            "text": "Retention period is 45 days.",
+            "vector_node_id": "node-1",
+        }
+    ]
 
     assert indexed["client_id"] == client.id
     assert indexed["session_id"] == result["session_id"]

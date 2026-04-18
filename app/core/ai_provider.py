@@ -25,10 +25,6 @@ def normalize_reasoning_effort(reasoning_effort: str | None) -> str:
     return DEFAULT_REASONING_EFFORT
 
 
-def reasoning_effort_supported() -> bool:
-    return settings.OPENAI_USE_RESPONSES
-
-
 def get_llm(
     *,
     model: str | None = None,
@@ -60,11 +56,6 @@ def get_embeddings(*, model: str | None = None, api_key: str | None = None):
         api_key=resolved_key,
         **embedding_kwargs,
     )
-
-
-def get_embedding_model(*, model: str | None = None, api_key: str | None = None):
-    """Backward-compatible alias for `get_embeddings`."""
-    return get_embeddings(model=model, api_key=api_key)
 
 
 def initialize_ai_provider(force: bool = False) -> None:

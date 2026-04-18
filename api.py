@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.core.logging_config import configure_logging
 from app.api.routes_clients import router as clients_router
 from app.api.routes_documents import router as documents_router
 from app.api.routes_health import router as health_router
@@ -12,6 +13,8 @@ from app.db.schema import ensure_runtime_schema
 # Import all models so Base.metadata knows about every table
 from app.db.models import *  # noqa: F401, F403
 from app.db.snowflake import engine
+
+configure_logging()
 
 app = FastAPI(
     title=settings.PROJECT_NAME, openapi_url=f"{settings.API_V1_STR}/openapi.json"

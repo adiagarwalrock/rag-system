@@ -670,6 +670,12 @@ def _base_chunk_metadata(
         "pdf_repair_method": manifest.pdf_repair_method if manifest else None,
         "pdf_repair_success": manifest.pdf_repair_success if manifest else False,
         "pdf_repair_error": manifest.pdf_repair_error if manifest else None,
+        "llm_page_summary_status": (
+            manifest.llm_page_summary_status if manifest else "not_run"
+        ),
+        "llm_page_summary_error": (
+            manifest.llm_page_summary_error if manifest else None
+        ),
         "ocr_used": manifest.ocr_used if manifest else False,
         "units": units,
         "continuation_flag": continuation_flag,

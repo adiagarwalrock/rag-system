@@ -100,6 +100,154 @@ def test_extract_liteparse_pages_uses_page_level_ocr_flag(monkeypatch, tmp_path)
     assert pages[0]["ocr_used"] is True
 
 
+def test_extract_table_candidates_uses_strategy_cascade():
+    class _FakeTable:
+        def __init__(self):
+            self.bbox = [1, 2, 10, 20]
+
+        def extract(self):
+            return [["Quarter", "Revenue"], ["Q1", "10"]]
+
+    class _FakeFinder:
+        def __init__(self, tables):
+            self.tables = tables
+
+    class _FakePage:
+        number = 4
+
+        def __init__(self):
+            self.calls = []
+
+        def find_tables(self, **kwargs):
+            self.calls.append(kwargs)
+            strategy = kwargs.get("strategy", "default")
+            if strategy == "default":
+                raise RuntimeError("default strategy failed")
+            if strategy == "lines":
+                return _FakeFinder([])
+            return _FakeFinder([_FakeTable()])
+
+    page = _FakePage()
+    candidates = adapters._extract_table_candidates(page)
+
+    assert candidates is not None
+    assert len(candidates) == 1
+    assert candidates[0]["candidate_id"].startswith("text_table_candidate_")
+    assert candidates[0]["rows"][0] == ["Quarter", "Revenue"]
+    assert page.calls == [{}, {"strategy": "lines"}, {"strategy": "text"}]
+
+
+def test_extract_table_candidates_returns_none_when_all_strategies_fail():
+    class _FakePage:
+        number = 1
+
+        def find_tables(self, **_kwargs):
+            raise RuntimeError("table detection failed")
+
+    assert adapters._extract_table_candidates(_FakePage()) is None
+
+
+def test_extract_table_candidates_skips_malformed_bbox_objects():
+    class _MalformedBBoxTable:
+        @property
+        def bbox(self):
+            raise ValueError("min() iterable argument is empty")
+
+        def extract(self):
+            return [["Quarter", "Revenue"], ["Q1", "10"]]
+
+    class _FakeFinder:
+        def __init__(self, tables):
+            self.tables = tables
+
+    class _FakePage:
+        number = 2
+
+        def __init__(self):
+            self.calls = []
+
+        def find_tables(self, **kwargs):
+            self.calls.append(kwargs)
+            if kwargs.get("strategy", "default") == "default":
+                return _FakeFinder([_MalformedBBoxTable()])
+            return _FakeFinder([])
+
+    page = _FakePage()
+    candidates = adapters._extract_table_candidates(page)
+
+    assert candidates == []
+    assert page.calls == [{}, {"strategy": "lines"}, {"strategy": "text"}]
+
+
+def test_build_table_candidates_keeps_valid_when_first_bbox_is_malformed():
+    class _MalformedBBoxTable:
+        @property
+        def bbox(self):
+            raise ValueError("min() iterable argument is empty")
+
+        def extract(self):
+            return [["Quarter", "Revenue"], ["Q1", "10"]]
+
+    class _ValidTable:
+        bbox = [1, 2, 10, 20]
+
+        def extract(self):
+            return [["Quarter", "Revenue"], ["Q2", "20"]]
+
+    candidates = adapters._build_table_candidates_from_tables(
+        tables=[_MalformedBBoxTable(), _ValidTable()],
+        strategy_name="default",
+        page_num=7,
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["candidate_id"] == "default_table_candidate_2"
+    assert candidates[0]["rows"][1] == ["Q2", "20"]
+
+
+def test_extract_table_candidates_uses_later_strategy_when_earlier_has_malformed_bbox():
+    class _MalformedBBoxTable:
+        @property
+        def bbox(self):
+            raise ValueError("min() iterable argument is empty")
+
+        def extract(self):
+            return [["Quarter", "Revenue"], ["Q1", "10"]]
+
+    class _ValidTable:
+        bbox = [1, 2, 10, 20]
+
+        def extract(self):
+            return [["Quarter", "Revenue"], ["Q3", "30"]]
+
+    class _FakeFinder:
+        def __init__(self, tables):
+            self.tables = tables
+
+    class _FakePage:
+        number = 4
+
+        def __init__(self):
+            self.calls = []
+
+        def find_tables(self, **kwargs):
+            self.calls.append(kwargs)
+            strategy = kwargs.get("strategy", "default")
+            if strategy == "default":
+                return _FakeFinder([_MalformedBBoxTable()])
+            if strategy == "lines":
+                return _FakeFinder([])
+            return _FakeFinder([_ValidTable()])
+
+    page = _FakePage()
+    candidates = adapters._extract_table_candidates(page)
+
+    assert len(candidates) == 1
+    assert candidates[0]["candidate_id"] == "text_table_candidate_1"
+    assert candidates[0]["rows"][1] == ["Q3", "30"]
+    assert page.calls == [{}, {"strategy": "lines"}, {"strategy": "text"}]
+
+
 def test_repair_pdf_path_falls_back_to_original_when_all_methods_fail(
     monkeypatch, tmp_path
 ):
@@ -582,11 +730,98 @@ def test_analyze_page_screenshots_uses_structured_output(monkeypatch):
 
     assert manifest.llm_enriched is True
     assert manifest.llm_page_summary is not None
+    assert manifest.llm_page_summary_status == "success"
+    assert manifest.llm_page_summary_error is None
     assert (
         "Layout: Two-column page with a chart and table." in manifest.llm_page_summary
     )
     assert "Numeric values:" in manifest.llm_page_summary
     assert "Charts:" in manifest.llm_page_summary
+
+
+def test_analyze_page_screenshots_retries_then_succeeds(monkeypatch):
+    manifest = PageManifest(
+        document_id="doc-1",
+        page_num=5,
+        page_width=612,
+        page_height=792,
+        screenshot_path="/tmp/page_5.png",
+        full_page_text="Revenue rose from 10 to 20.",
+        layout_confidence=0.7,
+        complexity_score=0.85,
+        page_class="visual_heavy_page",
+        ocr_used=False,
+        parser_sources=["liteparse", "pymupdf"],
+    )
+
+    monkeypatch.setattr(settings, "ENABLE_MULTIMODAL_CAPTIONING", True)
+    monkeypatch.setattr(settings, "LLM_CAPTION_MAX_PAGES", 3)
+    monkeypatch.setattr(settings, "LLM_SCREENSHOT_TIMEOUT_SECONDS", 2)
+    monkeypatch.setattr(settings, "LLM_SCREENSHOT_MAX_WORKERS", 1)
+    monkeypatch.setattr(settings, "LLM_SCREENSHOT_RETRIES", 1)
+    monkeypatch.setattr(artifact_builders, "_llm_available_for_pipeline", lambda: True)
+
+    calls = {"count": 0}
+
+    def _fake_parallel_jobs(jobs, _runner, **_kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return [(jobs[0], None, TimeoutError("job exceeded timeout (2.0s)"))]
+        response = artifact_builders.PageScreenshotResponse(
+            layout_description="Second attempt succeeds.",
+            numeric_values=["Revenue: 20"],
+            chart_descriptions=[],
+            table_summaries=[],
+            map_or_diagram_annotations=[],
+            key_takeaways=["Recovered after retry."],
+        )
+        return [(jobs[0], response, None)]
+
+    monkeypatch.setattr(artifact_builders, "_run_parallel_jobs", _fake_parallel_jobs)
+
+    artifact_builders.analyze_page_screenshots([manifest])
+
+    assert calls["count"] == 2
+    assert manifest.llm_page_summary_status == "success"
+    assert manifest.llm_page_summary_error is None
+    assert manifest.llm_enriched is True
+    assert "Second attempt succeeds." in (manifest.llm_page_summary or "")
+
+
+def test_analyze_page_screenshots_falls_back_after_retry_budget(monkeypatch):
+    manifest = PageManifest(
+        document_id="doc-1",
+        page_num=8,
+        page_width=612,
+        page_height=792,
+        screenshot_path="/tmp/page_8.png",
+        full_page_text="Revenue was 10, 20, and 30 percent in key regions.",
+        layout_confidence=0.65,
+        complexity_score=0.9,
+        page_class="hard_page",
+        ocr_used=False,
+        parser_sources=["liteparse", "pymupdf"],
+    )
+
+    monkeypatch.setattr(settings, "ENABLE_MULTIMODAL_CAPTIONING", True)
+    monkeypatch.setattr(settings, "LLM_CAPTION_MAX_PAGES", 3)
+    monkeypatch.setattr(settings, "LLM_SCREENSHOT_TIMEOUT_SECONDS", 1)
+    monkeypatch.setattr(settings, "LLM_SCREENSHOT_MAX_WORKERS", 1)
+    monkeypatch.setattr(settings, "LLM_SCREENSHOT_RETRIES", 1)
+    monkeypatch.setattr(artifact_builders, "_llm_available_for_pipeline", lambda: True)
+
+    def _fake_parallel_jobs(jobs, _runner, **_kwargs):
+        return [(jobs[0], None, TimeoutError("job exceeded timeout (1.0s)"))]
+
+    monkeypatch.setattr(artifact_builders, "_run_parallel_jobs", _fake_parallel_jobs)
+
+    artifact_builders.analyze_page_screenshots([manifest])
+
+    assert manifest.llm_page_summary_status == "fallback"
+    assert "timeout" in (manifest.llm_page_summary_error or "").lower()
+    assert manifest.llm_enriched is True
+    assert "Deterministic parser fallback summary" in (manifest.llm_page_summary or "")
+    assert "Numeric values:" in (manifest.llm_page_summary or "")
 
 
 def test_parse_chart_json_response_rejects_non_object_json():

@@ -5,6 +5,7 @@ import logging
 import mimetypes
 import re
 import hashlib
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
@@ -1278,6 +1279,43 @@ def _render_page_screenshot_summary(summary: PageScreenshotResponse) -> str:
     return "\n\n".join(sections).strip()
 
 
+def _build_parser_fallback_page_summary(manifest: PageManifest) -> str:
+    sections = [
+        "Layout: Deterministic parser fallback summary (multimodal analysis unavailable).",
+        (
+            "Key takeaways:\n"
+            f"- Page class: {manifest.page_class}\n"
+            f"- Layout confidence: {manifest.layout_confidence:.2f}\n"
+            f"- Complexity score: {manifest.complexity_score:.2f}\n"
+            f"- OCR used: {manifest.ocr_used}\n"
+            f"- Parser sources: {', '.join(manifest.parser_sources)}"
+        ),
+    ]
+    numeric_matches = re.findall(
+        r"\b\d[\d,]*(?:\.\d+)?%?\b",
+        manifest.full_page_text or "",
+    )
+    if numeric_matches:
+        preview = ", ".join(numeric_matches[:12])
+        sections.append(f"Numeric values:\n- {preview}")
+    excerpt = normalize_whitespace(manifest.full_page_text or "")[:600]
+    if excerpt:
+        sections.append(f"Text excerpt:\n- {excerpt}")
+    return "\n\n".join(sections).strip()
+
+
+def _is_retryable_screenshot_failure(
+    *,
+    result: PageScreenshotResponse | None,
+    error: Exception | None,
+) -> bool:
+    if isinstance(error, TimeoutError):
+        return True
+    if error is not None:
+        return _is_transient_provider_error(error)
+    return result is None
+
+
 # ---------------------------------------------------------------------------
 # Holistic page-level multimodal analysis
 # ---------------------------------------------------------------------------
@@ -1285,21 +1323,38 @@ def _render_page_screenshot_summary(summary: PageScreenshotResponse) -> str:
 
 def analyze_page_screenshots(page_manifests: list[PageManifest]) -> None:
     """Run multimodal LLM analysis on full page screenshots for non-trivial pages."""
-    if not settings.ENABLE_MULTIMODAL_CAPTIONING:
-        return
-    if not _llm_available_for_pipeline():
-        return
-
     eligible = [
         m
         for m in page_manifests
         if m.page_class in {"visual_heavy_page", "table_heavy_page", "hard_page"}
         and m.screenshot_path
     ]
+    if not eligible:
+        return
+
+    if not settings.ENABLE_MULTIMODAL_CAPTIONING:
+        for manifest in eligible:
+            manifest.llm_page_summary_status = "skipped"
+            manifest.llm_page_summary_error = "multimodal_captioning_disabled"
+        return
+    if not _llm_available_for_pipeline():
+        for manifest in eligible:
+            manifest.llm_page_summary_status = "skipped"
+            manifest.llm_page_summary_error = "llm_unavailable"
+        return
+
     max_pages = max(1, int(settings.LLM_CAPTION_MAX_PAGES))
     eligible = sorted(eligible, key=lambda m: m.complexity_score, reverse=True)[
         :max_pages
     ]
+    timeout_seconds = max(1.0, float(settings.LLM_SCREENSHOT_TIMEOUT_SECONDS))
+    max_workers = max(1, int(settings.LLM_SCREENSHOT_MAX_WORKERS))
+    max_retries = max(0, int(settings.LLM_SCREENSHOT_RETRIES))
+    pending = list(eligible)
+
+    for manifest in eligible:
+        manifest.llm_page_summary_status = "pending"
+        manifest.llm_page_summary_error = None
 
     def _run_screenshot_job(manifest: PageManifest) -> PageScreenshotResponse | None:
         return _run_structured_multimodal_inference(
@@ -1308,32 +1363,66 @@ def analyze_page_screenshots(page_manifests: list[PageManifest]) -> None:
             output_cls=PageScreenshotResponse,
         )
 
-    for manifest, result, error in _run_parallel_jobs(
-        eligible,
-        _run_screenshot_job,
-        max_workers=_parallel_worker_count(len(eligible)),
-        timeout_seconds=float(settings.LLM_CAPTION_TIMEOUT_SECONDS),
-    ):
-        if error is not None:
-            logger.error(
-                "Page screenshot analysis failed for page %d",
-                manifest.page_num,
-                exc_info=error,
-            )
-            continue
-        if result is not None:
-            summary_text = _render_page_screenshot_summary(result)
-            if not summary_text:
+    for attempt in range(max_retries + 1):
+        if not pending:
+            break
+
+        retry_pending: list[PageManifest] = []
+        max_parallel = min(_parallel_worker_count(len(pending)), max_workers)
+        for manifest, result, error in _run_parallel_jobs(
+            pending,
+            _run_screenshot_job,
+            max_workers=max_parallel,
+            timeout_seconds=timeout_seconds,
+        ):
+            if result is not None:
+                summary_text = _render_page_screenshot_summary(result)
+                if summary_text:
+                    manifest.llm_page_summary = summary_text[
+                        : settings.REASONING_MAX_OUTPUT_CHARS
+                    ]
+                    manifest.llm_enriched = True
+                    manifest.llm_page_summary_status = "success"
+                    manifest.llm_page_summary_error = None
+                    logger.info(
+                        "Page %d screenshot analysis complete (%d chars)",
+                        manifest.page_num,
+                        len(manifest.llm_page_summary),
+                    )
+                    continue
+
+                error = RuntimeError("empty_structured_summary")
+
+            if (
+                _is_retryable_screenshot_failure(result=result, error=error)
+                and attempt < max_retries
+            ):
+                retry_pending.append(manifest)
+                logger.warning(
+                    "Retrying screenshot analysis for page %d (attempt %d/%d)",
+                    manifest.page_num,
+                    attempt + 1,
+                    max_retries,
+                )
                 continue
-            manifest.llm_page_summary = summary_text[
+
+            fallback_summary = _build_parser_fallback_page_summary(manifest)
+            manifest.llm_page_summary = fallback_summary[
                 : settings.REASONING_MAX_OUTPUT_CHARS
             ]
             manifest.llm_enriched = True
-            logger.info(
-                "Page %d screenshot analysis complete (%d chars)",
-                manifest.page_num,
-                len(manifest.llm_page_summary),
+            manifest.llm_page_summary_status = "fallback"
+            manifest.llm_page_summary_error = (
+                str(error)[:400] if error is not None else "empty_structured_summary"
             )
+            logger.warning(
+                "Page screenshot analysis fell back to parser summary for page %d",
+                manifest.page_num,
+            )
+
+        pending = retry_pending
+        if pending:
+            time.sleep(min(1.0 * (attempt + 1), 3.0))
 
 
 # ---------------------------------------------------------------------------

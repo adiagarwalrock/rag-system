@@ -8,6 +8,7 @@ import logging
 import mimetypes
 import re
 import hashlib
+import base64
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -22,12 +23,17 @@ from llama_index.core.retrievers import QueryFusionRetriever
 from llama_index.core.retrievers.fusion_retriever import FUSION_MODES
 from llama_index.core.vector_stores import ExactMatchFilter, MetadataFilters
 
-from app.core.ai_provider import (
-    normalize_reasoning_effort,
-    reasoning_effort_supported,
-    get_llm,
+from app.core.ai_provider import normalize_reasoning_effort, get_llm
+from app.core.config import settings
+from app.core.prompts import (
+    GROUNDED_ANSWER_DEVELOPER_PROMPT,
+    build_grounded_answer_prompt,
 )
-from app.core.prompts import build_grounded_answer_prompt
+from app.core.responses_api import (
+    create_responses_completion,
+    extract_response_output_text,
+)
+from app.core.token_budget import ResponsesInputBudgeter
 from app.indexing.vector_store import vector_store_manager
 from app.retrieval.citation_builder import build_citations
 from app.retrieval.conflict_detector import detect_conflicts
@@ -355,8 +361,7 @@ class VecteraRetriever:
         citations: list[dict[str, Any]],
         conflicts: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        llm = self._build_answer_llm()
-        effort_applied = reasoning_effort_supported()
+        effort_applied = settings.OPENAI_USE_RESPONSES
 
         if not citations:
             return {
@@ -370,6 +375,60 @@ class VecteraRetriever:
             }
 
         image_paths = _collect_image_evidence_paths(citations)
+        budgeter = ResponsesInputBudgeter(model=settings.LLM_MODEL)
+        sections = _build_labeled_context_sections(
+            citations=citations,
+            conflicts=conflicts,
+            conversation_context=self.conversation_context,
+        )
+        input_messages, _, metrics = budgeter.build_budgeted_sections(
+            developer_prompt=GROUNDED_ANSWER_DEVELOPER_PROMPT,
+            question=question,
+            recent_turns=self.conversation_context.get("recent_turns") or [],
+            session_summary=sections["session_summary"],
+            cross_session_lines=sections["cross_session_lines"],
+            evidence_lines=sections["evidence_lines"],
+            conflict_lines=sections["conflict_lines"],
+        )
+        logger.info(
+            "Responses budget usage model=%s input_tokens=%d/%d history=%d summary=%d cross=%d evidence=%d conflict=%d",
+            metrics.model,
+            metrics.total_input_tokens,
+            metrics.input_budget_tokens,
+            metrics.history_tokens,
+            metrics.summary_tokens,
+            metrics.cross_session_tokens,
+            metrics.evidence_tokens,
+            metrics.conflict_tokens,
+        )
+
+        try:
+            response = create_responses_completion(
+                model=settings.LLM_MODEL,
+                input_messages=input_messages,
+                reasoning_effort=self.reasoning_effort,
+                max_output_tokens=settings.RESPONSE_MAX_OUTPUT_TOKENS,
+                prompt_cache_key=settings.RESPONSE_PROMPT_CACHE_KEY,
+                prompt_cache_retention=settings.RESPONSE_PROMPT_CACHE_RETENTION,
+                safety_identifier=f"{settings.RESPONSE_SAFETY_IDENTIFIER_PREFIX}:{self.client_id}",
+                user_tag=settings.RESPONSE_USER_TAG,
+            )
+            text = extract_response_output_text(response)
+            answer, reasoning = _split_reasoning_from_text(text)
+            if answer:
+                return {
+                    "answer": answer,
+                    "reasoning": reasoning,
+                    "images_used": image_paths,
+                    "reasoning_effort_applied": effort_applied,
+                }
+            raise ValueError("LLM returned empty answer")
+        except Exception:
+            logger.exception(
+                "Responses answer synthesis failed; falling back to LlamaIndex chat"
+            )
+
+        llm = self._build_answer_llm()
         prompt = _build_grounded_prompt(
             question,
             citations,
@@ -377,7 +436,6 @@ class VecteraRetriever:
             image_attachment_count=len(image_paths),
             conversation_context=self.conversation_context,
         )
-
         attempts = [
             ("multimodal", _build_grounded_message(prompt, image_paths), image_paths),
             ("text_only", _build_grounded_message(prompt, []), []),
@@ -400,27 +458,13 @@ class VecteraRetriever:
             except Exception:
                 logger.exception("%s answer synthesis failed", attempt_name)
 
-        try:
-            response = llm.complete(prompt)
-            answer, reasoning = _split_reasoning_from_text(str(response).strip())
-            if answer:
-                return {
-                    "answer": answer,
-                    "reasoning": reasoning,
-                    "images_used": [],
-                    "reasoning_effort_applied": effort_applied,
-                }
-            raise ValueError("LLM returned empty answer")
-        except Exception:
-            logger.exception(
-                "Answer synthesis failed; returning source-grounded fallback"
-            )
-            return {
-                "answer": _build_source_grounded_fallback(citations),
-                "reasoning": None,
-                "images_used": image_paths,
-                "reasoning_effort_applied": effort_applied,
-            }
+        logger.exception("Answer synthesis failed; returning source-grounded fallback")
+        return {
+            "answer": _build_source_grounded_fallback(citations),
+            "reasoning": None,
+            "images_used": image_paths,
+            "reasoning_effort_applied": effort_applied,
+        }
 
     def _build_answer_llm(self):
         return get_llm(reasoning_effort=self.reasoning_effort)
@@ -595,9 +639,7 @@ def _build_retrieval_diagnostics(
         for chunk_type, count in evidence_chunk_types.items()
         if chunk_type in REASONING_CHUNK_TYPES
     )
-    ranked_image_count = sum(
-        1 for node in ranked_nodes if _node_has_image_assets(node)
-    )
+    ranked_image_count = sum(1 for node in ranked_nodes if _node_has_image_assets(node))
     evidence_image_count = sum(
         1 for node in evidence_nodes if _node_has_image_assets(node)
     )
@@ -725,6 +767,65 @@ def _build_grounded_prompt(
     )
 
 
+def _build_labeled_context_sections(
+    *,
+    citations: list[dict[str, Any]],
+    conflicts: list[dict[str, Any]],
+    conversation_context: dict[str, Any],
+) -> dict[str, Any]:
+    summary = str(conversation_context.get("session_summary") or "").strip()
+    cross_session_pairs = conversation_context.get("cross_session_pairs") or []
+
+    evidence_lines: list[str] = []
+    for index, citation in enumerate(citations, start=1):
+        label = citation.get("citation_label") or citation.get(
+            "document_name", f"Source {index}"
+        )
+        version = citation.get("version_label") or "unknown"
+        chunk_type = citation.get("chunk_type") or "text"
+        location = ""
+        if citation.get("page_num"):
+            location = f" | page={citation['page_num']}"
+        elif citation.get("slide_num"):
+            location = f" | slide={citation['slide_num']}"
+        excerpt = _prompt_excerpt(citation)
+        evidence_lines.append(
+            f"[{index}] {label} | version={version} | chunk_type={chunk_type}{location}\n"
+            f"Excerpt: {excerpt}"
+        )
+
+    conflict_lines: list[str] = []
+    for conflict in conflicts[:4]:
+        summary_line = " ".join(str(conflict.get("summary") or "").split())
+        if summary_line:
+            conflict_lines.append(f"- {summary_line}")
+    if not conflict_lines:
+        conflict_lines.append(
+            "- No high-confidence conflicts were detected in selected evidence."
+        )
+
+    cross_session_lines: list[str] = []
+    for pair in cross_session_pairs:
+        user_text = " ".join(str(pair.get("user_text") or "").split())
+        assistant_text = " ".join(str(pair.get("assistant_text") or "").split())
+        if not user_text or not assistant_text:
+            continue
+        score = pair.get("score")
+        score_label = (
+            f"{float(score):.3f}" if isinstance(score, (int, float)) else "n/a"
+        )
+        cross_session_lines.append(
+            f"- similarity={score_label} | prior_user={user_text} | prior_assistant={assistant_text}"
+        )
+
+    return {
+        "session_summary": summary,
+        "cross_session_lines": cross_session_lines,
+        "evidence_lines": evidence_lines,
+        "conflict_lines": conflict_lines,
+    }
+
+
 def _build_conversation_context_block(conversation_context: dict[str, Any]) -> str:
     summary = str(conversation_context.get("session_summary") or "").strip()
     recent_turns = conversation_context.get("recent_turns") or []
@@ -732,7 +833,7 @@ def _build_conversation_context_block(conversation_context: dict[str, Any]) -> s
 
     sections: list[str] = []
     if summary:
-        sections.append(f"Session summary:\n{summary}")
+        sections.append(f"SESSION_SUMMARY:\n{summary}")
 
     if recent_turns:
         lines = []
@@ -746,7 +847,7 @@ def _build_conversation_context_block(conversation_context: dict[str, Any]) -> s
                 content = f"{content[:317].rstrip()}..."
             lines.append(f"- {role_label}: {content}")
         if lines:
-            sections.append("Recent turns in this session:\n" + "\n".join(lines))
+            sections.append("CURRENT_SESSION_RECENT_TURNS:\n" + "\n".join(lines))
 
     if cross_session_pairs:
         lines = []
@@ -765,12 +866,14 @@ def _build_conversation_context_block(conversation_context: dict[str, Any]) -> s
                 if isinstance(score, (int, float))
                 else ""
             )
-            lines.append(f"- Prior Q{score_text}: {user_text}\n  Prior A: {assistant_text}")
+            lines.append(
+                f"- Prior Q{score_text}: {user_text}\n  Prior A: {assistant_text}"
+            )
         if lines:
-            sections.append("Relevant prior context from other sessions:\n" + "\n".join(lines))
+            sections.append("CROSS_SESSION_RELEVANT_QA:\n" + "\n".join(lines))
 
     if not sections:
-        return "No prior conversational context available."
+        return "NO_PRIOR_CONVERSATION_CONTEXT"
     return "\n\n".join(sections)
 
 
@@ -803,6 +906,36 @@ def _build_grounded_message(prompt: str, image_paths: list[str]) -> ChatMessage:
             )
         )
     return ChatMessage(role=MessageRole.USER, blocks=blocks)
+
+
+def _append_image_inputs(
+    *,
+    input_messages: list[dict[str, Any]],
+    image_paths: list[str],
+) -> list[dict[str, Any]]:
+    if not image_paths:
+        return input_messages
+
+    messages = [*input_messages]
+    if not messages:
+        return messages
+
+    user_message = messages[-1]
+    if user_message.get("role") != "user":
+        return messages
+
+    user_text = str(user_message.get("content") or "")
+    multimodal_content: list[dict[str, Any]] = [
+        {"type": "input_text", "text": user_text}
+    ]
+    for path in image_paths:
+        data_url = _image_path_to_data_url(path)
+        if not data_url:
+            continue
+        multimodal_content.append({"type": "input_image", "image_url": data_url})
+
+    user_message["content"] = multimodal_content
+    return messages
 
 
 def _collect_image_evidence_paths(
@@ -874,6 +1007,18 @@ def _resolve_asset_path(raw_ref: Any, artifact_bundle_path: Any) -> Path | None:
             return resolved
 
     return None
+
+
+def _image_path_to_data_url(image_path: str) -> str | None:
+    candidate = Path(image_path)
+    if not candidate.exists() or not candidate.is_file():
+        return None
+    mime_type = mimetypes.guess_type(str(candidate))[0] or "image/png"
+    try:
+        encoded = base64.b64encode(candidate.read_bytes()).decode("ascii")
+    except OSError:
+        return None
+    return f"data:{mime_type};base64,{encoded}"
 
 
 def _extract_answer_and_reasoning_from_chat(response: Any) -> tuple[str, str | None]:

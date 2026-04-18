@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import logging
+import json
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.ai_provider import get_llm
 from app.core.config import settings
+from app.core.prompts import SESSION_SUMMARY_DEVELOPER_PROMPT
+from app.core.responses_api import create_responses_completion, extract_response_output_text
+from app.core.token_budget import ResponsesInputBudgeter
 from app.db.models.chat import ChatMessage, ChatSession
 from app.services.chat_context_service import ChatContextService
 from app.services.query_service import execute_query
@@ -92,6 +96,8 @@ class ChatConversationService:
             session_id=session.id,
             role="assistant",
             content=result.get("answer", "No answer generated."),
+            reasoning=result.get("reasoning"),
+            citations=result.get("citations", []),
             turn_index=next_turn_index + 1,
             query_log_id=result.get("query_id"),
         )
@@ -198,13 +204,27 @@ class ChatConversationService:
         content: str,
         turn_index: int,
         query_log_id: str | None = None,
+        reasoning: str | None = None,
+        citations: list[dict[str, Any]] | None = None,
     ) -> ChatMessage:
+        citations_json = None
+        if citations is not None:
+            normalized_citations = citations if isinstance(citations, list) else []
+            try:
+                citations_json = json.dumps(
+                    normalized_citations, ensure_ascii=False, default=str
+                )
+            except Exception:
+                citations_json = "[]"
+
         message = ChatMessage(
             id=str(uuid.uuid4()),
             client_id=client_id,
             session_id=session_id,
             role=role,
             content=content,
+            reasoning=reasoning,
+            citations_json=citations_json,
             turn_index=turn_index,
             query_log_id=query_log_id,
         )
@@ -235,9 +255,36 @@ class ChatConversationService:
 
         prior_summary = (session.summary_text or "").strip()
         try:
-            llm = get_llm(reasoning_effort="low")
             prompt = _build_summary_prompt(prior_summary, rows)
-            candidate = str(llm.complete(prompt)).strip()
+            model = settings.SESSION_SUMMARY_MODEL or settings.QUERY_EXPANSION_MODEL
+            budgeter = ResponsesInputBudgeter(model=model)
+            max_input_tokens = max(128, budgeter.input_budget_tokens)
+            summary_messages = [
+                {"role": "developer", "content": SESSION_SUMMARY_DEVELOPER_PROMPT},
+                {"role": "user", "content": prompt},
+            ]
+            token_count = budgeter.count_messages_tokens(summary_messages)
+            if token_count > max_input_tokens:
+                fixed_tokens = budgeter.count_messages_tokens(summary_messages[:1])
+                allowed_user_tokens = max(64, max_input_tokens - fixed_tokens)
+                prompt = budgeter.truncate_to_tokens(prompt, allowed_user_tokens)
+            response = create_responses_completion(
+                model=model,
+                input_messages=[
+                    {"role": "developer", "content": SESSION_SUMMARY_DEVELOPER_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+                reasoning_effort="low",
+                max_output_tokens=settings.SESSION_SUMMARY_MAX_OUTPUT_TOKENS,
+                prompt_cache_key="vectera:session-summary:v1",
+                prompt_cache_retention=settings.RESPONSE_PROMPT_CACHE_RETENTION,
+                safety_identifier=(
+                    f"{settings.RESPONSE_SAFETY_IDENTIFIER_PREFIX}:{session.client_id}"
+                ),
+                user_tag=settings.RESPONSE_USER_TAG,
+                timeout_seconds=settings.SESSION_SUMMARY_TIMEOUT_SECONDS,
+            )
+            candidate = extract_response_output_text(response)
             cleaned = _sanitize_summary(candidate)
             if cleaned:
                 session.summary_text = cleaned[: settings.CHAT_SUMMARY_MAX_CHARS]
