@@ -6,7 +6,7 @@ from app.api.routes_clients import router as clients_router
 from app.api.routes_documents import router as documents_router
 from app.api.routes_health import router as health_router
 from app.api.routes_query import router as query_router
-from app.core.config import settings
+from app.core.config import settings, validate_runtime_settings
 from app.db.base import Base
 
 # Import all models so Base.metadata knows about every table
@@ -16,6 +16,11 @@ from app.db.snowflake import engine
 app = FastAPI(
     title=settings.PROJECT_NAME, openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
+
+
+@app.on_event("startup")
+def _validate_runtime_config() -> None:
+    validate_runtime_settings()
 
 # Auto-create all tables on startup
 Base.metadata.create_all(bind=engine)

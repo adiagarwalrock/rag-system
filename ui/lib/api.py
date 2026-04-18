@@ -21,6 +21,7 @@ from app.services.ingest_service import (
     retry_ingestion,
     delete_document,
 )
+from app.services.query_history_service import QueryHistoryFilters, QueryHistoryService
 from app.services.query_service import execute_query
 
 logger = logging.getLogger(__name__)
@@ -215,6 +216,38 @@ class VecteraCore:
             except Exception as e:
                 logger.error(f"Query Error: {e}")
                 raise ValueError(str(e))
+
+    def list_query_history(
+        self,
+        client_id: Optional[str] = None,
+        status: Optional[str] = None,
+        search_text: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict:
+        with SessionLocal() as db:
+            payload = QueryHistoryService(db).list_query_history(
+                QueryHistoryFilters(
+                    client_id=client_id,
+                    status=status,
+                    search_text=search_text,
+                    limit=limit,
+                    offset=offset,
+                )
+            )
+            rows = []
+            for row in payload["rows"]:
+                rows.append(
+                    {
+                        **row,
+                        "created_at": (
+                            row["created_at"].isoformat()
+                            if row.get("created_at")
+                            else None
+                        ),
+                    }
+                )
+            return {"rows": rows, "total": payload["total"]}
 
     # --- Health ---
     def health(self) -> dict:

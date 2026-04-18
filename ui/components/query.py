@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import streamlit as st
 
 from ui.components.auth import get_api
@@ -67,11 +69,32 @@ def _format_reference(citation: dict) -> str | None:
     return None
 
 
+def _displayable_image_refs(raw_refs) -> list[str]:
+    if isinstance(raw_refs, str):
+        refs = [raw_refs]
+    elif isinstance(raw_refs, list):
+        refs = raw_refs
+    else:
+        return []
+
+    displayable: list[str] = []
+    valid_suffixes = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+    for ref in refs:
+        if not isinstance(ref, str):
+            continue
+        candidate = Path(ref).expanduser()
+        if not candidate.exists() or candidate.suffix.lower() not in valid_suffixes:
+            continue
+        displayable.append(str(candidate))
+    return displayable
+
+
 def _render_result_details(result: dict):
     citations = result.get("citations", [])
     conflicts = result.get("conflicts", [])
     source_count = result.get("source_count", len(citations))
     evidence_count = result.get("evidence_count", len(citations))
+    image_evidence_count = result.get("image_evidence_count", 0)
     latency_ms = result.get("latency_ms")
 
     summary_badges = [
@@ -108,7 +131,21 @@ def _render_result_details(result: dict):
     if result.get("query_expanded"):
         summary_badges.append(("Query expansion on", ":material/swap_horiz:", "gray"))
 
+    if image_evidence_count:
+        summary_badges.append(
+            (
+                f"Image evidence {image_evidence_count}",
+                ":material/image:",
+                "gray",
+            )
+        )
+
     _badge_rows(summary_badges, per_row=4)
+
+    reasoning = (result.get("reasoning") or "").strip()
+    if reasoning:
+        with st.expander(":material/psychology: Reasoning trace", expanded=False):
+            st.write(reasoning)
 
     if citations:
         with st.expander(
@@ -125,6 +162,14 @@ def _render_result_details(result: dict):
                     st.caption(citation.get("document_name", "Unknown document"))
                     st.write(citation.get("text", "No source text returned."))
 
+                    image_refs = _displayable_image_refs(citation.get("asset_refs"))
+                    if image_refs:
+                        captions = [
+                            f"Evidence image {idx}"
+                            for idx, _ in enumerate(image_refs, 1)
+                        ]
+                        st.image(image_refs, caption=captions, width="content")
+
                     detail_badges: list[tuple[str, str, str]] = []
                     score = citation.get("score")
                     score_label = (
@@ -137,6 +182,15 @@ def _render_result_details(result: dict):
                     if chunk_type := citation.get("chunk_type"):
                         detail_badges.append(
                             (f"Type {chunk_type}", ":material/category:", "gray")
+                        )
+
+                    if image_refs:
+                        detail_badges.append(
+                            (
+                                f"Images {len(image_refs)}",
+                                ":material/image:",
+                                "gray",
+                            )
                         )
 
                     if reference := _format_reference(citation):

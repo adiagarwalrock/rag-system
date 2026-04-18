@@ -13,7 +13,14 @@ MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
 
 def validate_file_type(filename: str) -> str:
-    """Validate and return the file extension."""
+    """Validate and return the file extension.
+
+    Args:
+        filename: Name of the file being uploaded.
+
+    Returns:
+        Lower-cased validated extension string.
+    """
     _, ext = os.path.splitext(filename)
     ext = ext.lower()
     if ext not in ALLOWED_EXTENSIONS:
@@ -25,7 +32,14 @@ def validate_file_type(filename: str) -> str:
 
 
 def validate_file_size(file_content: bytes) -> int:
-    """Validate file size and return size in bytes."""
+    """Validate file size and return size in bytes.
+
+    Args:
+        file_content: Raw bytes representation of the file.
+
+    Returns:
+        Integer representing the size in bytes.
+    """
     size = len(file_content)
     if size > MAX_FILE_SIZE_BYTES:
         raise HTTPException(
@@ -38,12 +52,28 @@ def validate_file_size(file_content: bytes) -> int:
 
 
 def compute_checksum(file_content: bytes) -> str:
-    """Compute SHA-256 checksum for duplicate detection."""
+    """Compute SHA-256 checksum for duplicate detection.
+
+    Args:
+        file_content: Raw bytes representation of the file.
+
+    Returns:
+        Hex-encoded SHA-256 string.
+    """
     return hashlib.sha256(file_content).hexdigest()
 
 
 def check_duplicate(checksum: str, db, Document) -> bool:
-    """Check if a document with the same checksum already exists."""
+    """Check if a document with the same checksum already exists.
+
+    Args:
+        checksum: Target string checksum to verify.
+        db: SQLAlchemy session instance.
+        Document: SQLAlchemy Document model class.
+
+    Returns:
+        True if the file already exists, False otherwise.
+    """
     return (
         db.query(Document.id).filter(Document.checksum == checksum).first() is not None
     )

@@ -47,12 +47,20 @@ class CitationDetail(BaseModel):
     slide_num: Optional[int] = None
     section_title: Optional[str] = None
     chunk_type: str = "text"
+    source_artifact_type: Optional[str] = None
+    source_artifact_id: Optional[str] = None
+    artifact_bundle_path: Optional[str] = None
     version_label: Optional[str] = None
     version_group: Optional[str] = None
     effective_from: Optional[str] = None
     effective_to: Optional[str] = None
     citation_label: Optional[str] = None
     authority_score: Optional[float] = None
+    asset_refs: List[str] = []
+    has_image_assets: bool = False
+    figure_type: Optional[str] = None
+    chart_type: Optional[str] = None
+    table_id: Optional[str] = None
 
 
 class ConflictDetail(BaseModel):
@@ -63,9 +71,12 @@ class ConflictDetail(BaseModel):
 
 class QueryResponse(BaseModel):
     answer: str
+    reasoning: Optional[str] = None
     citations: List[Dict[str, Any]] = []
     conflicts: List[Dict[str, Any]] = []
     query_id: Optional[str] = None
     latency_ms: Optional[int] = None
     source_count: int = 0
     evidence_count: int = 0
+    images_used: List[str] = []
+    image_evidence_count: int = 0

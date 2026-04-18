@@ -10,12 +10,20 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, List
 
-from llama_index.core.extractors import TitleExtractor
+from llama_index.core import Settings as LlamaSettings
+from llama_index.core.extractors import (
+    TitleExtractor,
+    SummaryExtractor,
+    KeywordExtractor,
+    QuestionsAnsweredExtractor,
+    DocumentContextExtractor,
+)
 from llama_index.core.ingestion import IngestionPipeline
-from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.node_parser import SemanticSplitterNodeParser
 from llama_index.core.schema import BaseNode
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.models.client import Client
 from app.db.models.document import (
     Document,
@@ -40,9 +48,7 @@ from app.ingestion.version_resolver import resolve_version
 
 logger = logging.getLogger(__name__)
 
-RAW_DATA_DIR = os.environ.get(
-    "RAW_DATA_DIR", os.path.join(os.path.dirname(__file__), "..", "..", "data", "raw")
-)
+RAW_DATA_DIR = settings.RAW_DATA_DIR
 
 NON_SEMANTIC_EMBED_METADATA_KEYS = (
     "document_id",
@@ -57,6 +63,7 @@ NON_SEMANTIC_EMBED_METADATA_KEYS = (
     "source_file",
     "file_type",
     "chunk_id",
+    "chunk_type",
     "citation_label",
     "version_label",
     "document_version_group",
@@ -70,7 +77,51 @@ NON_SEMANTIC_EMBED_METADATA_KEYS = (
     "chart_detected",
     "contains_numeric_data",
     "page_num",
+    "page_nums",
     "slide_num",
+    "section_path",
+    "region_ids",
+    "source_artifact_type",
+    "source_artifact_id",
+    "bbox_refs",
+    "caption",
+    "numeric_density",
+    "layout_confidence",
+    "complexity_score",
+    "asset_refs",
+    "parser_sources",
+    "page_class",
+    "artifact_bundle_path",
+    "table_title",
+    "figure_type",
+    "chart_type",
+    "chart_title",
+    "x_axis_label",
+    "y_axis_label",
+    "x_categories",
+    "series",
+    "approx_datapoints",
+    "trend_summary",
+    "key_chart_facts",
+    "numeric_extraction_confidence",
+    "chart_parse_status",
+    "llm_caption_model",
+    "llm_caption_version",
+    "llm_caption_prompt_version",
+    "llm_caption_status",
+    "llm_caption_error",
+    "units",
+    "continuation_flag",
+    "ocr_used",
+    "table_id",
+    "reasoning_type",
+    "source_artifact_ids",
+    "evidence_refs",
+    "reasoning_confidence",
+    "reasoning_model",
+    "reasoning_prompt_version",
+    "claims",
+    "llm_enriched",
 )
 
 NON_SEMANTIC_LLM_METADATA_KEYS = (
@@ -84,11 +135,43 @@ NON_SEMANTIC_LLM_METADATA_KEYS = (
     "parser_version",
     "file_type",
     "chunk_id",
+    "chunk_type",
     "citation_label",
     "version_rank",
     "published_at",
     "is_current",
+    "page_num",
+    "page_nums",
+    "source_artifact_type",
+    "source_artifact_id",
+    "chart_type",
+    "chart_title",
+    "chart_parse_status",
+    "llm_caption_status",
+    "asset_refs",
+    "artifact_bundle_path",
+    "reasoning_type",
+    "source_artifact_ids",
+    "evidence_refs",
+    "reasoning_confidence",
+    "reasoning_model",
+    "reasoning_prompt_version",
+    "claims",
+    "llm_enriched",
 )
+
+_MISSING_DOC_ID_SENTINELS = {"", "none", "null", "n/a", "na", "undefined"}
+
+
+def _build_non_layout_node_parser() -> Any:
+    # Ensure embed model is initialized via our configured provider/mock path
+    # before constructing semantic splitter.
+    is_placeholder_mode()
+    return SemanticSplitterNodeParser.from_defaults(
+        embed_model=LlamaSettings.embed_model,
+        breakpoint_percentile_threshold=settings.SEMANTIC_SPLITTER_BREAKPOINT_PERCENTILE,
+        buffer_size=settings.SEMANTIC_SPLITTER_BUFFER_SIZE,
+    )
 
 
 def _apply_metadata_exclusions(nodes: List[BaseNode]) -> None:
@@ -101,6 +184,26 @@ def _apply_metadata_exclusions(nodes: List[BaseNode]) -> None:
 
         node.excluded_embed_metadata_keys = sorted(embed_excluded)
         node.excluded_llm_metadata_keys = sorted(llm_excluded)
+
+
+def _normalize_document_id(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        normalized = value.strip()
+        if normalized.lower() in _MISSING_DOC_ID_SENTINELS:
+            return None
+        return normalized
+    return str(value)
+
+
+def _apply_ref_doc_ids(nodes: List[BaseNode]) -> None:
+    """Ensure top-level vector-store doc IDs are derived from canonical metadata."""
+    for node in nodes:
+        metadata = node.metadata or {}
+        document_id = _normalize_document_id(metadata.get("document_id"))
+        if document_id:
+            node.ref_doc_id = document_id
 
 
 def _isoformat_or_none(value: Any) -> str | None:
@@ -364,6 +467,13 @@ def _execute_pipeline(
         "ingestion_job_id": job.id,
     }
     llama_docs, units = parse_document(file_path, document_metadata)
+    if llama_docs:
+        parser_name = llama_docs[0].metadata.get("parser_name")
+        parser_version = llama_docs[0].metadata.get("parser_version")
+        if parser_name:
+            job.parser_name = parser_name
+        if parser_version:
+            job.parser_version = parser_version
 
     # 6. Version resolution
     content_preview = ""
@@ -420,25 +530,62 @@ def _execute_pipeline(
                 "table_detected": unit.get("table_detected", False),
                 "chart_detected": unit.get("chart_detected", False),
                 "contains_numeric_data": unit.get("contains_numeric_data", False),
+                "chunk_type": unit.get(
+                    "chunk_type", doc.metadata.get("chunk_type", "text")
+                ),
+                "page_nums": unit.get("page_nums", doc.metadata.get("page_nums")),
+                "section_path": unit.get(
+                    "section_path", doc.metadata.get("section_path")
+                ),
+                "source_artifact_type": unit.get(
+                    "source_artifact_type",
+                    doc.metadata.get("source_artifact_type"),
+                ),
+                "source_artifact_id": unit.get(
+                    "source_artifact_id",
+                    doc.metadata.get("source_artifact_id"),
+                ),
+                "layout_confidence": unit.get(
+                    "layout_confidence", doc.metadata.get("layout_confidence")
+                ),
+                "complexity_score": unit.get(
+                    "complexity_score", doc.metadata.get("complexity_score")
+                ),
+                "artifact_bundle_path": unit.get(
+                    "artifact_bundle_path",
+                    doc.metadata.get("artifact_bundle_path"),
+                ),
                 # Authority & provenance
                 "authority_score": 1.0,
             }
         )
 
-    # Define transformations
-    transformations = [
-        SentenceSplitter(chunk_size=1024, chunk_overlap=200),
-    ]
+    layout_aware_pdf = (
+        file_ext == ".pdf"
+        and bool(llama_docs)
+        and any((doc.metadata or {}).get("chunk_type") for doc in llama_docs)
+    )
+    placeholder_mode = is_placeholder_mode()
+    transformations: list[Any] = []
+    if not layout_aware_pdf:
+        transformations.append(_build_non_layout_node_parser())
+        logger.info("Using semantic splitter for %s", filename)
+    else:
+        logger.info(
+            "Layout-aware PDF chunks detected for %s; skipping sentence splitting",
+            filename,
+        )
 
     # Only add LLM-based extractors if API key is present and not a placeholder
-    if not is_placeholder_mode():
+    if not placeholder_mode and not layout_aware_pdf:
         try:
             transformations.extend(
                 [
                     TitleExtractor(nodes=5),
-                    # SummaryExtractor(summaries=["prev", "self"]),
-                    # KeywordExtractor(keywords=10),
-                    # QuestionsAnsweredExtractor(num_questions=3),
+                    SummaryExtractor(summaries=["prev", "self"]),
+                    KeywordExtractor(keywords=10),
+                    QuestionsAnsweredExtractor(num_questions=3),
+                    DocumentContextExtractor(llm=LlamaSettings.llm, num_workers=3),
                 ]
             )
             logger.info("Added LLM-based extractors (Title, Summary) to pipeline")
@@ -450,7 +597,11 @@ def _execute_pipeline(
     pipeline = IngestionPipeline(transformations=transformations)
 
     # Run pipeline (includes chunking, metadata extraction, and vector indexing)
-    nodes: List[BaseNode] = pipeline.run(documents=llama_docs, num_workers=3)
+    worker_count = 1 if layout_aware_pdf else 3
+    nodes: List[BaseNode] = pipeline.run(documents=llama_docs, num_workers=worker_count)
+
+    _apply_retrieval_metadata(nodes, filename=filename, version_info=version_info)
+    _apply_ref_doc_ids(nodes)
 
     # Exclude non-semantic metadata from embedding/LLM contexts while keeping
     # payload metadata available for filtering and citations.
@@ -475,7 +626,7 @@ def _execute_pipeline(
             client_id=client_id,
             vector_collection=COLLECTION_NAME,
             vector_node_id=node.node_id,
-            embedding_model="text-embedding-3-small",
+            embedding_model=settings.EMBEDDING_MODEL,
         )
         db.add(registry)
 
@@ -506,7 +657,9 @@ def _handle_ingestion_failure(
     error_msg = str(e)[:1000]
     error_lower = error_msg.lower()
     if (
-        "openai" in error_lower
+        "google" in error_lower
+        or "gemini" in error_lower
+        or "genai" in error_lower
         or "api key" in error_lower
         or "rate limit" in error_lower
     ):
