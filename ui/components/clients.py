@@ -76,13 +76,13 @@ def render_clients():
     with st.container(border=True):
         st.markdown("#### :material/add_business: New client")
         with st.form("create_client_form", clear_on_submit=True):
-            col_name, col_desc = st.columns([1, 2], vertical_alignment="bottom")
-            with col_name:
-                client_name = st.text_input("Client name")
-            with col_desc:
-                client_desc = st.text_area(
-                    "Description", placeholder="Optional context", height=94
-                )
+            # col_name, col_desc = st.columns([1, 2], vertical_alignment="bottom")
+            # with col_name:
+            # with col_desc:
+            client_name = st.text_input("Client name")
+            client_desc = st.text_area(
+                "Description", placeholder="Optional context", height=94
+            )
 
             if st.form_submit_button(
                 "Create client",
@@ -94,7 +94,9 @@ def render_clients():
                     st.error("Enter a client name.")
                 else:
                     try:
-                        result = api.create_client(client_name.strip(), client_desc.strip())
+                        result = api.create_client(
+                            client_name.strip(), client_desc.strip()
+                        )
                         bump_cache_revision(CLIENTS_CACHE_KEY)
                         st.success(f"{result['name']} created.")
                         st.rerun()

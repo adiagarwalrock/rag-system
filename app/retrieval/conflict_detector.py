@@ -28,6 +28,35 @@ NUMERIC_VALUE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+COMMON_TOPIC_STOPWORDS = {
+    "the",
+    "this",
+    "that",
+    "with",
+    "from",
+    "into",
+    "during",
+    "were",
+    "was",
+    "and",
+    "for",
+    "is",
+    "are",
+    "by",
+    "of",
+    "to",
+    "in",
+}
+
+CONTEXT_STOPWORDS = {
+    *COMMON_TOPIC_STOPWORDS,
+    "data",
+    "year",
+    "years",
+    "period",
+    "ended",
+}
+
 
 @dataclass(slots=True, frozen=True)
 class NumericFact:
@@ -345,43 +374,7 @@ def _context_tokens_around(text: str, start: int, end: int) -> list[str]:
     right = text[end : min(len(text), end + 70)]
     window = f"{left} {right}".strip()
     tokens = re.findall(r"[a-zA-Z]{3,}", window.lower())
-
-    stopwords = {
-        "the",
-        "this",
-        "that",
-        "with",
-        "from",
-        "into",
-        "during",
-        "were",
-        "was",
-        "and",
-        "for",
-        "is",
-        "are",
-        "by",
-        "of",
-        "to",
-        "in",
-        "data",
-        "year",
-        "years",
-        "period",
-        "ended",
-    }
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for token in tokens:
-        if token in stopwords:
-            continue
-        if token in seen:
-            continue
-        seen.add(token)
-        deduped.append(token)
-        if len(deduped) >= 7:
-            break
-    return deduped
+    return _dedupe_filtered_tokens(tokens, CONTEXT_STOPWORDS, max_items=7)
 
 
 def _parse_numeric_value(raw_value: str) -> tuple[float | None, str]:
@@ -423,27 +416,25 @@ def _shares_topic(text_a: str, text_b: str, min_shared: int = 2) -> bool:
 
 
 def _topic_tokens(text: str) -> set[str]:
-    stopwords = {
-        "the",
-        "this",
-        "that",
-        "with",
-        "from",
-        "into",
-        "during",
-        "were",
-        "was",
-        "and",
-        "for",
-        "is",
-        "are",
-        "by",
-        "of",
-        "to",
-        "in",
-    }
     tokens = re.findall(r"[a-zA-Z]{4,}", (text or "").lower())
-    return {token for token in tokens if token not in stopwords}
+    return set(_dedupe_filtered_tokens(tokens, COMMON_TOPIC_STOPWORDS))
+
+
+def _dedupe_filtered_tokens(
+    tokens: list[str],
+    stopwords: set[str],
+    max_items: int | None = None,
+) -> list[str]:
+    filtered: list[str] = []
+    seen: set[str] = set()
+    for token in tokens:
+        if token in stopwords or token in seen:
+            continue
+        seen.add(token)
+        filtered.append(token)
+        if max_items is not None and len(filtered) >= max_items:
+            break
+    return filtered
 
 
 def _node_key(node: Any) -> str:

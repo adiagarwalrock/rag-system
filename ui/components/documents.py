@@ -108,20 +108,15 @@ def render_documents():
         st.info("Create a client before uploading documents.")
         return
 
-    st.session_state.setdefault("documents_active_client_name", client_names[0])
-    if st.session_state["documents_active_client_name"] not in client_names:
-        st.session_state["documents_active_client_name"] = client_names[0]
-    st.session_state.setdefault(
-        "documents_active_client_id",
-        client_options[st.session_state["documents_active_client_name"]],
-    )
-    st.session_state["documents_active_client_id"] = client_options[
-        st.session_state["documents_active_client_name"]
-    ]
+    active_name = st.session_state.get("documents_active_client_name")
+    if active_name not in client_names:
+        active_name = client_names[0]
+        st.session_state["documents_active_client_name"] = active_name
+
+    st.session_state["documents_active_client_id"] = client_options[active_name]
+
     if st.session_state.get("documents_workspace_selector") not in client_names:
-        st.session_state["documents_workspace_selector"] = st.session_state[
-            "documents_active_client_name"
-        ]
+        st.session_state["documents_workspace_selector"] = active_name
     selected_name = st.selectbox(
         "Client workspace",
         client_names,
@@ -179,7 +174,9 @@ def render_documents():
 
                     bump_cache_revision(DOCUMENTS_CACHE_KEY)
                     if queued:
-                        st.success(f"Queued {queued} document(s) for background indexing.")
+                        st.success(
+                            f"Queued {queued} document(s) for background indexing."
+                        )
                     if failed:
                         st.warning(f"{failed} document(s) failed to queue.")
                     st.rerun()

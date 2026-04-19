@@ -25,13 +25,14 @@ if __package__ is None or __package__ == "":
 
 from app.core.ai_provider import initialize_ai_provider
 from app.core.logging_config import configure_logging
-from app.db.models.client import Client
 from app.db.schema import ensure_runtime_schema
 from app.db.snowflake import SessionLocal, engine
 from app.services.chat_conversation_service import ChatConversationService
+from app.services.client_service import ClientLookupService
 
 DEFAULT_CLIENT_NAME = "test_oai"
-DEFAULT_REASONING_EFFORT = "medium"
+DEFAULT_REASONING_EFFORT = "high"
+VALID_REASONING_EFFORTS = ("low", "medium", "high")
 DEFAULT_INPUT_PATH = Path("enterprise_rag_eval_questions.jsonl")
 DEFAULT_OUTPUT_PATH = Path("enterprise_rag_eval_answers_test4_oai.jsonl")
 DEFAULT_MAX_RETRIES = 5
@@ -47,6 +48,7 @@ class EvalRunnerConfig:
     input_path: Path
     output_path: Path
     client_name: str
+    reasoning_effort: str
     max_retries: int
     initial_backoff_seconds: float
     workers: int
@@ -136,7 +138,9 @@ class EnterpriseRAGEvalRunner:
         output_paths = self._resolve_output_paths()
         overwritten_output = output_paths.output_path.exists()
         if overwritten_output:
-            logger.warning("Output file exists and will be replaced: %s", output_paths.output_path)
+            logger.warning(
+                "Output file exists and will be replaced: %s", output_paths.output_path
+            )
 
         results_by_line = self._run_parallel_queries(client_id, work_items, stats)
         self._validate_completeness(stats)
@@ -175,10 +179,12 @@ class EnterpriseRAGEvalRunner:
 
     def _resolve_client_id(self) -> str:
         with SessionLocal() as db:
-            client = db.query(Client).filter(Client.name == self.config.client_name).first()
+            client = ClientLookupService(db).get_client_by_name(self.config.client_name)
 
         if client is None:
-            raise ValueError(f"Client '{self.config.client_name}' not found in clients table.")
+            raise ValueError(
+                f"Client '{self.config.client_name}' not found in clients table."
+            )
         return str(client.id)
 
     def _load_work_items(self, stats: EvalRunStats) -> list[WorkItem]:
@@ -294,7 +300,7 @@ class EnterpriseRAGEvalRunner:
                     result = ChatConversationService(db).execute_client_query(
                         client_id=client_id,
                         question=item.question,
-                        reasoning_effort=DEFAULT_REASONING_EFFORT,
+                        reasoning_effort=self.config.reasoning_effort,
                     )
 
                 answer = str(result.get("answer", "")).strip() or "No answer generated."
@@ -371,7 +377,9 @@ class EnterpriseRAGEvalRunner:
         debug_path = self._compute_debug_output_path(output_path)
 
         if output_path == debug_path:
-            raise ValueError("Main output path and debug output path cannot be the same.")
+            raise ValueError(
+                "Main output path and debug output path cannot be the same."
+            )
 
         manifest_path = self._derive_manifest_path(output_path)
 
@@ -482,7 +490,7 @@ class EnterpriseRAGEvalRunner:
             "input_non_blank_count": stats.total_rows,
             "client_name": self.config.client_name,
             "client_id": client_id,
-            "reasoning_effort": DEFAULT_REASONING_EFFORT,
+            "reasoning_effort": self.config.reasoning_effort,
             "workers": self.config.workers,
             "max_retries": self.config.max_retries,
             "initial_backoff_seconds": self.config.initial_backoff_seconds,
@@ -525,6 +533,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Client name to query.",
     )
     parser.add_argument(
+        "--reasoning-effort",
+        default=DEFAULT_REASONING_EFFORT,
+        help=(
+            f"Reasoning effort for generation ({'|'.join(VALID_REASONING_EFFORTS)})."
+        ),
+    )
+    parser.add_argument(
         "--max-retries",
         type=int,
         default=DEFAULT_MAX_RETRIES,
@@ -562,6 +577,7 @@ def _validate_args(args: argparse.Namespace) -> EvalRunnerConfig:
     input_path = Path(args.input).expanduser().resolve()
     output_path = Path(args.output).expanduser().resolve()
     client_name = str(args.client_name).strip()
+    reasoning_effort = str(args.reasoning_effort).strip().lower()
     debug_output_path = (
         Path(args.debug_output).expanduser().resolve() if args.debug_output else None
     )
@@ -572,6 +588,9 @@ def _validate_args(args: argparse.Namespace) -> EvalRunnerConfig:
         raise ValueError(f"Input path is not a file: {input_path}")
     if not client_name:
         raise ValueError("Client name cannot be empty.")
+    if reasoning_effort not in VALID_REASONING_EFFORTS:
+        allowed = ", ".join(VALID_REASONING_EFFORTS)
+        raise ValueError(f"--reasoning-effort must be one of: {allowed}.")
     if args.max_retries < 0:
         raise ValueError("--max-retries must be >= 0.")
     if args.initial_backoff_seconds <= 0:
@@ -583,6 +602,7 @@ def _validate_args(args: argparse.Namespace) -> EvalRunnerConfig:
         input_path=input_path,
         output_path=output_path,
         client_name=client_name,
+        reasoning_effort=reasoning_effort,
         max_retries=int(args.max_retries),
         initial_backoff_seconds=float(args.initial_backoff_seconds),
         workers=int(args.workers),
@@ -612,7 +632,7 @@ def main() -> int:
     print(f"Debug output: {artifacts.debug_path}")
     print(f"Manifest: {artifacts.manifest_path}")
     print(f"Client: {config.client_name} ({artifacts.client_id})")
-    print(f"Reasoning effort: {DEFAULT_REASONING_EFFORT}")
+    print(f"Reasoning effort: {config.reasoning_effort}")
     print(f"Workers: {config.workers}")
     print(f"Timestamped output: {config.timestamped_output}")
     print(f"Rows read (non-blank): {stats.total_rows}")

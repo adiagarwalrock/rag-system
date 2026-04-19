@@ -24,6 +24,7 @@ from llama_index.core.extractors import (
 from llama_index.core.ingestion import IngestionPipeline
 from llama_index.core.node_parser import SemanticSplitterNodeParser
 from llama_index.core.schema import BaseNode, NodeRelationship, RelatedNodeInfo
+from sqlalchemy import true
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -301,6 +302,19 @@ class IngestionQueueManager:
                 )
 
 
+@dataclass(frozen=True, slots=True)
+class IngestionExecutionContext:
+    db_doc: Document
+    job: IngestionJob
+    file_path: str
+    filename: str
+    client_id: str
+    client_name: str
+    doc_id: str
+    file_ext: str
+    db: Session
+
+
 _INGESTION_QUEUE_MANAGER: IngestionQueueManager | None = None
 _INGESTION_QUEUE_LOCK = Lock()
 
@@ -421,6 +435,47 @@ def _apply_retrieval_metadata(
         node.metadata = metadata
 
 
+def _create_document_record(
+    *,
+    doc_id: str,
+    client_id: str,
+    filename: str,
+    file_ext: str,
+    checksum: str,
+    status: str,
+) -> Document:
+    return Document(
+        id=doc_id,
+        client_id=client_id,
+        name=filename,
+        file_type=file_ext,
+        storage_path="",
+        checksum=checksum,
+        status=status,
+    )
+
+
+def _create_ingestion_job_record(
+    *,
+    job_id: str,
+    client_id: str,
+    doc_id: str,
+    status: str,
+    file_size: int,
+    started_at: datetime | None,
+) -> IngestionJob:
+    return IngestionJob(
+        id=job_id,
+        client_id=client_id,
+        document_id=doc_id,
+        status=status,
+        started_at=started_at,
+        parser_name="rag_ingestion_pipeline",
+        parser_version="2.0.0",
+        filesize_bytes=file_size,
+    )
+
+
 def ingest_document(
     file_content: bytes,
     filename: str,
@@ -440,12 +495,11 @@ def ingest_document(
 
     # 2. Create document record
     doc_id = str(uuid.uuid4())
-    db_doc = Document(
-        id=doc_id,
+    db_doc = _create_document_record(
+        doc_id=doc_id,
         client_id=client_id,
-        name=filename,
-        file_type=file_ext,
-        storage_path="",
+        filename=filename,
+        file_ext=file_ext,
         checksum=checksum,
         status="processing",
     )
@@ -453,15 +507,13 @@ def ingest_document(
 
     # 3. Create ingestion job
     job_id = str(uuid.uuid4())
-    job = IngestionJob(
-        id=job_id,
+    job = _create_ingestion_job_record(
+        job_id=job_id,
         client_id=client_id,
-        document_id=doc_id,
+        doc_id=doc_id,
         status="running",
+        file_size=file_size,
         started_at=datetime.now(timezone.utc),
-        parser_name="rag_ingestion_pipeline",
-        parser_version="2.0.0",
-        filesize_bytes=file_size,
     )
     db.add(job)
     db.commit()
@@ -506,27 +558,24 @@ def enqueue_document_ingestion(
     checksum = compute_checksum(file_content)
 
     doc_id = str(uuid.uuid4())
-    db_doc = Document(
-        id=doc_id,
+    db_doc = _create_document_record(
+        doc_id=doc_id,
         client_id=client_id,
-        name=filename,
-        file_type=file_ext,
-        storage_path="",
+        filename=filename,
+        file_ext=file_ext,
         checksum=checksum,
         status="queued",
     )
     db.add(db_doc)
 
     job_id = str(uuid.uuid4())
-    job = IngestionJob(
-        id=job_id,
+    job = _create_ingestion_job_record(
+        job_id=job_id,
         client_id=client_id,
-        document_id=doc_id,
+        doc_id=doc_id,
         status="queued",
+        file_size=file_size,
         started_at=None,
-        parser_name="rag_ingestion_pipeline",
-        parser_version="2.0.0",
-        filesize_bytes=file_size,
     )
     db.add(job)
     db.commit()
@@ -595,15 +644,13 @@ def retry_ingestion(document_id: str, db: Session) -> Document:
     # 2. Mark running, create IngestionJob
     db_doc.status = "processing"
     job_id = str(uuid.uuid4())
-    job = IngestionJob(
-        id=job_id,
+    job = _create_ingestion_job_record(
+        job_id=job_id,
         client_id=client_id,
-        document_id=doc_id,
+        doc_id=doc_id,
         status="running",
+        file_size=os.path.getsize(file_path),
         started_at=datetime.now(timezone.utc),
-        parser_name="rag_ingestion_pipeline",
-        parser_version="2.0.0",
-        filesize_bytes=os.path.getsize(file_path),
     )
     db.add(job)
     db.commit()
@@ -674,132 +721,188 @@ def delete_document(document_id: str, db: Session, hard: bool = False) -> None:
         raise ValueError(f"Failed to delete document: {e}")
 
 
-def _execute_pipeline(
-    db_doc: Document,
-    job: IngestionJob,
-    file_path: str,
-    filename: str,
-    client_id: str,
-    client_name: str,
-    doc_id: str,
-    file_ext: str,
-    db: Session,
-):
-    vector_store_manager.configure_llama_settings()
+class IngestionPipelineExecutor:
+    """Coordinates parse -> enrich -> index -> persist for one document."""
 
-    # 5. Parse
-    document_metadata = {
-        "document_id": doc_id,
-        "client_id": client_id,
-        "client_name": client_name,
-        "document_name": filename,
-        "file_name": filename,
-        "file_type": file_ext,
-        "ingestion_job_id": job.id,
-    }
-    llama_docs, units = parse_document(file_path, document_metadata)
-    if llama_docs:
+    def __init__(self, context: IngestionExecutionContext):
+        self.context = context
+        self.db_doc = context.db_doc
+        self.job = context.job
+        self.file_path = context.file_path
+        self.filename = context.filename
+        self.client_id = context.client_id
+        self.client_name = context.client_name
+        self.doc_id = context.doc_id
+        self.file_ext = context.file_ext
+        self.db = context.db
+
+    def run(self) -> tuple[int, int]:
+        vector_store_manager.configure_llama_settings()
+
+        document_metadata = self._build_document_metadata()
+        llama_docs, units = parse_document(self.file_path, document_metadata)
+        self._apply_parser_metadata(llama_docs)
+
+        version_info = self._resolve_version_info(llama_docs)
+        self._persist_version_record(version_info)
+        self._apply_document_metadata(
+            llama_docs=llama_docs,
+            units=units,
+            document_metadata=document_metadata,
+            version_info=version_info,
+        )
+
+        layout_aware_pdf = self._is_layout_aware_pdf(llama_docs)
+        nodes = self._run_ingestion_pipeline(
+            llama_docs=llama_docs,
+            layout_aware_pdf=layout_aware_pdf,
+        )
+
+        _apply_retrieval_metadata(
+            nodes, filename=self.filename, version_info=version_info
+        )
+        _apply_ref_doc_ids(nodes)
+        _apply_metadata_exclusions(nodes)
+
+        self._index_nodes(nodes)
+        self._persist_registry_rows(nodes)
+        self._mark_success()
+        return len(units), len(nodes)
+
+    def _build_document_metadata(self) -> dict[str, Any]:
+        return {
+            "document_id": self.doc_id,
+            "client_id": self.client_id,
+            "client_name": self.client_name,
+            "document_name": self.filename,
+            "file_name": self.filename,
+            "file_type": self.file_ext,
+            "ingestion_job_id": self.job.id,
+        }
+
+    def _apply_parser_metadata(self, llama_docs: List[Any]) -> None:
+        if not llama_docs:
+            return
         parser_name = llama_docs[0].metadata.get("parser_name")
         parser_version = llama_docs[0].metadata.get("parser_version")
         if parser_name:
-            job.parser_name = parser_name
+            self.job.parser_name = parser_name
         if parser_version:
-            job.parser_version = parser_version
+            self.job.parser_version = parser_version
 
-    # 6. Version resolution
-    content_preview = ""
-    if llama_docs:
-        content_preview = llama_docs[0].text[:500]
-    version_info = resolve_version(filename, content_preview)
+    def _resolve_version_info(self, llama_docs: List[Any]) -> dict[str, Any]:
+        content_preview = llama_docs[0].text[:500] if llama_docs else ""
+        return resolve_version(self.filename, content_preview)
 
-    # Save version record
-    version_record = DocumentVersion(
-        id=str(uuid.uuid4()),
-        document_id=doc_id,
-        version_label=version_info.get("version_label"),
-        version_group=version_info.get("version_group"),
-        version_rank=version_info.get("version_rank", 0),
-        published_at=version_info.get("published_at"),
-        effective_from=version_info.get("effective_from"),
-        effective_to=version_info.get("effective_to"),
-        is_current=version_info.get("is_current", False),
-        confidence_score=version_info.get("confidence_score", 0.0),
-    )
-    db.add(version_record)
+    def _persist_version_record(self, version_info: dict[str, Any]) -> None:
+        version_record = DocumentVersion(
+            id=str(uuid.uuid4()),
+            document_id=self.doc_id,
+            version_label=version_info.get("version_label"),
+            version_group=version_info.get("version_group"),
+            version_rank=version_info.get("version_rank", 0),
+            published_at=version_info.get("published_at"),
+            effective_from=version_info.get("effective_from"),
+            effective_to=version_info.get("effective_to"),
+            is_current=version_info.get("is_current", False),
+            confidence_score=version_info.get("confidence_score", 0.0),
+        )
+        self.db.add(version_record)
 
-    # Also store document family and handle version supersession
-    if version_info.get("version_group"):
-        db_doc.document_family = version_info["version_group"]
+        version_group = version_info.get("version_group")
+        if not version_group:
+            return
+
+        self.db_doc.document_family = version_group
         if version_info.get("is_current"):
             _supersede_older_versions(
-                db, client_id, doc_id, version_info["version_group"]
+                self.db,
+                self.client_id,
+                self.doc_id,
+                version_group,
             )
 
-    # 7. Run Ingestion Pipeline
-    # We inject business metadata into documents before running the pipeline.
-    # Build content-signal lookup from parsed units (by index, since docs/units
-    # were created in the same order inside parse_document()).
-    for i, doc in enumerate(llama_docs):
-        unit = units[i] if i < len(units) else {}
-        doc.metadata.update(
-            {
-                **document_metadata,
-                # Version awareness
-                "version_label": version_info.get("version_label"),
-                "document_version_group": version_info.get("version_group"),
-                "effective_from": (
-                    version_info.get("effective_from").isoformat()
-                    if version_info.get("effective_from")
-                    else None
-                ),
-                "effective_to": (
-                    version_info.get("effective_to").isoformat()
-                    if version_info.get("effective_to")
-                    else None
-                ),
-                # Content signals (from parser heuristics)
-                "table_detected": unit.get("table_detected", False),
-                "chart_detected": unit.get("chart_detected", False),
-                "contains_numeric_data": unit.get("contains_numeric_data", False),
-                "chunk_type": unit.get(
-                    "chunk_type", doc.metadata.get("chunk_type", "text")
-                ),
-                "page_nums": unit.get("page_nums", doc.metadata.get("page_nums")),
-                "section_path": unit.get(
-                    "section_path", doc.metadata.get("section_path")
-                ),
-                "source_artifact_type": unit.get(
-                    "source_artifact_type",
-                    doc.metadata.get("source_artifact_type"),
-                ),
-                "source_artifact_id": unit.get(
-                    "source_artifact_id",
-                    doc.metadata.get("source_artifact_id"),
-                ),
-                "layout_confidence": unit.get(
-                    "layout_confidence", doc.metadata.get("layout_confidence")
-                ),
-                "complexity_score": unit.get(
-                    "complexity_score", doc.metadata.get("complexity_score")
-                ),
-                "artifact_bundle_path": unit.get(
-                    "artifact_bundle_path",
-                    doc.metadata.get("artifact_bundle_path"),
-                ),
-                # Authority & provenance
-                "authority_score": 1.0,
-            }
+    def _apply_document_metadata(
+        self,
+        *,
+        llama_docs: List[Any],
+        units: list[dict[str, Any]],
+        document_metadata: dict[str, Any],
+        version_info: dict[str, Any],
+    ) -> None:
+        for index, doc in enumerate(llama_docs):
+            unit = units[index] if index < len(units) else {}
+            doc.metadata.update(
+                {
+                    **document_metadata,
+                    "version_label": version_info.get("version_label"),
+                    "document_version_group": version_info.get("version_group"),
+                    "effective_from": _isoformat_or_none(
+                        version_info.get("effective_from")
+                    ),
+                    "effective_to": _isoformat_or_none(
+                        version_info.get("effective_to")
+                    ),
+                    "table_detected": unit.get("table_detected", False),
+                    "chart_detected": unit.get("chart_detected", False),
+                    "contains_numeric_data": unit.get("contains_numeric_data", False),
+                    "chunk_type": unit.get(
+                        "chunk_type", doc.metadata.get("chunk_type", "text")
+                    ),
+                    "page_nums": unit.get("page_nums", doc.metadata.get("page_nums")),
+                    "section_path": unit.get(
+                        "section_path", doc.metadata.get("section_path")
+                    ),
+                    "source_artifact_type": unit.get(
+                        "source_artifact_type",
+                        doc.metadata.get("source_artifact_type"),
+                    ),
+                    "source_artifact_id": unit.get(
+                        "source_artifact_id",
+                        doc.metadata.get("source_artifact_id"),
+                    ),
+                    "layout_confidence": unit.get(
+                        "layout_confidence", doc.metadata.get("layout_confidence")
+                    ),
+                    "complexity_score": unit.get(
+                        "complexity_score", doc.metadata.get("complexity_score")
+                    ),
+                    "artifact_bundle_path": unit.get(
+                        "artifact_bundle_path",
+                        doc.metadata.get("artifact_bundle_path"),
+                    ),
+                    "authority_score": 1.0,
+                }
+            )
+
+    def _is_layout_aware_pdf(self, llama_docs: List[Any]) -> bool:
+        return (
+            self.file_ext == ".pdf"
+            and bool(llama_docs)
+            and any((doc.metadata or {}).get("chunk_type") for doc in llama_docs)
         )
 
-    layout_aware_pdf = (
-        file_ext == ".pdf"
-        and bool(llama_docs)
-        and any((doc.metadata or {}).get("chunk_type") for doc in llama_docs)
-    )
-    transformations: list[Any] = []
-    if not layout_aware_pdf:
-        transformations.append(_build_non_layout_node_parser())
-        logger.info("Using semantic splitter for %s", filename)
+    def _run_ingestion_pipeline(
+        self,
+        *,
+        llama_docs: List[Any],
+        layout_aware_pdf: bool,
+    ) -> List[BaseNode]:
+        transformations = self._build_transformations(layout_aware_pdf)
+        pipeline = IngestionPipeline(transformations=transformations)
+        worker_count = 1 if layout_aware_pdf else 3
+        return pipeline.run(documents=llama_docs, num_workers=worker_count)
+
+    def _build_transformations(self, layout_aware_pdf: bool) -> list[Any]:
+        if layout_aware_pdf:
+            logger.info(
+                "Layout-aware PDF chunks detected for %s; skipping sentence splitting",
+                self.filename,
+            )
+            return []
+
+        transformations: list[Any] = [_build_non_layout_node_parser()]
+        logger.info("Using semantic splitter for %s", self.filename)
         try:
             transformations.extend(
                 [
@@ -811,62 +914,70 @@ def _execute_pipeline(
                 ]
             )
             logger.info("Added LLM-based extractors (Title, Summary) to pipeline")
-        except Exception as e:
-            logger.warning(f"Failed to initialize LLM extractors: {e}. Skipping.")
-    else:
-        logger.info(
-            "Layout-aware PDF chunks detected for %s; skipping sentence splitting",
-            filename,
-        )
+        except Exception as exc:
+            logger.warning("Failed to initialize LLM extractors: %s. Skipping.", exc)
+        return transformations
 
-    pipeline = IngestionPipeline(transformations=transformations)
-
-    # Run pipeline (includes chunking, metadata extraction, and vector indexing)
-    worker_count = 1 if layout_aware_pdf else 3
-    nodes: List[BaseNode] = pipeline.run(documents=llama_docs, num_workers=worker_count)
-
-    _apply_retrieval_metadata(nodes, filename=filename, version_info=version_info)
-    _apply_ref_doc_ids(nodes)
-
-    # Exclude non-semantic metadata from embedding/LLM contexts while keeping
-    # payload metadata available for filtering and citations.
-    _apply_metadata_exclusions(nodes)
-
-    # Persist nodes into Qdrant explicitly.
-    vector_store_manager.index_nodes(nodes)
-
-    qdrant_points = vector_store_manager.get_qdrant_point_count()
-    if qdrant_points is not None:
+    def _index_nodes(self, nodes: List[BaseNode]) -> None:
+        vector_store_manager.index_nodes(nodes)
+        qdrant_points = vector_store_manager.get_qdrant_point_count()
+        if qdrant_points is None:
+            return
         logger.info(
             "Qdrant collection '%s' current point count: %d",
             COLLECTION_NAME,
             qdrant_points,
         )
 
-    # 8. Persist only vector-node registry mappings to SQL DB.
-    for node in nodes:
-        registry = VectorNodeRegistry(
-            id=str(uuid.uuid4()),
-            document_id=doc_id,
-            client_id=client_id,
-            vector_collection=COLLECTION_NAME,
-            vector_node_id=node.node_id,
-            embedding_model=settings.EMBEDDING_MODEL,
-        )
-        db.add(registry)
+    def _persist_registry_rows(self, nodes: List[BaseNode]) -> None:
+        for node in nodes:
+            self.db.add(
+                VectorNodeRegistry(
+                    id=str(uuid.uuid4()),
+                    document_id=self.doc_id,
+                    client_id=self.client_id,
+                    vector_collection=COLLECTION_NAME,
+                    vector_node_id=node.node_id,
+                    embedding_model=settings.EMBEDDING_MODEL,
+                )
+            )
 
-    # 9. Mark success
-    db_doc.status = "indexed"
-    job.status = "completed"
-    job.finished_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(db_doc)
+    def _mark_success(self) -> None:
+        self.db_doc.status = "indexed"
+        self.job.status = "completed"
+        self.job.finished_at = datetime.now(timezone.utc)
+        self.db.commit()
+        self.db.refresh(self.db_doc)
 
+
+def _execute_pipeline(
+    db_doc: Document,
+    job: IngestionJob,
+    file_path: str,
+    filename: str,
+    client_id: str,
+    client_name: str,
+    doc_id: str,
+    file_ext: str,
+    db: Session,
+):
+    context = IngestionExecutionContext(
+        db_doc=db_doc,
+        job=job,
+        file_path=file_path,
+        filename=filename,
+        client_id=client_id,
+        client_name=client_name,
+        doc_id=doc_id,
+        file_ext=file_ext,
+        db=db,
+    )
+    parsed_units, vector_rows = IngestionPipelineExecutor(context).run()
     logger.info(
         "Ingestion complete: doc=%s, parsed_units=%d, vector_registry_rows=%d",
         doc_id,
-        len(units),
-        len(nodes),
+        parsed_units,
+        vector_rows,
     )
 
 
@@ -923,7 +1034,7 @@ def _supersede_older_versions(db: Session, client_id: str, doc_id: str, group: s
             Document.client_id == client_id,
             Document.document_family == group,
             DocumentVersion.document_id != doc_id,
-            DocumentVersion.is_current == True,
+            DocumentVersion.is_current == true(),
         )
         .all()
     )

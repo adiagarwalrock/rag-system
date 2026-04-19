@@ -5,9 +5,9 @@ Document and ingestion API routes.
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from sqlalchemy import true
 from sqlalchemy.orm import Session
 
-from app.db.models.client import Client
 from app.db.models.document import (
     Document,
     DocumentVersion,
@@ -16,6 +16,7 @@ from app.db.models.document import (
 )
 from app.db.snowflake import get_db
 from app.schemas.document import DocumentListResponse, DocumentResponse
+from app.services.client_service import ClientLookupService
 from app.services.ingest_service import (
     delete_document,
     enqueue_document_ingestion,
@@ -70,7 +71,7 @@ def get_document_status(
         db.query(VectorNodeRegistry)
         .filter(
             VectorNodeRegistry.document_id == document_id,
-            VectorNodeRegistry.is_active == True,
+            VectorNodeRegistry.is_active == true(),
         )
         .count()
     )
@@ -103,9 +104,9 @@ async def ingest_doc(
     db: Session = Depends(get_db),
 ):
     """Upload and ingest a document."""
-    # Validate client exists
-    client = db.query(Client).filter(Client.id == client_id).first()
-    if not client:
+    try:
+        client = ClientLookupService(db).require_client(client_id)
+    except ValueError:
         raise HTTPException(status_code=404, detail="Client not found")
 
     # Read file content

@@ -31,10 +31,10 @@ From repo root:
 cp .env.example .env
 ./setup.sh
 docker-compose up -d qdrant
-uv run streamlit run streamlit_app.py --server.port 8502
+uv run streamlit run streamlit_app.py
 ```
 
-Streamlit is available at `http://localhost:8502`.
+Streamlit is available at `http://localhost:8501`.
 
 Optional API server:
 
@@ -131,6 +131,9 @@ UI: Document Library -> `Delete`
 API: `DELETE /api/v1/documents/{document_id}?hard=true`
 
 ## Verification
+
+For a dedicated guide on running tests and enterprise evaluation runs, see
+[`EVALUATION.md`](./EVALUATION.md).
 
 Full integration setup check:
 

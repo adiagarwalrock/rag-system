@@ -9,6 +9,7 @@ import mimetypes
 import re
 import hashlib
 import base64
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -19,19 +20,18 @@ from llama_index.core.base.llms.types import (
     TextBlock,
     ThinkingBlock,
 )
-from llama_index.core.retrievers import QueryFusionRetriever
-from llama_index.core.retrievers.fusion_retriever import FUSION_MODES
 from llama_index.core.vector_stores import ExactMatchFilter, MetadataFilters
 
-from app.core.ai_provider import normalize_reasoning_effort, get_llm
+from app.core.ai_provider import (
+    extract_chat_response_text,
+    get_llm,
+    invoke_llm_chat,
+    normalize_reasoning_effort,
+)
 from app.core.config import settings
 from app.core.prompts import (
     GROUNDED_ANSWER_DEVELOPER_PROMPT,
     build_grounded_answer_prompt,
-)
-from app.core.responses_api import (
-    create_responses_completion,
-    extract_response_output_text,
 )
 from app.core.token_budget import ResponsesInputBudgeter
 from app.indexing.vector_store import vector_store_manager
@@ -107,6 +107,239 @@ VISUAL_QUERY_TERMS = (
     "screenshots",
     "visual",
 )
+TABLE_EVIDENCE_TERMS = (
+    "table",
+    "matrix",
+    "tabular",
+    "top ",
+    "top-",
+    "breakdown",
+    "market mix",
+    "portfolio composition",
+)
+CHART_EVIDENCE_TERMS = (
+    "chart",
+    "graph",
+    "plot",
+    "legend",
+    "infographic",
+    "pie",
+    "trend",
+    "line",
+    "bar",
+)
+TIME_ANCHORED_TERMS = (
+    "as of",
+    "q1",
+    "q2",
+    "q3",
+    "q4",
+    "fy",
+    "fiscal",
+    "expected close",
+)
+YEAR_PATTERN = re.compile(r"\b(?:19|20)\d{2}\b")
+RECENT_TURN_MAX_CHARS = 320
+CROSS_SESSION_USER_MAX_CHARS = 220
+CROSS_SESSION_ASSISTANT_MAX_CHARS = 260
+
+
+@dataclass(frozen=True, slots=True)
+class GroundedAnswerResult:
+    answer: str
+    reasoning: str | None
+    images_used: list[str]
+    reasoning_effort_applied: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "answer": self.answer,
+            "reasoning": self.reasoning,
+            "images_used": self.images_used,
+            "reasoning_effort_applied": self.reasoning_effort_applied,
+        }
+
+
+class GroundedAnswerSynthesizer:
+    """Synthesize grounded answers from selected evidence and conflicts."""
+
+    def __init__(
+        self,
+        *,
+        client_id: str,
+        reasoning_effort: str,
+        conversation_context: dict[str, Any],
+    ):
+        self.client_id = client_id
+        self.reasoning_effort = reasoning_effort
+        self.conversation_context = conversation_context
+
+    def synthesize(
+        self,
+        *,
+        question: str,
+        citations: list[dict[str, Any]],
+        conflicts: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        effort_applied = settings.OPENAI_USE_RESPONSES
+
+        if not citations:
+            return GroundedAnswerResult(
+                answer=(
+                    "I could not find enough relevant evidence in the uploaded "
+                    "documents to answer this question confidently."
+                ),
+                reasoning=None,
+                images_used=[],
+                reasoning_effort_applied=effort_applied,
+            ).to_dict()
+
+        image_paths = _collect_image_evidence_paths(citations)
+
+        if settings.OPENAI_USE_RESPONSES:
+            responses_result = self._try_responses_synthesis(
+                question=question,
+                citations=citations,
+                conflicts=conflicts,
+                image_paths=image_paths,
+                effort_applied=effort_applied,
+            )
+            if responses_result is not None:
+                return responses_result.to_dict()
+
+        chat_result = self._try_chat_synthesis(
+            question=question,
+            citations=citations,
+            conflicts=conflicts,
+            image_paths=image_paths,
+            effort_applied=effort_applied,
+        )
+        if chat_result is not None:
+            return chat_result.to_dict()
+
+        logger.error("Answer synthesis failed; returning source-grounded fallback")
+        return GroundedAnswerResult(
+            answer=_build_source_grounded_fallback(citations),
+            reasoning=None,
+            images_used=image_paths,
+            reasoning_effort_applied=effort_applied,
+        ).to_dict()
+
+    def _try_responses_synthesis(
+        self,
+        *,
+        question: str,
+        citations: list[dict[str, Any]],
+        conflicts: list[dict[str, Any]],
+        image_paths: list[str],
+        effort_applied: bool,
+    ) -> GroundedAnswerResult | None:
+        try:
+            budgeter = ResponsesInputBudgeter(model=settings.LLM_MODEL)
+            sections = _build_labeled_context_sections(
+                citations=citations,
+                conflicts=conflicts,
+                conversation_context=self.conversation_context,
+            )
+            input_messages, _, metrics = budgeter.build_budgeted_sections(
+                developer_prompt=GROUNDED_ANSWER_DEVELOPER_PROMPT,
+                question=question,
+                recent_turns=self.conversation_context.get("recent_turns") or [],
+                session_summary=sections["session_summary"],
+                cross_session_lines=sections["cross_session_lines"],
+                evidence_lines=sections["evidence_lines"],
+                conflict_lines=sections["conflict_lines"],
+            )
+            logger.info(
+                "Responses budget usage model=%s input_tokens=%d/%d history=%d summary=%d cross=%d evidence=%d conflict=%d",
+                metrics.model,
+                metrics.total_input_tokens,
+                metrics.input_budget_tokens,
+                metrics.history_tokens,
+                metrics.summary_tokens,
+                metrics.cross_session_tokens,
+                metrics.evidence_tokens,
+                metrics.conflict_tokens,
+            )
+            response = invoke_llm_chat(
+                model=settings.LLM_MODEL,
+                input_messages=input_messages,
+                reasoning_effort=self.reasoning_effort,
+                max_output_tokens=settings.RESPONSE_MAX_OUTPUT_TOKENS,
+                prompt_cache_key=settings.RESPONSE_PROMPT_CACHE_KEY,
+                prompt_cache_retention=settings.RESPONSE_PROMPT_CACHE_RETENTION,
+                safety_identifier=f"{settings.RESPONSE_SAFETY_IDENTIFIER_PREFIX}:{self.client_id}",
+                user_tag=settings.RESPONSE_USER_TAG,
+            )
+            text = extract_chat_response_text(response)
+            answer, reasoning = _split_reasoning_from_text(text)
+            if not answer:
+                raise ValueError("LLM returned empty answer")
+            return GroundedAnswerResult(
+                answer=answer,
+                reasoning=reasoning,
+                images_used=image_paths,
+                reasoning_effort_applied=effort_applied,
+            )
+        except Exception:
+            logger.exception(
+                "Responses answer synthesis failed; falling back to LlamaIndex chat"
+            )
+            return None
+
+    def _try_chat_synthesis(
+        self,
+        *,
+        question: str,
+        citations: list[dict[str, Any]],
+        conflicts: list[dict[str, Any]],
+        image_paths: list[str],
+        effort_applied: bool,
+    ) -> GroundedAnswerResult | None:
+        llm = get_llm(reasoning_effort=self.reasoning_effort)
+        prompt = _build_grounded_prompt(
+            question,
+            citations,
+            conflicts,
+            image_attachment_count=len(image_paths),
+            conversation_context=self.conversation_context,
+        )
+
+        for attempt_name, message, used_images in self._chat_attempts(
+            prompt, image_paths
+        ):
+            try:
+                response = llm.chat([message])
+                answer, reasoning = _extract_answer_and_reasoning_from_chat(response)
+                if not answer:
+                    raise ValueError("LLM returned empty answer")
+                return GroundedAnswerResult(
+                    answer=answer,
+                    reasoning=reasoning,
+                    images_used=used_images,
+                    reasoning_effort_applied=effort_applied,
+                )
+            except Exception:
+                logger.exception("%s answer synthesis failed", attempt_name)
+
+        return None
+
+    @staticmethod
+    def _chat_attempts(
+        prompt: str,
+        image_paths: list[str],
+    ) -> list[tuple[str, ChatMessage, list[str]]]:
+        attempts: list[tuple[str, ChatMessage, list[str]]] = []
+        if image_paths:
+            attempts.append(
+                (
+                    "multimodal",
+                    _build_grounded_message(prompt, image_paths),
+                    image_paths,
+                )
+            )
+        attempts.append(("text_only", _build_grounded_message(prompt, []), []))
+        return attempts
 
 
 class VecteraRetriever:
@@ -132,6 +365,11 @@ class VecteraRetriever:
         self.conflict_evidence_limit = CONFLICT_EVIDENCE_LIMIT
         self.filters = MetadataFilters(
             filters=[ExactMatchFilter(key="client_id", value=self.client_id)]
+        )
+        self.answer_synthesizer = GroundedAnswerSynthesizer(
+            client_id=self.client_id,
+            reasoning_effort=self.reasoning_effort,
+            conversation_context=self.conversation_context,
         )
 
     def query(self, question: str) -> Dict[str, Any]:
@@ -204,7 +442,10 @@ class VecteraRetriever:
         return self._rank_nodes(question, source_nodes)
 
     def _rank_nodes(self, question: str, source_nodes: list) -> list:
-        prefer_latest = not _is_comparison_or_conflict_query(question)
+        prefer_latest = not (
+            _is_comparison_or_conflict_query(question)
+            or _is_time_anchored_query(question)
+        )
         rank_top_k = (
             self.top_k + 8 if _is_conflict_focused_query(question) else self.top_k
         )
@@ -250,34 +491,35 @@ class VecteraRetriever:
             hybrid=hybrid,
         )
 
-        should_expand = should_expand_query(question)
+        expansion_question = self._build_query_expansion_input(question)
+        should_expand = should_expand_query(expansion_question)
         if should_expand:
             return self._retrieve_with_expansion(
-                question, base_retriever, prefetch_top_k
+                question,
+                expansion_question,
+                base_retriever,
             )
 
         return base_retriever.retrieve(question), False
 
     def _retrieve_with_expansion(
-        self, question: str, base_retriever, prefetch_top_k: int
+        self,
+        question: str,
+        expansion_question: dict[str, Any],
+        base_retriever,
     ) -> tuple[list, bool]:
-        try:
-            fusion_retriever = QueryFusionRetriever(
-                [base_retriever],
-                similarity_top_k=prefetch_top_k,
-                num_queries=3,
-                mode=FUSION_MODES.RECIPROCAL_RANK,
-                use_async=False,
-                verbose=False,
-            )
-            return fusion_retriever.retrieve(question), True
-        except Exception:
-            logger.exception(
-                "LlamaIndex query fusion expansion failed; using manual expansion fallback"
-            )
-            query_variants = build_query_variants(question)
-            batches = [base_retriever.retrieve(variant) for variant in query_variants]
-            return _fuse_node_batches(batches), len(query_variants) > 1
+        query_variants = build_query_variants(expansion_question)
+        if len(query_variants) == 1:
+            return base_retriever.retrieve(question), False
+
+        batches = [base_retriever.retrieve(variant) for variant in query_variants]
+        return _fuse_node_batches(batches), True
+
+    def _build_query_expansion_input(self, question: str) -> dict[str, Any]:
+        return {
+            "current_question": question,
+            "recent_turns": self.conversation_context.get("recent_turns") or [],
+        }
 
     def _select_evidence_nodes(self, question: str, ranked_nodes: list) -> list:
         if not ranked_nodes:
@@ -285,66 +527,30 @@ class VecteraRetriever:
 
         comparative_query = _is_comparison_or_conflict_query(question)
         conflict_focused_query = _is_conflict_focused_query(question)
-        evidence_cap = self.evidence_limit
-        if comparative_query:
-            evidence_cap = self.comparative_evidence_limit
-        if conflict_focused_query:
-            evidence_cap = self.conflict_evidence_limit
-
-        candidate_nodes = ranked_nodes
-        if conflict_focused_query:
-            # For conflict queries, prioritize chunks that actually carry numeric signals.
-            numeric_nodes = [node for node in ranked_nodes if _has_numeric_signal(node)]
-            non_numeric_nodes = [
-                node for node in ranked_nodes if not _has_numeric_signal(node)
-            ]
-            candidate_nodes = numeric_nodes + non_numeric_nodes
-
-        primary_candidates = candidate_nodes
-        secondary_candidates: list[Any] = []
-        if not _is_reasoning_priority_query(question):
-            primary_candidates = [
-                node for node in candidate_nodes if not _is_reasoning_chunk(node)
-            ]
-            secondary_candidates = [
-                node for node in candidate_nodes if _is_reasoning_chunk(node)
-            ]
-
-        selected = []
-        selected_keys: set[str] = set()
-        selected_diversity_keys: set[str] = set()
-        candidate_batches = [primary_candidates]
-        if secondary_candidates:
-            candidate_batches.append(secondary_candidates)
-
-        if comparative_query:
-            # Prefer source diversity first: version label when available, otherwise
-            # document family/document ID as fallback.
-            for batch in candidate_batches:
-                for node in batch:
-                    diversity_key = _evidence_diversity_key(node)
-                    if diversity_key in selected_diversity_keys:
-                        continue
-                    key = _node_unique_key(node)
-                    if key in selected_keys:
-                        continue
-                    selected.append(node)
-                    selected_keys.add(key)
-                    selected_diversity_keys.add(diversity_key)
-                    if len(selected) >= evidence_cap:
-                        return selected
-
-        for batch in candidate_batches:
-            for node in batch:
-                if len(selected) >= evidence_cap:
-                    break
-                key = _node_unique_key(node)
-                if key in selected_keys:
-                    continue
-                selected.append(node)
-                selected_keys.add(key)
-            if len(selected) >= evidence_cap:
-                break
+        evidence_cap = self._resolve_evidence_cap(
+            comparative_query=comparative_query,
+            conflict_focused_query=conflict_focused_query,
+        )
+        candidate_nodes = self._prioritize_conflict_candidates(
+            ranked_nodes=ranked_nodes,
+            conflict_focused_query=conflict_focused_query,
+        )
+        primary_candidates, secondary_candidates = self._partition_reasoning_candidates(
+            question=question,
+            candidate_nodes=candidate_nodes,
+        )
+        selected = self._collect_evidence_candidates(
+            primary_candidates=primary_candidates,
+            secondary_candidates=secondary_candidates,
+            evidence_cap=evidence_cap,
+            comparative_query=comparative_query,
+        )
+        selected = _ensure_structured_evidence(
+            question=question,
+            selected_nodes=selected,
+            ranked_nodes=ranked_nodes,
+            evidence_cap=evidence_cap,
+        )
 
         selected = _ensure_image_evidence(
             question=question,
@@ -355,122 +561,139 @@ class VecteraRetriever:
 
         return selected
 
+    def _resolve_evidence_cap(
+        self,
+        *,
+        comparative_query: bool,
+        conflict_focused_query: bool,
+    ) -> int:
+        if conflict_focused_query:
+            return self.conflict_evidence_limit
+        if comparative_query:
+            return self.comparative_evidence_limit
+        return self.evidence_limit
+
+    def _prioritize_conflict_candidates(
+        self,
+        *,
+        ranked_nodes: list,
+        conflict_focused_query: bool,
+    ) -> list:
+        if not conflict_focused_query:
+            return ranked_nodes
+
+        # For conflict queries, prioritize chunks that actually carry numeric signals.
+        numeric_nodes = [node for node in ranked_nodes if _has_numeric_signal(node)]
+        non_numeric_nodes = [
+            node for node in ranked_nodes if not _has_numeric_signal(node)
+        ]
+        return numeric_nodes + non_numeric_nodes
+
+    def _partition_reasoning_candidates(
+        self,
+        *,
+        question: str,
+        candidate_nodes: list,
+    ) -> tuple[list, list]:
+        if _is_reasoning_priority_query(question):
+            return candidate_nodes, []
+
+        primary_candidates = [
+            node for node in candidate_nodes if not _is_reasoning_chunk(node)
+        ]
+        secondary_candidates = [
+            node for node in candidate_nodes if _is_reasoning_chunk(node)
+        ]
+        return primary_candidates, secondary_candidates
+
+    def _collect_evidence_candidates(
+        self,
+        *,
+        primary_candidates: list,
+        secondary_candidates: list,
+        evidence_cap: int,
+        comparative_query: bool,
+    ) -> list:
+        selected: list[Any] = []
+        selected_keys: set[str] = set()
+        candidate_batches = [primary_candidates]
+        if secondary_candidates:
+            candidate_batches.append(secondary_candidates)
+
+        if comparative_query:
+            selected_diversity_keys: set[str] = set()
+            if self._collect_diverse_nodes(
+                candidate_batches=candidate_batches,
+                selected=selected,
+                selected_keys=selected_keys,
+                selected_diversity_keys=selected_diversity_keys,
+                evidence_cap=evidence_cap,
+            ):
+                return selected
+
+        self._collect_unique_nodes(
+            candidate_batches=candidate_batches,
+            selected=selected,
+            selected_keys=selected_keys,
+            evidence_cap=evidence_cap,
+        )
+        return selected
+
+    def _collect_diverse_nodes(
+        self,
+        *,
+        candidate_batches: list[list[Any]],
+        selected: list[Any],
+        selected_keys: set[str],
+        selected_diversity_keys: set[str],
+        evidence_cap: int,
+    ) -> bool:
+        # Prefer source diversity first: version label when available, otherwise
+        # document family/document ID as fallback.
+        for batch in candidate_batches:
+            for node in batch:
+                diversity_key = _evidence_diversity_key(node)
+                if diversity_key in selected_diversity_keys:
+                    continue
+                key = _node_unique_key(node)
+                if key in selected_keys:
+                    continue
+                selected.append(node)
+                selected_keys.add(key)
+                selected_diversity_keys.add(diversity_key)
+                if len(selected) >= evidence_cap:
+                    return True
+        return False
+
+    def _collect_unique_nodes(
+        self,
+        *,
+        candidate_batches: list[list[Any]],
+        selected: list[Any],
+        selected_keys: set[str],
+        evidence_cap: int,
+    ) -> None:
+        for batch in candidate_batches:
+            for node in batch:
+                if len(selected) >= evidence_cap:
+                    return
+                key = _node_unique_key(node)
+                if key in selected_keys:
+                    continue
+                selected.append(node)
+                selected_keys.add(key)
+
     def _synthesize_answer(
         self,
         question: str,
         citations: list[dict[str, Any]],
         conflicts: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        effort_applied = settings.OPENAI_USE_RESPONSES
-
-        if not citations:
-            return {
-                "answer": (
-                    "I could not find enough relevant evidence in the uploaded "
-                    "documents to answer this question confidently."
-                ),
-                "reasoning": None,
-                "images_used": [],
-                "reasoning_effort_applied": effort_applied,
-            }
-
-        image_paths = _collect_image_evidence_paths(citations)
-        budgeter = ResponsesInputBudgeter(model=settings.LLM_MODEL)
-        sections = _build_labeled_context_sections(
+        return self.answer_synthesizer.synthesize(
+            question=question,
             citations=citations,
             conflicts=conflicts,
-            conversation_context=self.conversation_context,
         )
-        input_messages, _, metrics = budgeter.build_budgeted_sections(
-            developer_prompt=GROUNDED_ANSWER_DEVELOPER_PROMPT,
-            question=question,
-            recent_turns=self.conversation_context.get("recent_turns") or [],
-            session_summary=sections["session_summary"],
-            cross_session_lines=sections["cross_session_lines"],
-            evidence_lines=sections["evidence_lines"],
-            conflict_lines=sections["conflict_lines"],
-        )
-        logger.info(
-            "Responses budget usage model=%s input_tokens=%d/%d history=%d summary=%d cross=%d evidence=%d conflict=%d",
-            metrics.model,
-            metrics.total_input_tokens,
-            metrics.input_budget_tokens,
-            metrics.history_tokens,
-            metrics.summary_tokens,
-            metrics.cross_session_tokens,
-            metrics.evidence_tokens,
-            metrics.conflict_tokens,
-        )
-
-        try:
-            response = create_responses_completion(
-                model=settings.LLM_MODEL,
-                input_messages=input_messages,
-                reasoning_effort=self.reasoning_effort,
-                max_output_tokens=settings.RESPONSE_MAX_OUTPUT_TOKENS,
-                prompt_cache_key=settings.RESPONSE_PROMPT_CACHE_KEY,
-                prompt_cache_retention=settings.RESPONSE_PROMPT_CACHE_RETENTION,
-                safety_identifier=f"{settings.RESPONSE_SAFETY_IDENTIFIER_PREFIX}:{self.client_id}",
-                user_tag=settings.RESPONSE_USER_TAG,
-            )
-            text = extract_response_output_text(response)
-            answer, reasoning = _split_reasoning_from_text(text)
-            if answer:
-                return {
-                    "answer": answer,
-                    "reasoning": reasoning,
-                    "images_used": image_paths,
-                    "reasoning_effort_applied": effort_applied,
-                }
-            raise ValueError("LLM returned empty answer")
-        except Exception:
-            logger.exception(
-                "Responses answer synthesis failed; falling back to LlamaIndex chat"
-            )
-
-        llm = self._build_answer_llm()
-        prompt = _build_grounded_prompt(
-            question,
-            citations,
-            conflicts,
-            image_attachment_count=len(image_paths),
-            conversation_context=self.conversation_context,
-        )
-        attempts = [
-            ("multimodal", _build_grounded_message(prompt, image_paths), image_paths),
-            ("text_only", _build_grounded_message(prompt, []), []),
-        ]
-        if not image_paths:
-            attempts = attempts[1:]
-
-        for attempt_name, message, used_images in attempts:
-            try:
-                response = self._chat_with_optional_thinking(llm, [message])
-                answer, reasoning = _extract_answer_and_reasoning_from_chat(response)
-                if answer:
-                    return {
-                        "answer": answer,
-                        "reasoning": reasoning,
-                        "images_used": used_images,
-                        "reasoning_effort_applied": effort_applied,
-                    }
-                raise ValueError("LLM returned empty answer")
-            except Exception:
-                logger.exception("%s answer synthesis failed", attempt_name)
-
-        logger.exception("Answer synthesis failed; returning source-grounded fallback")
-        return {
-            "answer": _build_source_grounded_fallback(citations),
-            "reasoning": None,
-            "images_used": image_paths,
-            "reasoning_effort_applied": effort_applied,
-        }
-
-    def _build_answer_llm(self):
-        return get_llm(reasoning_effort=self.reasoning_effort)
-
-    def _chat_with_optional_thinking(self, llm, messages: list[ChatMessage]):
-        return llm.chat(messages)
 
 
 def _fuse_node_batches(node_batches: list[list]) -> list:
@@ -542,11 +765,7 @@ def _is_conflict_focused_query(question: str) -> bool:
 def _has_numeric_signal(node: Any) -> bool:
     metadata = node.node.metadata or {}
     raw = metadata.get("contains_numeric_data")
-    if isinstance(raw, bool):
-        return raw
-    if isinstance(raw, str):
-        return raw.strip().lower() in {"true", "1", "yes"}
-    return False
+    return _safe_bool(raw, False)
 
 
 def _node_has_image_assets(node: Any) -> bool:
@@ -557,6 +776,18 @@ def _node_has_image_assets(node: Any) -> bool:
     if isinstance(refs, list):
         return any(isinstance(ref, str) and ref.strip() for ref in refs)
     return False
+
+
+def _safe_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes"}:
+            return True
+        if lowered in {"false", "0", "no"}:
+            return False
+    return default
 
 
 def _is_reasoning_chunk(node: Any) -> bool:
@@ -574,6 +805,116 @@ def _is_visual_or_image_query(question: str) -> bool:
     return any(term in normalized for term in VISUAL_QUERY_TERMS)
 
 
+def _is_time_anchored_query(question: str) -> bool:
+    normalized = question.lower()
+    if YEAR_PATTERN.search(normalized):
+        return True
+    return any(term in normalized for term in TIME_ANCHORED_TERMS)
+
+
+def _wants_table_evidence(question: str) -> bool:
+    normalized = question.lower()
+    return any(term in normalized for term in TABLE_EVIDENCE_TERMS)
+
+
+def _wants_chart_evidence(question: str) -> bool:
+    normalized = question.lower()
+    return any(term in normalized for term in CHART_EVIDENCE_TERMS)
+
+
+def _is_table_like_node(node: Any) -> bool:
+    metadata = node.node.metadata or {}
+    chunk_type = str(metadata.get("chunk_type") or "")
+    return chunk_type in {
+        "full_table",
+        "table_segment",
+        "table_summary_text",
+        "reasoning_table",
+    } or _safe_bool(metadata.get("table_detected"), False)
+
+
+def _is_chart_like_node(node: Any) -> bool:
+    metadata = node.node.metadata or {}
+    chunk_type = str(metadata.get("chunk_type") or "")
+    figure_type = str(metadata.get("figure_type") or "")
+    return (
+        chunk_type
+        in {
+            "figure_artifact",
+            "chart_context",
+            "chart_data_points",
+            "visual_proxy_text",
+            "reasoning_chart",
+            "reasoning_figure",
+        }
+        or _safe_bool(metadata.get("chart_detected"), False)
+        or figure_type in {"chart", "diagram", "infographic"}
+    )
+
+
+def _ensure_structured_evidence(
+    *,
+    question: str,
+    selected_nodes: list[Any],
+    ranked_nodes: list[Any],
+    evidence_cap: int,
+) -> list[Any]:
+    want_table = _wants_table_evidence(question)
+    want_chart = _wants_chart_evidence(question)
+    if not want_table and not want_chart:
+        return selected_nodes
+
+    selected = list(selected_nodes)
+    selected_keys = {_node_unique_key(node) for node in selected}
+    requirements: list[tuple[bool, Any, str]] = [
+        (want_table, _is_table_like_node, "table"),
+        (want_chart, _is_chart_like_node, "chart"),
+    ]
+
+    for enabled, predicate, requirement_name in requirements:
+        if not enabled:
+            continue
+        if any(predicate(node) for node in selected):
+            continue
+
+        candidate = next(
+            (
+                node
+                for node in ranked_nodes
+                if predicate(node) and _node_unique_key(node) not in selected_keys
+            ),
+            None,
+        )
+        if candidate is None:
+            logger.debug(
+                "Structured evidence requirement unmet (type=%s): no ranked candidate",
+                requirement_name,
+            )
+            continue
+
+        if len(selected) < evidence_cap:
+            selected.append(candidate)
+            selected_keys.add(_node_unique_key(candidate))
+            continue
+
+        replace_idx = next(
+            (
+                idx
+                for idx in range(len(selected) - 1, -1, -1)
+                if not predicate(selected[idx])
+            ),
+            None,
+        )
+        if replace_idx is None:
+            continue
+
+        selected_keys.discard(_node_unique_key(selected[replace_idx]))
+        selected[replace_idx] = candidate
+        selected_keys.add(_node_unique_key(candidate))
+
+    return selected
+
+
 def _ensure_image_evidence(
     *,
     question: str,
@@ -587,12 +928,10 @@ def _ensure_image_evidence(
     desired_image_nodes = min(2, evidence_cap)
     selected = list(selected_nodes)
     selected_keys = {_node_unique_key(node) for node in selected}
-
-    def _image_count() -> int:
-        return sum(1 for node in selected if _node_has_image_assets(node))
+    image_node_count = sum(1 for node in selected if _node_has_image_assets(node))
 
     for candidate in ranked_nodes:
-        if _image_count() >= desired_image_nodes:
+        if image_node_count >= desired_image_nodes:
             break
         if not _node_has_image_assets(candidate):
             continue
@@ -603,6 +942,7 @@ def _ensure_image_evidence(
         if len(selected) < evidence_cap:
             selected.append(candidate)
             selected_keys.add(candidate_key)
+            image_node_count += 1
             continue
 
         replace_idx = next(
@@ -619,6 +959,7 @@ def _ensure_image_evidence(
         selected_keys.discard(_node_unique_key(selected[replace_idx]))
         selected[replace_idx] = candidate
         selected_keys.add(candidate_key)
+        image_node_count += 1
 
     return selected
 
@@ -723,16 +1064,10 @@ def _build_grounded_prompt(
 ) -> str:
     evidence_lines = []
     for index, citation in enumerate(citations, start=1):
-        label = citation.get("citation_label") or citation.get(
-            "document_name", f"Source {index}"
-        )
+        label = _citation_label(citation, index)
         version = citation.get("version_label") or "unknown"
         chunk_type = citation.get("chunk_type") or "text"
-        location = ""
-        if citation.get("page_num"):
-            location = f" | page={citation['page_num']}"
-        elif citation.get("slide_num"):
-            location = f" | slide={citation['slide_num']}"
+        location = _citation_location(citation)
         image_assets = citation.get("asset_refs") or []
         excerpt = _prompt_excerpt(citation)
         evidence_lines.append(
@@ -776,53 +1111,11 @@ def _build_labeled_context_sections(
     summary = str(conversation_context.get("session_summary") or "").strip()
     cross_session_pairs = conversation_context.get("cross_session_pairs") or []
 
-    evidence_lines: list[str] = []
-    for index, citation in enumerate(citations, start=1):
-        label = citation.get("citation_label") or citation.get(
-            "document_name", f"Source {index}"
-        )
-        version = citation.get("version_label") or "unknown"
-        chunk_type = citation.get("chunk_type") or "text"
-        location = ""
-        if citation.get("page_num"):
-            location = f" | page={citation['page_num']}"
-        elif citation.get("slide_num"):
-            location = f" | slide={citation['slide_num']}"
-        excerpt = _prompt_excerpt(citation)
-        evidence_lines.append(
-            f"[{index}] {label} | version={version} | chunk_type={chunk_type}{location}\n"
-            f"Excerpt: {excerpt}"
-        )
-
-    conflict_lines: list[str] = []
-    for conflict in conflicts[:4]:
-        summary_line = " ".join(str(conflict.get("summary") or "").split())
-        if summary_line:
-            conflict_lines.append(f"- {summary_line}")
-    if not conflict_lines:
-        conflict_lines.append(
-            "- No high-confidence conflicts were detected in selected evidence."
-        )
-
-    cross_session_lines: list[str] = []
-    for pair in cross_session_pairs:
-        user_text = " ".join(str(pair.get("user_text") or "").split())
-        assistant_text = " ".join(str(pair.get("assistant_text") or "").split())
-        if not user_text or not assistant_text:
-            continue
-        score = pair.get("score")
-        score_label = (
-            f"{float(score):.3f}" if isinstance(score, (int, float)) else "n/a"
-        )
-        cross_session_lines.append(
-            f"- similarity={score_label} | prior_user={user_text} | prior_assistant={assistant_text}"
-        )
-
     return {
         "session_summary": summary,
-        "cross_session_lines": cross_session_lines,
-        "evidence_lines": evidence_lines,
-        "conflict_lines": conflict_lines,
+        "cross_session_lines": _build_context_cross_session_lines(cross_session_pairs),
+        "evidence_lines": _build_context_evidence_lines(citations),
+        "conflict_lines": _build_context_conflict_lines(conflicts),
     }
 
 
@@ -836,45 +1129,123 @@ def _build_conversation_context_block(conversation_context: dict[str, Any]) -> s
         sections.append(f"SESSION_SUMMARY:\n{summary}")
 
     if recent_turns:
-        lines = []
-        for turn in recent_turns:
-            role = str(turn.get("role") or "unknown").lower()
-            role_label = "User" if role == "user" else "Assistant"
-            content = " ".join(str(turn.get("content") or "").split())
-            if not content:
-                continue
-            if len(content) > 320:
-                content = f"{content[:317].rstrip()}..."
-            lines.append(f"- {role_label}: {content}")
+        lines = _format_recent_turn_lines(recent_turns)
         if lines:
             sections.append("CURRENT_SESSION_RECENT_TURNS:\n" + "\n".join(lines))
 
     if cross_session_pairs:
-        lines = []
-        for pair in cross_session_pairs:
-            user_text = " ".join(str(pair.get("user_text") or "").split())
-            assistant_text = " ".join(str(pair.get("assistant_text") or "").split())
-            if not user_text or not assistant_text:
-                continue
-            if len(user_text) > 220:
-                user_text = f"{user_text[:217].rstrip()}..."
-            if len(assistant_text) > 260:
-                assistant_text = f"{assistant_text[:257].rstrip()}..."
-            score = pair.get("score")
-            score_text = (
-                f" (similarity={float(score):.3f})"
-                if isinstance(score, (int, float))
-                else ""
-            )
-            lines.append(
-                f"- Prior Q{score_text}: {user_text}\n  Prior A: {assistant_text}"
-            )
+        lines = _format_cross_session_lines(cross_session_pairs)
         if lines:
             sections.append("CROSS_SESSION_RELEVANT_QA:\n" + "\n".join(lines))
 
     if not sections:
         return "NO_PRIOR_CONVERSATION_CONTEXT"
     return "\n\n".join(sections)
+
+
+def _build_context_evidence_lines(citations: list[dict[str, Any]]) -> list[str]:
+    lines: list[str] = []
+    for index, citation in enumerate(citations, start=1):
+        label = _citation_label(citation, index)
+        version = citation.get("version_label") or "unknown"
+        chunk_type = citation.get("chunk_type") or "text"
+        location = _citation_location(citation)
+        excerpt = _prompt_excerpt(citation)
+        lines.append(
+            f"[{index}] {label} | version={version} | chunk_type={chunk_type}{location}\n"
+            f"Excerpt: {excerpt}"
+        )
+    return lines
+
+
+def _build_context_conflict_lines(conflicts: list[dict[str, Any]]) -> list[str]:
+    lines: list[str] = []
+    for conflict in conflicts[:4]:
+        summary_line = _normalize_inline_text(conflict.get("summary"))
+        if summary_line:
+            lines.append(f"- {summary_line}")
+    if not lines:
+        return ["- No high-confidence conflicts were detected in selected evidence."]
+    return lines
+
+
+def _build_context_cross_session_lines(
+    cross_session_pairs: list[dict[str, Any]],
+) -> list[str]:
+    lines: list[str] = []
+    for pair in cross_session_pairs:
+        user_text = _normalize_inline_text(pair.get("user_text"))
+        assistant_text = _normalize_inline_text(pair.get("assistant_text"))
+        if not user_text or not assistant_text:
+            continue
+        score = pair.get("score")
+        score_label = (
+            f"{float(score):.3f}" if isinstance(score, (int, float)) else "n/a"
+        )
+        lines.append(
+            f"- similarity={score_label} | prior_user={user_text} | prior_assistant={assistant_text}"
+        )
+    return lines
+
+
+def _normalize_inline_text(value: Any) -> str:
+    return " ".join(str(value or "").split())
+
+
+def _citation_label(citation: dict[str, Any], index: int) -> str:
+    return citation.get("citation_label") or citation.get(
+        "document_name", f"Source {index}"
+    )
+
+
+def _citation_location(citation: dict[str, Any]) -> str:
+    if citation.get("page_num"):
+        return f" | page={citation['page_num']}"
+    if citation.get("slide_num"):
+        return f" | slide={citation['slide_num']}"
+    return ""
+
+
+def _truncate_with_ellipsis(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    return f"{text[: max_chars - 3].rstrip()}..."
+
+
+def _format_recent_turn_lines(recent_turns: list[dict[str, Any]]) -> list[str]:
+    lines: list[str] = []
+    for turn in recent_turns:
+        role = str(turn.get("role") or "unknown").lower()
+        role_label = "User" if role == "user" else "Assistant"
+        content = _normalize_inline_text(turn.get("content"))
+        if not content:
+            continue
+        lines.append(
+            f"- {role_label}: {_truncate_with_ellipsis(content, RECENT_TURN_MAX_CHARS)}"
+        )
+    return lines
+
+
+def _format_cross_session_lines(cross_session_pairs: list[dict[str, Any]]) -> list[str]:
+    lines: list[str] = []
+    for pair in cross_session_pairs:
+        user_text = _normalize_inline_text(pair.get("user_text"))
+        assistant_text = _normalize_inline_text(pair.get("assistant_text"))
+        if not user_text or not assistant_text:
+            continue
+
+        user_text = _truncate_with_ellipsis(user_text, CROSS_SESSION_USER_MAX_CHARS)
+        assistant_text = _truncate_with_ellipsis(
+            assistant_text, CROSS_SESSION_ASSISTANT_MAX_CHARS
+        )
+        score = pair.get("score")
+        score_text = (
+            f" (similarity={float(score):.3f})"
+            if isinstance(score, (int, float))
+            else ""
+        )
+        lines.append(f"- Prior Q{score_text}: {user_text}\n  Prior A: {assistant_text}")
+    return lines
 
 
 def _prompt_excerpt(citation: dict[str, Any]) -> str:
@@ -941,7 +1312,7 @@ def _append_image_inputs(
 def _collect_image_evidence_paths(
     citations: list[dict[str, Any]], max_images: int = MAX_MULTIMODAL_IMAGES
 ) -> list[str]:
-    seen: set[str] = set()
+    seen_paths: set[str] = set()
     seen_hashes: set[str] = set()
     image_paths: list[str] = []
 
@@ -961,7 +1332,7 @@ def _collect_image_evidence_paths(
                 continue
 
             path_str = str(resolved)
-            if path_str in seen:
+            if path_str in seen_paths:
                 continue
             try:
                 content_hash = hashlib.sha256(resolved.read_bytes()).hexdigest()
@@ -969,10 +1340,10 @@ def _collect_image_evidence_paths(
                 continue
             if content_hash in seen_hashes:
                 continue
-            seen.add(path_str)
+
+            seen_paths.add(path_str)
             seen_hashes.add(content_hash)
             image_paths.append(path_str)
-
             if len(image_paths) >= max_images:
                 return image_paths
 
@@ -1028,20 +1399,19 @@ def _extract_answer_and_reasoning_from_chat(response: Any) -> tuple[str, str | N
 
     answer_parts: list[str] = []
     reasoning_parts: list[str] = []
-
     for block in getattr(message, "blocks", None) or []:
         if isinstance(block, ThinkingBlock):
             content = (block.content or "").strip()
             if content:
                 reasoning_parts.append(content)
-        elif isinstance(block, TextBlock):
+            continue
+        if isinstance(block, TextBlock):
             content = (block.text or "").strip()
             if content:
                 answer_parts.append(content)
 
     answer_text = "\n".join(answer_parts).strip()
     reasoning_text = "\n\n".join(reasoning_parts).strip() or None
-
     parsed_answer, parsed_reasoning = _split_reasoning_from_text(
         answer_text or str(getattr(message, "content", "") or "").strip()
     )

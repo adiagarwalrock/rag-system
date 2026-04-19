@@ -7,6 +7,7 @@ import re
 import hashlib
 import time
 import uuid
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
@@ -24,6 +25,7 @@ from llama_index.core.base.llms.types import (
 from PIL import Image, ImageStat
 from pydantic import BaseModel
 
+from app.core.ai_provider import extract_chat_response_text, invoke_llm_chat
 from app.core.config import settings
 from app.core.prompts import (
     _GENERIC_STRUCTURED_PROMPT,
@@ -35,9 +37,11 @@ from app.core.prompts import (
     build_artifact_enrichment_prompt,
     build_chart_caption_prompt,
 )
+from app.core.token_budget import truncate_text_by_tokens
 from app.indexing.vector_store import vector_store_manager
 from app.ingestion.pdf_pipeline.contracts import ArtifactResult, ArtifactStage
 from app.ingestion.pdf_pipeline.helpers import (
+    bbox_area,
     extract_units,
     header_signature,
     normalize_table_rows,
@@ -51,7 +55,6 @@ from app.ingestion.pdf_pipeline.helpers import (
 from app.ingestion.pdf_pipeline.models import (  # Artifacts; Response Models
     ArtifactEnrichmentResponse,
     ChartCaptionResponse,
-    ChartDatapointResponse,
     FigureArtifact,
     PageManifest,
     PageScreenshotResponse,
@@ -322,58 +325,87 @@ def build_table_artifacts(
     for page in pymupdf_pages:
         page_num = int(page.get("page_num", 1))
         page_regions = by_page.get(page_num, [])
-        candidates = list(page.get("table_candidates") or [])
-
-        if not candidates:
-            table_regions = [
-                region
-                for region in page_regions
-                if region.region_type == "table_region"
-            ]
-            if table_regions:
-                merged_rows = parse_table_like_text(
-                    "\n".join(region.text for region in table_regions)
-                )
-                if len(merged_rows) >= 2:
-                    candidates.append(
-                        {
-                            "candidate_id": f"text_regions_page_{page_num}",
-                            "bbox": _union_region_bbox(table_regions),
-                            "rows": merged_rows,
-                        }
-                    )
-
+        candidates = _table_candidates_for_page(
+            page_num=page_num,
+            page=page,
+            page_regions=page_regions,
+        )
         for candidate in candidates:
-            rows = _normalize_rows(candidate.get("rows") or [])
-            if len(rows) < 2:
-                continue
-
-            bbox = to_float_bbox(candidate.get("bbox"))
-            caption = _nearest_caption(page_regions, bbox)
-            section_path = _section_for_bbox(page_regions, bbox)
-            footnotes = _footnotes_for_bbox(page_regions, bbox)
-            normalized_table_text = normalize_table_rows(rows)
-            header = [normalize_whitespace(cell) for cell in rows[0]] if rows else []
-
-            artifacts.append(
-                TableArtifact(
-                    table_id=str(uuid.uuid4()),
-                    page_nums=[page_num],
-                    bbox_list=[bbox],
-                    caption_text=caption,
-                    section_path=section_path,
-                    html_table=table_rows_to_html(rows),
-                    json_table=rows,
-                    normalized_table_text=normalized_table_text,
-                    header_rows=header,
-                    units=extract_units(f"{caption} {normalized_table_text}"),
-                    footnotes=footnotes,
-                    continuation_flag=False,
-                    confidence=0.86 if caption else 0.74,
-                )
+            artifact = _table_artifact_from_candidate(
+                page_num=page_num,
+                page_regions=page_regions,
+                candidate=candidate,
             )
+            if artifact is not None:
+                artifacts.append(artifact)
 
     return artifacts
+
+
+def _table_candidates_for_page(
+    *,
+    page_num: int,
+    page: dict[str, Any],
+    page_regions: list[Region],
+) -> list[dict[str, Any]]:
+    candidates = list(page.get("table_candidates") or [])
+    if candidates:
+        return candidates
+
+    table_regions = [
+        region for region in page_regions if region.region_type == "table_region"
+    ]
+    if not table_regions:
+        return candidates
+
+    merged_rows = parse_table_like_text(
+        "\n".join(region.text for region in table_regions)
+    )
+    if len(merged_rows) < 2:
+        return candidates
+
+    candidates.append(
+        {
+            "candidate_id": f"text_regions_page_{page_num}",
+            "bbox": _union_region_bbox(table_regions),
+            "rows": merged_rows,
+        }
+    )
+    return candidates
+
+
+def _table_artifact_from_candidate(
+    *,
+    page_num: int,
+    page_regions: list[Region],
+    candidate: dict[str, Any],
+) -> TableArtifact | None:
+    rows = _normalize_rows(candidate.get("rows") or [])
+    if len(rows) < 2:
+        return None
+
+    bbox = to_float_bbox(candidate.get("bbox"))
+    caption = _nearest_caption(page_regions, bbox)
+    section_path = _section_for_bbox(page_regions, bbox)
+    footnotes = _footnotes_for_bbox(page_regions, bbox)
+    normalized_table_text = normalize_table_rows(rows)
+    header = [normalize_whitespace(cell) for cell in rows[0]]
+
+    return TableArtifact(
+        table_id=str(uuid.uuid4()),
+        page_nums=[page_num],
+        bbox_list=[bbox],
+        caption_text=caption,
+        section_path=section_path,
+        html_table=table_rows_to_html(rows),
+        json_table=rows,
+        normalized_table_text=normalized_table_text,
+        header_rows=header,
+        units=extract_units(f"{caption} {normalized_table_text}"),
+        footnotes=footnotes,
+        continuation_flag=False,
+        confidence=0.86 if caption else 0.74,
+    )
 
 
 def merge_table_artifacts(tables: list[TableArtifact]) -> list[TableArtifact]:
@@ -393,25 +425,35 @@ def merge_table_artifacts(tables: list[TableArtifact]) -> list[TableArtifact]:
             merged.append(table)
             continue
 
-        prev.page_nums = sorted(set(prev.page_nums + table.page_nums))
-        prev.bbox_list.extend(table.bbox_list)
-
-        prev_rows = prev.json_table or []
-        next_rows = table.json_table or []
-        if prev_rows and next_rows and _same_headers(prev_rows[0], next_rows[0]):
-            prev_rows.extend(next_rows[1:])
-        else:
-            prev_rows.extend(next_rows)
-        prev.json_table = prev_rows
-
-        prev.normalized_table_text = normalize_table_rows(prev_rows)
-        prev.html_table = table_rows_to_html(prev_rows)
-        prev.units = sorted(set(prev.units + table.units))
-        prev.footnotes = _dedupe_strings(prev.footnotes + table.footnotes)
-        prev.continuation_flag = True
-        prev.confidence = max(prev.confidence, table.confidence)
+        _merge_table_into_previous(previous=prev, current=table)
 
     return merged
+
+
+def _merge_table_into_previous(
+    *, previous: TableArtifact, current: TableArtifact
+) -> None:
+    previous.page_nums = sorted(set(previous.page_nums + current.page_nums))
+    previous.bbox_list.extend(current.bbox_list)
+
+    previous_rows = previous.json_table or []
+    current_rows = current.json_table or []
+    if (
+        previous_rows
+        and current_rows
+        and _same_headers(previous_rows[0], current_rows[0])
+    ):
+        previous_rows.extend(current_rows[1:])
+    else:
+        previous_rows.extend(current_rows)
+    previous.json_table = previous_rows
+
+    previous.normalized_table_text = normalize_table_rows(previous_rows)
+    previous.html_table = table_rows_to_html(previous_rows)
+    previous.units = sorted(set(previous.units + current.units))
+    previous.footnotes = _dedupe_strings(previous.footnotes + current.footnotes)
+    previous.continuation_flag = True
+    previous.confidence = max(previous.confidence, current.confidence)
 
 
 def build_figure_artifacts(
@@ -548,15 +590,11 @@ def analyze_chart_artifacts(
 
     max_pages = max(1, int(settings.LLM_CAPTION_MAX_PAGES))
     max_artifacts = max(1, int(settings.LLM_CAPTION_MAX_ARTIFACTS_PER_PAGE))
-    eligible_pages = [
-        manifest.page_num
-        for manifest in sorted(
-            page_manifests,
-            key=lambda item: item.complexity_score,
-            reverse=True,
-        )
-        if manifest.page_class in {"visual_heavy_page", "hard_page", "table_heavy_page"}
-    ][:max_pages]
+    eligible_pages = _select_balanced_chart_pages(
+        page_manifests=page_manifests,
+        chart_candidates=chart_candidates,
+        max_pages=max_pages,
+    )
     eligible_page_set = set(eligible_pages)
 
     figures_by_page: dict[int, list[FigureArtifact]] = {}
@@ -651,6 +689,85 @@ def analyze_chart_artifacts(
         )
 
 
+def _select_balanced_chart_pages(
+    *,
+    page_manifests: list[PageManifest],
+    chart_candidates: list[FigureArtifact],
+    max_pages: int,
+) -> list[int]:
+    manifest_by_page = {manifest.page_num: manifest for manifest in page_manifests}
+    chart_count_by_page: dict[int, int] = defaultdict(int)
+    missing_numeric_by_page: dict[int, int] = defaultdict(int)
+
+    for figure in chart_candidates:
+        chart_count_by_page[figure.page_num] += 1
+        if not figure.approx_datapoints and not figure.key_chart_facts:
+            missing_numeric_by_page[figure.page_num] += 1
+
+    ranked_pages: list[tuple[float, int]] = []
+    for page_num, chart_count in chart_count_by_page.items():
+        manifest = manifest_by_page.get(page_num)
+        if manifest is None:
+            continue
+
+        class_weight = (
+            2.0
+            if manifest.page_class
+            in {"visual_heavy_page", "hard_page", "table_heavy_page"}
+            else 1.0
+        )
+        degraded_weight = 1.0 if manifest.page_parse_degraded else 0.0
+        missing_numeric_weight = missing_numeric_by_page.get(page_num, 0) * 1.5
+        priority = (
+            (chart_count * 3.0)
+            + missing_numeric_weight
+            + class_weight
+            + degraded_weight
+            + float(manifest.complexity_score)
+        )
+        ranked_pages.append((priority, page_num))
+
+    ranked_pages.sort(reverse=True)
+    return [page_num for _, page_num in ranked_pages[:max_pages]]
+
+
+def _select_balanced_enrichment_pages(
+    *,
+    page_manifests: list[PageManifest],
+    table_map: dict[int, list[TableArtifact]],
+    figure_map: dict[int, list[FigureArtifact]],
+    max_pages: int,
+) -> list[int]:
+    ranked_pages: list[tuple[float, int]] = []
+
+    for manifest in page_manifests:
+        if manifest.page_class == "simple_text_page":
+            continue
+        table_count = len(table_map.get(manifest.page_num, []))
+        figure_count = len(figure_map.get(manifest.page_num, []))
+        if table_count == 0 and figure_count == 0:
+            continue
+
+        class_weight = (
+            2.0
+            if manifest.page_class
+            in {"visual_heavy_page", "table_heavy_page", "hard_page"}
+            else 1.0
+        )
+        degraded_weight = 1.0 if manifest.page_parse_degraded else 0.0
+        priority = (
+            (table_count * 2.5)
+            + (figure_count * 2.0)
+            + class_weight
+            + degraded_weight
+            + float(manifest.complexity_score)
+        )
+        ranked_pages.append((priority, manifest.page_num))
+
+    ranked_pages.sort(reverse=True)
+    return [page_num for _, page_num in ranked_pages[:max_pages]]
+
+
 def maybe_llm_enrich_artifacts(
     page_manifests: list[PageManifest],
     tables: list[TableArtifact],
@@ -661,20 +778,6 @@ def maybe_llm_enrich_artifacts(
     if not _llm_available_for_pipeline():
         return
 
-    max_pages = max(1, int(settings.LLM_ARTIFACT_ENRICHMENT_MAX_PAGES))
-    eligible_pages = [
-        manifest.page_num
-        for manifest in sorted(
-            page_manifests,
-            key=lambda item: item.complexity_score,
-            reverse=True,
-        )
-        if manifest.page_class != "simple_text_page"
-    ][:max_pages]
-
-    if not eligible_pages:
-        return
-
     table_map: dict[int, list[TableArtifact]] = {}
     for table in tables:
         for page_num in table.page_nums:
@@ -683,6 +786,17 @@ def maybe_llm_enrich_artifacts(
     figure_map: dict[int, list[FigureArtifact]] = {}
     for figure in figures:
         figure_map.setdefault(figure.page_num, []).append(figure)
+
+    max_pages = max(1, int(settings.LLM_ARTIFACT_ENRICHMENT_MAX_PAGES))
+    eligible_pages = _select_balanced_enrichment_pages(
+        page_manifests=page_manifests,
+        table_map=table_map,
+        figure_map=figure_map,
+        max_pages=max_pages,
+    )
+
+    if not eligible_pages:
+        return
 
     enrichment_jobs: list[
         tuple[int, list[TableArtifact], list[FigureArtifact], str]
@@ -744,12 +858,12 @@ def maybe_llm_enrich_artifacts(
 
 
 def _regions_by_page(regions: list[Region]) -> dict[int, list[Region]]:
-    grouped: dict[int, list[Region]] = {}
+    grouped: dict[int, list[Region]] = defaultdict(list)
     for region in regions:
-        grouped.setdefault(region.page_num, []).append(region)
+        grouped[region.page_num].append(region)
     for region_list in grouped.values():
         region_list.sort(key=lambda region: region.reading_order)
-    return grouped
+    return dict(grouped)
 
 
 def _union_region_bbox(regions: list[Region]) -> list[float]:
@@ -969,16 +1083,12 @@ def _dedupe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]
     accepted: list[dict[str, Any]] = []
     for candidate in candidates:
         bbox = to_float_bbox(candidate.get("bbox"))
-        if _bbox_area(bbox) <= 1.0:
+        if bbox_area(bbox) <= 1.0:
             continue
         if any(_bbox_iou(bbox, current["bbox"]) > 0.8 for current in accepted):
             continue
         accepted.append({"bbox": bbox, "kind": candidate.get("kind", "unknown")})
     return accepted
-
-
-def _bbox_area(bbox: list[float]) -> float:
-    return max(0.0, bbox[2] - bbox[0]) * max(0.0, bbox[3] - bbox[1])
 
 
 def _bbox_iou(left: list[float], right: list[float]) -> float:
@@ -987,11 +1097,11 @@ def _bbox_iou(left: list[float], right: list[float]) -> float:
     x1 = min(left[2], right[2])
     y1 = min(left[3], right[3])
 
-    inter = _bbox_area([x0, y0, x1, y1])
+    inter = bbox_area([x0, y0, x1, y1])
     if inter <= 0:
         return 0.0
 
-    union = _bbox_area(left) + _bbox_area(right) - inter
+    union = bbox_area(left) + bbox_area(right) - inter
     if union <= 0:
         return 0.0
     return inter / union
@@ -1153,7 +1263,9 @@ def _apply_heuristic_chart_fields(figure: FigureArtifact) -> None:
         figure.trend_summary = (
             "Increasing trend"
             if numbers[-1] > numbers[0]
-            else "Decreasing trend" if numbers[-1] < numbers[0] else "Flat trend"
+            else "Decreasing trend"
+            if numbers[-1] < numbers[0]
+            else "Flat trend"
         )
         figure.numeric_extraction_confidence = 0.42
 
@@ -1378,16 +1490,17 @@ def analyze_page_screenshots(page_manifests: list[PageManifest]) -> None:
             if result is not None:
                 summary_text = _render_page_screenshot_summary(result)
                 if summary_text:
-                    manifest.llm_page_summary = summary_text[
-                        : settings.REASONING_MAX_OUTPUT_CHARS
-                    ]
+                    manifest.llm_page_summary = truncate_text_by_tokens(
+                        summary_text,
+                        max_tokens=settings.REASONING_MAX_OUTPUT_TOKENS,
+                        encoding_name=settings.TOKEN_BUDGET_ENCODING,
+                    )
                     manifest.llm_enriched = True
                     manifest.llm_page_summary_status = "success"
                     manifest.llm_page_summary_error = None
                     logger.info(
-                        "Page %d screenshot analysis complete (%d chars)",
+                        "Page %d screenshot analysis complete",
                         manifest.page_num,
-                        len(manifest.llm_page_summary),
                     )
                     continue
 
@@ -1407,9 +1520,11 @@ def analyze_page_screenshots(page_manifests: list[PageManifest]) -> None:
                 continue
 
             fallback_summary = _build_parser_fallback_page_summary(manifest)
-            manifest.llm_page_summary = fallback_summary[
-                : settings.REASONING_MAX_OUTPUT_CHARS
-            ]
+            manifest.llm_page_summary = truncate_text_by_tokens(
+                fallback_summary,
+                max_tokens=settings.REASONING_MAX_OUTPUT_TOKENS,
+                encoding_name=settings.TOKEN_BUDGET_ENCODING,
+            )
             manifest.llm_enriched = True
             manifest.llm_page_summary_status = "fallback"
             manifest.llm_page_summary_error = (
@@ -1443,7 +1558,7 @@ class ReasoningConfig:
     model: str
     max_pages: int
     max_artifacts_per_page: int
-    max_output_chars: int
+    max_output_tokens: int
     timeout_seconds: float
 
 
@@ -1466,7 +1581,7 @@ class ReasoningEnrichmentService:
             max_artifacts_per_page=max(
                 1, int(settings.REASONING_MAX_ARTIFACTS_PER_PAGE)
             ),
-            max_output_chars=max(200, int(settings.REASONING_MAX_OUTPUT_CHARS)),
+            max_output_tokens=max(200, int(settings.REASONING_MAX_OUTPUT_TOKENS)),
             timeout_seconds=float(settings.REASONING_TIMEOUT_SECONDS),
         )
 
@@ -1665,7 +1780,10 @@ class ReasoningEnrichmentService:
         success_confidence: float,
         fallback_confidence: float,
     ) -> ReasoningArtifact | None:
-        inference = _run_reasoning_inference(prompt, self._config.max_output_chars)
+        inference = _run_reasoning_inference(
+            prompt,
+            self._config.max_output_tokens,
+        )
         if inference is None:
             return None
 
@@ -1683,9 +1801,7 @@ class ReasoningEnrichmentService:
             reasoning_type=reasoning_type,
             page_nums=[page_num],
             source_artifact_ids=source_artifact_ids,
-            text="\n".join(_build_reasoning_text(trend, claims, comparisons, caveats))[
-                : self._config.max_output_chars
-            ],
+            text="\n".join(_build_reasoning_text(trend, claims, comparisons, caveats)),
             claims=claims[:5],
             evidence_refs=merged_evidence,
             confidence=(
@@ -1736,9 +1852,56 @@ def _build_reasoning_text(
 
 def _run_reasoning_inference(
     prompt: str,
-    max_output: int,
+    max_output_tokens: int,
+    model: str | None = None,
+    timeout_seconds: float | None = None,
 ) -> ReasoningInferenceResult | None:
-    """Run reasoning inference using structured outputs with raw JSON fallback."""
+    """Run reasoning inference with strict generation-time token limits."""
+    resolved_model = model or settings.REASONING_MODEL or settings.LLM_MODEL
+    resolved_timeout = (
+        float(timeout_seconds)
+        if timeout_seconds is not None
+        else float(settings.REASONING_TIMEOUT_SECONDS)
+    )
+    developer_prompt = (
+        "Return only valid JSON with keys: key_insights (list[str]), "
+        "metric_comparisons (list[str]), trend_statement (str), "
+        "caveats (list[str]), evidence_refs (list[str]). "
+        "Do not include markdown, prose outside JSON, or code fences."
+    )
+
+    if not settings.is_openai_api_key_placeholder:
+        for attempt in range(2):
+            try:
+                response = invoke_llm_chat(
+                    model=resolved_model,
+                    input_messages=[
+                        {"role": "developer", "content": developer_prompt},
+                        {"role": "user", "content": prompt},
+                    ],
+                    reasoning_effort="low",
+                    max_output_tokens=max_output_tokens,
+                    timeout_seconds=resolved_timeout,
+                )
+                text = extract_chat_response_text(response)
+                parsed = _parse_chart_json_response(normalize_whitespace(text))
+                if not isinstance(parsed, dict):
+                    raise ValueError(
+                        "reasoning inference returned invalid JSON payload"
+                    )
+                normalized = ReasoningStructuredResponse.model_validate(
+                    parsed
+                ).model_dump()
+                return ReasoningInferenceResult(
+                    payload=normalized,
+                    used_structured_output=True,
+                )
+            except Exception:
+                if attempt == 0:
+                    logger.exception("Reasoning inference failed, retrying once")
+                else:
+                    logger.exception("Reasoning inference retry also failed")
+
     try:
         structured = LlamaSettings.llm.structured_predict(
             ReasoningStructuredResponse,
@@ -1759,29 +1922,19 @@ def _run_reasoning_inference(
             )
     except Exception:
         logger.exception(
-            "Structured reasoning inference failed, falling back to raw JSON parsing"
+            "Structured reasoning fallback failed, attempting raw JSON parsing"
         )
 
     try:
         response = LlamaSettings.llm.complete(prompt)
         text = normalize_whitespace(str(response))
-        parsed = _parse_chart_json_response(text[:max_output] if text else "")
+        parsed = _parse_chart_json_response(text if text else "")
         if parsed is not None:
+            normalized = ReasoningStructuredResponse.model_validate(parsed).model_dump()
             return ReasoningInferenceResult(
-                payload=parsed,
+                payload=normalized,
                 used_structured_output=False,
             )
     except Exception:
-        logger.exception("Reasoning inference failed, retrying once")
-        try:
-            response = LlamaSettings.llm.complete(prompt)
-            text = normalize_whitespace(str(response))
-            parsed = _parse_chart_json_response(text[:max_output] if text else "")
-            if parsed is not None:
-                return ReasoningInferenceResult(
-                    payload=parsed,
-                    used_structured_output=False,
-                )
-        except Exception:
-            logger.exception("Reasoning inference retry also failed")
+        logger.exception("Reasoning fallback completion failed")
     return None

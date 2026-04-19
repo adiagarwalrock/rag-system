@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -10,6 +11,7 @@ from typing import Any
 from llama_index.core import Document as LlamaDocument
 
 from app.core.config import settings
+from app.core.token_budget import count_tokens, get_token_encoding
 from app.ingestion.pdf_pipeline.contracts import ChunkStage
 from app.ingestion.pdf_pipeline.helpers import (
     dump_json,
@@ -109,14 +111,14 @@ class ChunkArtifactAssembler:
             chunks.extend(_figure_to_chunks(figure, self._manifests))
 
     def _append_page_cards(self, chunks: list[ChunkArtifact]) -> None:
-        tables_by_page: dict[int, list[TableArtifact]] = {}
+        tables_by_page: dict[int, list[TableArtifact]] = defaultdict(list)
         for table in self._inputs.tables:
             for page_num in table.page_nums:
-                tables_by_page.setdefault(page_num, []).append(table)
+                tables_by_page[page_num].append(table)
 
-        figures_by_page: dict[int, list[FigureArtifact]] = {}
+        figures_by_page: dict[int, list[FigureArtifact]] = defaultdict(list)
         for figure in self._inputs.figures:
-            figures_by_page.setdefault(figure.page_num, []).append(figure)
+            figures_by_page[figure.page_num].append(figure)
 
         for manifest in self._inputs.page_manifests:
             page_tables = tables_by_page.get(manifest.page_num, [])
@@ -379,30 +381,73 @@ def write_artifact_bundle(
 
 
 def split_body_text(text: str) -> list[str]:
-    if len(text) <= settings.BODY_TEXT_CHUNK_MAX_CHARS:
+    max_tokens = max(1, int(settings.BODY_TEXT_CHUNK_MAX_TOKENS))
+    overlap_tokens = max(0, int(settings.BODY_TEXT_CHUNK_OVERLAP_TOKENS))
+    if overlap_tokens >= max_tokens:
+        overlap_tokens = max_tokens - 1
+
+    if (
+        count_tokens(text, encoding_name=settings.TOKEN_BUDGET_ENCODING)
+        <= max_tokens
+    ):
         return [text]
 
     try:
         sentence_chunker = (
             PDFPipelineRegistry().chunker_manager.create_sentence_chunker(
-                chunk_size=settings.BODY_TEXT_CHUNK_MAX_CHARS,
-                chunk_overlap=settings.BODY_TEXT_CHUNK_OVERLAP_CHARS,
+                tokenizer=settings.TOKEN_BUDGET_ENCODING,
+                chunk_size=max_tokens,
+                chunk_overlap=overlap_tokens,
             )
         )
         if sentence_chunker is None:
-            return _hard_wrap(text, settings.BODY_TEXT_CHUNK_MAX_CHARS)
+            return _token_window_split(
+                text=text,
+                max_tokens=max_tokens,
+                overlap_tokens=overlap_tokens,
+            )
 
         chunks = _normalize_chunk_texts(sentence_chunker.chunk(text))
-        return chunks or [text]
+        return chunks or _token_window_split(
+            text=text,
+            max_tokens=max_tokens,
+            overlap_tokens=overlap_tokens,
+        )
     except Exception:
-        logger.exception("SentenceChunker failed; using fallback")
-        return _hard_wrap(text, settings.BODY_TEXT_CHUNK_MAX_CHARS)
+        logger.exception("SentenceChunker failed; falling back to token windowing")
+        return _token_window_split(
+            text=text,
+            max_tokens=max_tokens,
+            overlap_tokens=overlap_tokens,
+        )
 
 
-def _hard_wrap(text: str, width: int) -> list[str]:
-    if width <= 0:
+def _token_window_split(
+    *,
+    text: str,
+    max_tokens: int,
+    overlap_tokens: int,
+) -> list[str]:
+    if max_tokens <= 0:
         return [text]
-    return [text[idx : idx + width] for idx in range(0, len(text), width)]
+    encoding = get_token_encoding(encoding_name=settings.TOKEN_BUDGET_ENCODING)
+    token_ids = encoding.encode(text)
+    if len(token_ids) <= max_tokens:
+        return [text]
+
+    step = max(1, max_tokens - overlap_tokens)
+    chunks: list[str] = []
+    start = 0
+    while start < len(token_ids):
+        end = min(len(token_ids), start + max_tokens)
+        chunk_text = encoding.decode(token_ids[start:end]).strip()
+        if chunk_text:
+            chunks.append(chunk_text)
+        if end >= len(token_ids):
+            break
+        start += step
+
+    return chunks or [text]
 
 
 def _table_to_chunks(
@@ -572,7 +617,9 @@ def _figure_to_chunks(
     metadata["llm_caption_status"] = figure.llm_caption_status
     metadata["llm_caption_error"] = figure.llm_caption_error
 
-    preferred_assets = [figure.crop_path] if figure.crop_path else [figure.page_screenshot_path]
+    preferred_assets = (
+        [figure.crop_path] if figure.crop_path else [figure.page_screenshot_path]
+    )
     assets = _dedupe_asset_refs(preferred_assets)
     chunks = [
         ChunkArtifact(
@@ -694,11 +741,11 @@ def _regions_by_page(regions: list[Region]) -> dict[int, list[Region]]:
 
 
 def _group_regions_by_section(regions: list[Region]) -> dict[str, list[Region]]:
-    grouped: dict[str, list[Region]] = {}
+    grouped: dict[str, list[Region]] = defaultdict(list)
     for region in sorted(regions, key=lambda item: item.reading_order):
         section = region.section_path or "Document"
-        grouped.setdefault(section, []).append(region)
-    return grouped
+        grouped[section].append(region)
+    return dict(grouped)
 
 
 def _normalize_chunk_texts(parts: Iterable[Any]) -> list[str]:

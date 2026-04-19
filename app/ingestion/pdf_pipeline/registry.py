@@ -75,6 +75,7 @@ class ChunkerManager(metaclass=SingletonMeta):
     def create_sentence_chunker(
         self,
         *,
+        tokenizer: str = "character",
         chunk_size: int,
         chunk_overlap: int,
     ) -> Any | None:
@@ -82,7 +83,7 @@ class ChunkerManager(metaclass=SingletonMeta):
         if self._sentence_chunker_cls is None:
             return None
         return self._sentence_chunker_cls(
-            tokenizer="character",
+            tokenizer=tokenizer,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
         )

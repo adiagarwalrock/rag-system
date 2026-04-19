@@ -321,11 +321,11 @@ def _active_session_key(client_id: str) -> str:
 def _resolve_active_session_id(client_id: str, sessions: list[dict]) -> str | None:
     key = _active_session_key(client_id)
     available_ids = [session["id"] for session in sessions]
-    if key not in st.session_state:
-        st.session_state[key] = available_ids[0] if available_ids else None
-    if st.session_state[key] not in available_ids:
-        st.session_state[key] = available_ids[0] if available_ids else None
-    return st.session_state.get(key)
+    active_id = st.session_state.get(key)
+    if active_id not in available_ids:
+        active_id = available_ids[0] if available_ids else None
+        st.session_state[key] = active_id
+    return active_id
 
 
 def render_query():
@@ -343,17 +343,13 @@ def render_query():
         st.info("Create a client before starting a chat.")
         return
 
-    st.session_state.setdefault("query_active_client_name", client_names[0])
-    if st.session_state["query_active_client_name"] not in client_names:
-        st.session_state["query_active_client_name"] = client_names[0]
-    st.session_state.setdefault(
-        "query_active_client_id",
-        client_options[st.session_state["query_active_client_name"]],
-    )
+    active_name = st.session_state.get("query_active_client_name")
+    if active_name not in client_names:
+        active_name = client_names[0]
+        st.session_state["query_active_client_name"] = active_name
+
+    st.session_state["query_active_client_id"] = client_options[active_name]
     st.session_state.setdefault("query_reasoning_effort", "medium")
-    st.session_state["query_active_client_id"] = client_options[
-        st.session_state["query_active_client_name"]
-    ]
 
     with st.sidebar:
         with st.form("query_workspace_form"):
@@ -405,7 +401,9 @@ def render_query():
                 ),
                 help="Sessions are isolated by client. Semantic memory still draws relevant context from other sessions.",
             )
-            st.session_state[_active_session_key(selected_client_id)] = selected_session_id
+            st.session_state[_active_session_key(selected_client_id)] = (
+                selected_session_id
+            )
             active_session_id = selected_session_id
         else:
             st.caption("No session yet. Ask a question to start one automatically.")

@@ -14,10 +14,75 @@ KNOWN_CONTEXT_WINDOWS: dict[str, int] = {
     "gpt-5.4-mini": 128000,
 }
 
+MIN_INPUT_RATIO = 0.1
+MAX_INPUT_RATIO = 0.95
+MESSAGE_OVERHEAD_TOKENS = 8
+PER_TURN_CONTENT_TOKEN_CAP = 240
+MIN_REMAINING_BUDGET_TOKENS = 256
+HISTORY_BUDGET_RATIO = 0.35
+SUMMARY_BUDGET_RATIO = 0.10
+CROSS_BUDGET_RATIO = 0.15
+CONFLICT_BUDGET_RATIO = 0.10
+MIN_EVIDENCE_BUDGET_TOKENS = 128
+MIN_USER_CONTEXT_TOKENS = 64
+DEFAULT_TOKEN_ENCODING = "o200k_base"
+
 
 def model_context_window(model: str) -> int:
     normalized = (model or "").strip().lower()
     return KNOWN_CONTEXT_WINDOWS.get(normalized, settings.LLM_CONTEXT_WINDOW_TOKENS)
+
+
+def get_token_encoding(
+    *,
+    encoding_name: str | None = None,
+    model: str | None = None,
+):
+    preferred = (encoding_name or settings.TOKEN_BUDGET_ENCODING or "").strip()
+    if preferred:
+        try:
+            return tiktoken.get_encoding(preferred)
+        except Exception:
+            pass
+
+    if model:
+        try:
+            return tiktoken.encoding_for_model(model)
+        except Exception:
+            pass
+
+    try:
+        return tiktoken.get_encoding(DEFAULT_TOKEN_ENCODING)
+    except Exception:
+        return tiktoken.get_encoding("cl100k_base")
+
+
+def count_tokens(
+    text: str,
+    *,
+    encoding_name: str | None = None,
+    model: str | None = None,
+) -> int:
+    if not text:
+        return 0
+    encoding = get_token_encoding(encoding_name=encoding_name, model=model)
+    return len(encoding.encode(text))
+
+
+def truncate_text_by_tokens(
+    text: str,
+    *,
+    max_tokens: int,
+    encoding_name: str | None = None,
+    model: str | None = None,
+) -> str:
+    if max_tokens <= 0 or not text:
+        return ""
+    encoding = get_token_encoding(encoding_name=encoding_name, model=model)
+    token_ids = encoding.encode(text)
+    if len(token_ids) <= max_tokens:
+        return text
+    return encoding.decode(token_ids[:max_tokens]).rstrip()
 
 
 @dataclass(frozen=True)
@@ -49,8 +114,11 @@ class ResponsesInputBudgeter:
     ):
         self.model = model
         self.context_window = model_context_window(model)
-        self.ratio = max(0.1, min(ratio or settings.RESPONSE_INPUT_BUDGET_RATIO, 0.95))
-        self.encoding = _encoding_for_model(model)
+        self.ratio = max(
+            MIN_INPUT_RATIO,
+            min(ratio or settings.RESPONSE_INPUT_BUDGET_RATIO, MAX_INPUT_RATIO),
+        )
+        self.encoding = get_token_encoding(model=model)
 
     @property
     def input_budget_tokens(self) -> int:
@@ -82,7 +150,7 @@ class ResponsesInputBudgeter:
                 continue
             total += self.count_text_tokens(f"{role}\n{str(content or '')}\n")
         # Add lightweight envelope overhead per message.
-        return total + (len(messages) * 8)
+        return total + (len(messages) * MESSAGE_OVERHEAD_TOKENS)
 
     def truncate_to_tokens(self, text: str, max_tokens: int) -> str:
         if max_tokens <= 0 or not text:
@@ -111,7 +179,7 @@ class ResponsesInputBudgeter:
             content = " ".join(str(turn.get("content") or "").split())
             if not content:
                 continue
-            content = self.truncate_to_tokens(content, 240)
+            content = self.truncate_to_tokens(content, PER_TURN_CONTENT_TOKEN_CAP)
             candidate = {"role": role, "content": content}
             delta_tokens = self.count_messages_tokens([candidate])
             if running_tokens + delta_tokens > max_tokens:
@@ -140,13 +208,20 @@ class ResponsesInputBudgeter:
             {"role": "user", "content": f"CURRENT_QUERY:\n{question}"},
         ]
         base_tokens = self.count_messages_tokens(base_messages)
-        remaining = max(256, total_budget - base_tokens)
+        remaining = max(MIN_REMAINING_BUDGET_TOKENS, total_budget - base_tokens)
 
-        history_budget = int(remaining * 0.35)
-        summary_budget = int(remaining * 0.10)
-        cross_budget = int(remaining * 0.15)
-        conflict_budget = int(remaining * 0.10)
-        evidence_budget = max(128, remaining - history_budget - summary_budget - cross_budget - conflict_budget)
+        history_budget = int(remaining * HISTORY_BUDGET_RATIO)
+        summary_budget = int(remaining * SUMMARY_BUDGET_RATIO)
+        cross_budget = int(remaining * CROSS_BUDGET_RATIO)
+        conflict_budget = int(remaining * CONFLICT_BUDGET_RATIO)
+        evidence_budget = max(
+            MIN_EVIDENCE_BUDGET_TOKENS,
+            remaining
+            - history_budget
+            - summary_budget
+            - cross_budget
+            - conflict_budget,
+        )
 
         history_messages = self.trim_recent_history(recent_turns, history_budget)
         summary_text = self.truncate_to_tokens(session_summary, summary_budget)
@@ -182,7 +257,9 @@ class ResponsesInputBudgeter:
         if total_tokens > total_budget:
             # Keep developer + history; trim dynamic user context.
             fixed_tokens = self.count_messages_tokens(final_messages[:-1])
-            allowed_user_tokens = max(64, total_budget - fixed_tokens)
+            allowed_user_tokens = max(
+                MIN_USER_CONTEXT_TOKENS, total_budget - fixed_tokens
+            )
             user_context = self.truncate_to_tokens(user_context, allowed_user_tokens)
             final_messages[-1]["content"] = user_context
             total_tokens = self.count_messages_tokens(final_messages)
@@ -224,8 +301,4 @@ class ResponsesInputBudgeter:
 
 
 def _encoding_for_model(model: str):
-    try:
-        return tiktoken.encoding_for_model(model)
-    except Exception:
-        # Use a modern fallback tokenizer for unknown model aliases.
-        return tiktoken.get_encoding("o200k_base")
+    return get_token_encoding(model=model)

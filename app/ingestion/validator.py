@@ -5,7 +5,7 @@ File validation for uploads: type, size, and checksums.
 import hashlib
 import os
 
-from fastapi import HTTPException, UploadFile
+from fastapi import HTTPException
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx"}
 MAX_FILE_SIZE_MB = 100

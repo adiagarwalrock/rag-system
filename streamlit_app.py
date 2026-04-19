@@ -30,7 +30,11 @@ pg = st.navigation(
             "ui/pages/2_Documents.py", title="Documents", icon=":material/upload_file:"
         ),
         st.Page("ui/pages/3_Clients.py", title="Clients", icon=":material/domain:"),
-        st.Page("ui/pages/4_Quality.py", title="Quality", icon=":material/monitoring:"),
+        st.Page(
+            "ui/pages/4_Quality.py",
+            title="Quality (pre-alpha)",
+            icon=":material/monitoring:",
+        ),
         st.Page(
             "ui/pages/5_Qdrant_Inspector.py",
             title="Qdrant Inspector",

@@ -8,10 +8,9 @@ captured query logs without depending on Qdrant, Snowflake, or Streamlit.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from statistics import mean
 from typing import Any
 
-from app.evals.common import safe_lower, unique_nonempty
+from app.evals.common import mean_or_zero, safe_lower, unique_nonempty
 
 
 @dataclass(slots=True)
@@ -80,13 +79,19 @@ def evaluate_retrieval_cases(cases: list[RetrievalEvalCase]) -> RetrievalEvalSum
     scored = [_score_case(case) for case in cases]
     return RetrievalEvalSummary(
         case_count=len(scored),
-        mean_recall_at_5=_mean([case.recall_at_5 for case in scored]),
-        mean_recall_at_10=_mean([case.recall_at_10 for case in scored]),
-        mean_hit_rate_at_5=_mean([case.hit_rate_at_5 for case in scored]),
-        mean_mrr=_mean([case.mrr for case in scored]),
-        mean_citation_precision=_mean([case.citation_precision for case in scored]),
-        mean_version_attribution=_mean([case.version_attribution for case in scored]),
-        mean_conflict_attribution=_mean([case.conflict_attribution for case in scored]),
+        mean_recall_at_5=mean_or_zero([case.recall_at_5 for case in scored]),
+        mean_recall_at_10=mean_or_zero([case.recall_at_10 for case in scored]),
+        mean_hit_rate_at_5=mean_or_zero([case.hit_rate_at_5 for case in scored]),
+        mean_mrr=mean_or_zero([case.mrr for case in scored]),
+        mean_citation_precision=mean_or_zero(
+            [case.citation_precision for case in scored]
+        ),
+        mean_version_attribution=mean_or_zero(
+            [case.version_attribution for case in scored]
+        ),
+        mean_conflict_attribution=mean_or_zero(
+            [case.conflict_attribution for case in scored]
+        ),
         cases=scored,
     )
 
@@ -198,8 +203,3 @@ def _conflict_attribution(
             return 1.0
     return 0.0
 
-
-def _mean(values: list[float]) -> float:
-    if not values:
-        return 0.0
-    return float(mean(values))

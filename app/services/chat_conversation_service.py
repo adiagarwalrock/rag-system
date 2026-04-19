@@ -9,10 +9,10 @@ from typing import Any
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.ai_provider import extract_chat_response_text, invoke_llm_chat
 from app.core.config import settings
 from app.core.prompts import SESSION_SUMMARY_DEVELOPER_PROMPT
-from app.core.responses_api import create_responses_completion, extract_response_output_text
-from app.core.token_budget import ResponsesInputBudgeter
+from app.core.token_budget import ResponsesInputBudgeter, truncate_text_by_tokens
 from app.db.models.chat import ChatMessage, ChatSession
 from app.services.chat_context_service import ChatContextService
 from app.services.query_service import execute_query
@@ -66,29 +66,7 @@ class ChatConversationService:
         except Exception as exc:
             self.db.rollback()
             error_msg = f"I could not complete that search: {exc}"
-            try:
-                session = (
-                    self.db.query(ChatSession)
-                    .filter(ChatSession.id == session.id, ChatSession.client_id == client_id)
-                    .first()
-                )
-                if session is not None:
-                    self._create_message(
-                        client_id=client_id,
-                        session_id=session.id,
-                        role="assistant",
-                        content=error_msg,
-                        turn_index=self._next_turn_index(session.id),
-                    )
-                    self._touch_session(session)
-                    self._refresh_session_summary(session)
-                    self.db.commit()
-            except Exception:
-                self.db.rollback()
-                logger.exception(
-                    "Failed to persist assistant error message for session %s",
-                    session.id,
-                )
+            self._persist_error_message(client_id, session.id, error_msg)
             raise ValueError(error_msg) from exc
 
         assistant_message = self._create_message(
@@ -127,12 +105,16 @@ class ChatConversationService:
         return (
             self.db.query(ChatSession)
             .filter(ChatSession.client_id == client_id)
-            .order_by(ChatSession.last_activity_at.desc(), ChatSession.created_at.desc())
+            .order_by(
+                ChatSession.last_activity_at.desc(), ChatSession.created_at.desc()
+            )
             .limit(bounded_limit)
             .all()
         )
 
-    def create_session(self, *, client_id: str, title: str | None = None) -> ChatSession:
+    def create_session(
+        self, *, client_id: str, title: str | None = None
+    ) -> ChatSession:
         now = datetime.now(timezone.utc)
         session = ChatSession(
             id=str(uuid.uuid4()),
@@ -160,7 +142,9 @@ class ChatConversationService:
         return list(reversed(rows))
 
     def clear_session(self, *, session_id: str) -> None:
-        session = self.db.query(ChatSession).filter(ChatSession.id == session_id).first()
+        session = (
+            self.db.query(ChatSession).filter(ChatSession.id == session_id).first()
+        )
         if not session:
             raise ValueError(f"Session {session_id} not found.")
         self.db.query(ChatMessage).filter(ChatMessage.session_id == session_id).delete(
@@ -172,7 +156,9 @@ class ChatConversationService:
         self.context_service.delete_session_memory(session_id)
         self.db.commit()
 
-    def _resolve_session(self, *, client_id: str, session_id: str | None) -> ChatSession:
+    def _resolve_session(
+        self, *, client_id: str, session_id: str | None
+    ) -> ChatSession:
         if session_id:
             session = (
                 self.db.query(ChatSession)
@@ -232,7 +218,9 @@ class ChatConversationService:
         self.db.flush()
         return message
 
-    def _touch_session(self, session: ChatSession, first_user_prompt: str | None = None) -> None:
+    def _touch_session(
+        self, session: ChatSession, first_user_prompt: str | None = None
+    ) -> None:
         now = datetime.now(timezone.utc)
         session.updated_at = now
         session.last_activity_at = now
@@ -268,14 +256,14 @@ class ChatConversationService:
                 fixed_tokens = budgeter.count_messages_tokens(summary_messages[:1])
                 allowed_user_tokens = max(64, max_input_tokens - fixed_tokens)
                 prompt = budgeter.truncate_to_tokens(prompt, allowed_user_tokens)
-            response = create_responses_completion(
+            response = invoke_llm_chat(
                 model=model,
                 input_messages=[
                     {"role": "developer", "content": SESSION_SUMMARY_DEVELOPER_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
                 reasoning_effort="low",
-                max_output_tokens=settings.SESSION_SUMMARY_MAX_OUTPUT_TOKENS,
+                max_output_tokens=settings.CHAT_SUMMARY_MAX_OUTPUT_TOKENS,
                 prompt_cache_key="vectera:session-summary:v1",
                 prompt_cache_retention=settings.RESPONSE_PROMPT_CACHE_RETENTION,
                 safety_identifier=(
@@ -284,15 +272,50 @@ class ChatConversationService:
                 user_tag=settings.RESPONSE_USER_TAG,
                 timeout_seconds=settings.SESSION_SUMMARY_TIMEOUT_SECONDS,
             )
-            candidate = extract_response_output_text(response)
+            candidate = extract_chat_response_text(response)
             cleaned = _sanitize_summary(candidate)
             if cleaned:
-                session.summary_text = cleaned[: settings.CHAT_SUMMARY_MAX_CHARS]
+                session.summary_text = truncate_text_by_tokens(
+                    cleaned,
+                    max_tokens=settings.CHAT_SUMMARY_MAX_OUTPUT_TOKENS,
+                    encoding_name=settings.TOKEN_BUDGET_ENCODING,
+                )
                 return
             raise ValueError("Summary response was empty")
         except Exception:
-            logger.exception("Falling back to heuristic chat summary for session %s", session.id)
+            logger.exception(
+                "Falling back to heuristic chat summary for session %s", session.id
+            )
             session.summary_text = _heuristic_summary(rows)
+
+    def _persist_error_message(
+        self, client_id: str, session_id: str, error_msg: str
+    ) -> None:
+        try:
+            session = (
+                self.db.query(ChatSession)
+                .filter(
+                    ChatSession.id == session_id, ChatSession.client_id == client_id
+                )
+                .first()
+            )
+            if session is not None:
+                self._create_message(
+                    client_id=client_id,
+                    session_id=session.id,
+                    role="assistant",
+                    content=error_msg,
+                    turn_index=self._next_turn_index(session.id),
+                )
+                self._touch_session(session)
+                self._refresh_session_summary(session)
+                self.db.commit()
+        except Exception:
+            self.db.rollback()
+            logger.exception(
+                "Failed to persist assistant error message for session %s",
+                session_id,
+            )
 
 
 def _build_summary_prompt(prior_summary: str, rows: list[ChatMessage]) -> str:
@@ -334,4 +357,8 @@ def _heuristic_summary(rows: list[ChatMessage]) -> str:
         if len(text) > 180:
             text = f"{text[:177].rstrip()}..."
         lines.append(f"{role}: {text}")
-    return "\n".join(lines)[: settings.CHAT_SUMMARY_MAX_CHARS]
+    return truncate_text_by_tokens(
+        "\n".join(lines),
+        max_tokens=settings.CHAT_SUMMARY_MAX_OUTPUT_TOKENS,
+        encoding_name=settings.TOKEN_BUDGET_ENCODING,
+    )

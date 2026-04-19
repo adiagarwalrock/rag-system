@@ -5,10 +5,10 @@ Query API route — separate from documents.
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.db.models.client import Client
 from app.db.snowflake import get_db
 from app.schemas.document import QueryRequest, QueryResponse
 from app.services.chat_conversation_service import ChatConversationService
+from app.services.client_service import ClientLookupService
 
 router = APIRouter()
 
@@ -19,9 +19,9 @@ def query_documents(
     db: Session = Depends(get_db),
 ):
     """Query documents scoped to a client."""
-    # Validate client exists
-    client = db.query(Client).filter(Client.id == request.client_id).first()
-    if not client:
+    try:
+        ClientLookupService(db).require_client(request.client_id)
+    except ValueError:
         raise HTTPException(status_code=404, detail="Client not found")
 
     result = ChatConversationService(db).execute_client_query(

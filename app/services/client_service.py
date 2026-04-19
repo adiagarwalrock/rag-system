@@ -58,9 +58,7 @@ class ClientDeletionService:
         return client
 
     def _list_client_document_ids(self, client_id: str) -> list[str]:
-        rows = (
-            self.db.query(Document.id).filter(Document.client_id == client_id).all()
-        )
+        rows = self.db.query(Document.id).filter(Document.client_id == client_id).all()
         return [row[0] for row in rows]
 
     def _delete_client_documents(self, document_ids: list[str]) -> None:
@@ -117,3 +115,25 @@ class ClientDeletionService:
 
 def delete_client(client_id: str, db: Session) -> None:
     ClientDeletionService(db).delete_client(client_id)
+
+
+class ClientLookupService:
+    """Read-only client lookups shared by API and service workflows."""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get_client(self, client_id: str) -> Client | None:
+        return self.db.query(Client).filter(Client.id == client_id).first()
+
+    def get_client_by_name(self, client_name: str) -> Client | None:
+        cleaned_name = client_name.strip()
+        if not cleaned_name:
+            return None
+        return self.db.query(Client).filter(Client.name == cleaned_name).first()
+
+    def require_client(self, client_id: str) -> Client:
+        client = self.get_client(client_id)
+        if not client:
+            raise ValueError(f"Client {client_id} not found")
+        return client

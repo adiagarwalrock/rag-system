@@ -64,12 +64,12 @@ def test_execute_client_query_creates_session_and_persists_turns(
 
     monkeypatch.setattr(
         chat_conversation_service,
-        "create_responses_completion",
+        "invoke_llm_chat",
         lambda **kwargs: object(),
     )
     monkeypatch.setattr(
         chat_conversation_service,
-        "extract_response_output_text",
+        "extract_chat_response_text",
         lambda response: "Updated session summary",
     )
 
@@ -85,7 +85,9 @@ def test_execute_client_query_creates_session_and_persists_turns(
     assert captured["reasoning_effort"] == "high"
     assert captured["conversation_context"]["session_summary"] == "Summary"
 
-    sessions = db_session.query(ChatSession).filter(ChatSession.client_id == client.id).all()
+    sessions = (
+        db_session.query(ChatSession).filter(ChatSession.client_id == client.id).all()
+    )
     assert len(sessions) == 1
     assert sessions[0].summary_text == "Updated session summary"
     assert sessions[0].title == "What changed in policy v2?"
@@ -164,7 +166,9 @@ def test_clear_session_removes_messages_and_resets_summary(
     service.clear_session(session_id=session.id)
 
     remaining = (
-        db_session.query(ChatMessage).filter(ChatMessage.session_id == session.id).count()
+        db_session.query(ChatMessage)
+        .filter(ChatMessage.session_id == session.id)
+        .count()
     )
     assert remaining == 0
     refreshed = db_session.query(ChatSession).filter(ChatSession.id == session.id).one()

@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "gpt-5.2"
     QUERY_EXPANSION_MODEL: str = "gpt-5.4-mini"
     SESSION_SUMMARY_MODEL: str = "gpt-5.4-mini"
-    OPENAI_USE_RESPONSES: bool = False
+    OPENAI_USE_RESPONSES: bool = True
     EMBEDDING_MODEL: str = "text-embedding-3-large"
     EMBEDDING_OUTPUT_DIMENSION: int | None = None
     RESPONSE_INPUT_BUDGET_RATIO: float = 0.8
@@ -49,8 +49,9 @@ class Settings(BaseSettings):
     RESPONSE_PROMPT_CACHE_RETENTION: str = "24h"
     RESPONSE_USER_TAG: str = "developer"
     RESPONSE_SAFETY_IDENTIFIER_PREFIX: str = "vectera-client"
+    TOKEN_BUDGET_ENCODING: str = "o200k_base"
     LLM_CONTEXT_WINDOW_TOKENS: int = 200000
-    SESSION_SUMMARY_MAX_OUTPUT_TOKENS: int = 300
+    CHAT_SUMMARY_MAX_OUTPUT_TOKENS: int = 300
     SESSION_SUMMARY_TIMEOUT_SECONDS: int = 15
 
     COLLECTION_NAME: str = "rag_collection_oai"
@@ -63,8 +64,8 @@ class Settings(BaseSettings):
     ENABLE_OCR_FALLBACK: bool = True
     ENABLE_MULTIPAGE_TABLE_MERGE: bool = True
     PDF_LAYOUT_PARSER_VERSION: str = "3.0.0"
-    BODY_TEXT_CHUNK_MAX_CHARS: int = 1800
-    BODY_TEXT_CHUNK_OVERLAP_CHARS: int = 120
+    BODY_TEXT_CHUNK_MAX_TOKENS: int = 600
+    BODY_TEXT_CHUNK_OVERLAP_TOKENS: int = 40
     TABLE_CHUNK_ROW_THRESHOLD: int = 6
     ENABLE_PYMUPDF_LAYOUT: bool = True
     ENABLE_PDF_REPAIR_PREPASS: bool = True
@@ -87,7 +88,7 @@ class Settings(BaseSettings):
     ENABLE_LLM_REASONING_ENRICHMENT: bool = True
     REASONING_MAX_PAGES: int = 5
     REASONING_MAX_ARTIFACTS_PER_PAGE: int = 4
-    REASONING_MAX_OUTPUT_CHARS: int = 2000
+    REASONING_MAX_OUTPUT_TOKENS: int = 700
     REASONING_TIMEOUT_SECONDS: int = 30
     REASONING_MODEL: str | None = None  # defaults to LLM_MODEL if None
 
@@ -99,7 +100,6 @@ class Settings(BaseSettings):
     UI_POLL_INTERVAL_SECONDS: int = 3
     CHAT_SESSION_RECENT_TURNS: int = 8
     CHAT_CROSS_SESSION_TOP_K: int = 4
-    CHAT_SUMMARY_MAX_CHARS: int = 1200
 
     model_config = SettingsConfigDict(
         env_file=".env",

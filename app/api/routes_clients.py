@@ -2,19 +2,23 @@ import uuid
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import true
 from sqlalchemy.orm import Session
 
 from app.db.models.client import Client
 from app.db.snowflake import get_db
 from app.schemas.client import ClientCreate, ClientResponse, ClientUpdate
-from app.services.client_service import delete_client as delete_client_with_cascade
+from app.services.client_service import (
+    ClientLookupService,
+    delete_client as delete_client_with_cascade,
+)
 
 router = APIRouter()
 
 
 @router.get("/", response_model=List[ClientResponse])
 def get_clients(db: Session = Depends(get_db)):
-    return db.query(Client).filter(Client.is_active == True).all()
+    return db.query(Client).filter(Client.is_active == true()).all()
 
 
 @router.get("/{client_id}", response_model=ClientResponse)
@@ -22,8 +26,9 @@ def get_client(
     client_id: str,
     db: Session = Depends(get_db),
 ):
-    client = db.query(Client).filter(Client.id == client_id).first()
-    if not client:
+    try:
+        client = ClientLookupService(db).require_client(client_id)
+    except ValueError:
         raise HTTPException(status_code=404, detail="Client not found")
     return client
 
@@ -50,8 +55,9 @@ def update_client(
     updates: ClientUpdate,
     db: Session = Depends(get_db),
 ):
-    client = db.query(Client).filter(Client.id == client_id).first()
-    if not client:
+    try:
+        client = ClientLookupService(db).require_client(client_id)
+    except ValueError:
         raise HTTPException(status_code=404, detail="Client not found")
 
     update_data = updates.model_dump(exclude_unset=True)

@@ -5,9 +5,21 @@ from llama_index.core.prompts import PromptTemplate
 QUERY_EXPANSION_PROMPT = PromptTemplate(
     "Rewrite the user question into at most {max_rewrites} short retrieval queries "
     "for enterprise document RAG. Preserve concrete product names, dates, versions, "
-    "and numeric terms. Do not answer the question.\n\n"
+    "and numeric terms. Use recent conversation only to resolve vague references "
+    "(for example: 'that version', 'the previous one'). Do not answer the question.\n\n"
     "Return a structured object with `rewrites` containing only rewritten queries.\n\n"
-    "Question: {question}"
+    "Question: {question}\n\n"
+    "Recent conversation (latest turns):\n{history_context}"
+)
+
+QUERY_EXPANSION_DEVELOPER_PROMPT = (
+    "You rewrite user questions into retrieval-oriented search queries for enterprise RAG.\n"
+    "Rules:\n"
+    "1) Preserve concrete entities, product names, dates, versions, and numbers.\n"
+    "2) Use prior conversation turns only to resolve references (for example: 'that one').\n"
+    "3) Do not answer the question.\n"
+    '4) Return ONLY valid JSON in the shape: {"rewrites": ["..."]}.\n'
+    "5) Keep rewrites short and retrieval-focused."
 )
 
 

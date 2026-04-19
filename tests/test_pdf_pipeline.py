@@ -8,6 +8,7 @@ from app.ingestion.pdf_pipeline import (
     repair,
 )
 from app.ingestion.pdf_pipeline.models import (
+    ChartDatapointResponse,
     FigureArtifact,
     PageManifest,
     TableArtifact,
@@ -333,21 +334,21 @@ def test_analyze_chart_artifacts_populates_structured_chart_fields(monkeypatch):
             x_categories=["Q1", "Q2", "Q3"],
             series=["Revenue"],
             approx_datapoints=[
-                artifact_builders.ChartDatapointResponse(
+                ChartDatapointResponse(
                     series="Revenue",
                     x="Q1",
                     y=10,
                     unit="USDm",
                     approximate=True,
                 ),
-                artifact_builders.ChartDatapointResponse(
+                ChartDatapointResponse(
                     series="Revenue",
                     x="Q2",
                     y=20,
                     unit="USDm",
                     approximate=True,
                 ),
-                artifact_builders.ChartDatapointResponse(
+                ChartDatapointResponse(
                     series="Revenue",
                     x="Q3",
                     y=30,
@@ -489,25 +490,21 @@ def test_build_reasoning_artifact_handles_non_list_fields(monkeypatch):
 
 
 def test_run_reasoning_inference_prefers_structured_output(monkeypatch):
-    class _FakeLLM:
-        def structured_predict(self, *_args, **_kwargs):
-            return artifact_builders.ReasoningStructuredResponse(
-                key_insights=["Structured insight"],
-                metric_comparisons=["Q4 > Q3"],
-                trend_statement="Upward trend",
-                caveats=["Approximate values"],
-                evidence_refs=["table-1: net revenue"],
-            )
-
-        def complete(self, _prompt):
-            raise AssertionError(
-                "complete() should not be called when structured output succeeds"
-            )
-
     monkeypatch.setattr(
         artifact_builders,
-        "LlamaSettings",
-        type("_FakeSettings", (), {"llm": _FakeLLM()}),
+        "invoke_llm_chat",
+        lambda **_kwargs: {"id": "resp-1"},
+    )
+    monkeypatch.setattr(
+        artifact_builders,
+        "extract_chat_response_text",
+        lambda _response: (
+            '{"key_insights":["Structured insight"],'
+            '"metric_comparisons":["Q4 > Q3"],'
+            '"trend_statement":"Upward trend",'
+            '"caveats":["Approximate values"],'
+            '"evidence_refs":["table-1: net revenue"]}'
+        ),
     )
 
     result = artifact_builders._run_reasoning_inference("analyze", 2000)
@@ -518,27 +515,21 @@ def test_run_reasoning_inference_prefers_structured_output(monkeypatch):
 
 
 def test_run_reasoning_inference_uses_user_prompt_kwarg(monkeypatch):
-    class _FakeLLM:
-        def structured_predict(
-            self, output_cls, prompt, llm_kwargs=None, **prompt_args
-        ):
-            assert output_cls is artifact_builders.ReasoningStructuredResponse
-            assert llm_kwargs is None
-            assert "prompt" not in prompt_args
-            assert prompt_args["user_prompt"] == "analyze this"
-            return artifact_builders.ReasoningStructuredResponse(
-                key_insights=["Structured insight"]
-            )
+    captured: dict[str, object] = {}
 
-        def complete(self, _prompt):
-            raise AssertionError(
-                "complete() should not be called when structured output succeeds"
-            )
+    def _fake_invoke_llm_chat(**kwargs):
+        captured["input_messages"] = kwargs.get("input_messages")
+        return {"id": "resp-1"}
 
     monkeypatch.setattr(
         artifact_builders,
-        "LlamaSettings",
-        type("_FakeSettings", (), {"llm": _FakeLLM()}),
+        "invoke_llm_chat",
+        _fake_invoke_llm_chat,
+    )
+    monkeypatch.setattr(
+        artifact_builders,
+        "extract_chat_response_text",
+        lambda _response: '{"key_insights":["Structured insight"]}',
     )
 
     result = artifact_builders._run_reasoning_inference("analyze this", 2000)
@@ -546,6 +537,10 @@ def test_run_reasoning_inference_uses_user_prompt_kwarg(monkeypatch):
     assert result is not None
     assert result.used_structured_output is True
     assert result.payload["key_insights"] == ["Structured insight"]
+    messages = captured["input_messages"]
+    assert isinstance(messages, list)
+    assert messages[1]["role"] == "user"
+    assert messages[1]["content"] == "analyze this"
 
 
 def test_run_structured_text_inference_uses_user_prompt_kwarg(monkeypatch):

@@ -98,72 +98,19 @@ class ChatHistoryVectorStore:
             if not vector:
                 return []
 
-            must_conditions: list[qdrant_models.FieldCondition] = [
-                qdrant_models.FieldCondition(
-                    key="client_id",
-                    match=qdrant_models.MatchValue(value=client_id),
-                )
-            ]
-            must_not_conditions: list[qdrant_models.FieldCondition] = []
-            if exclude_session_id:
-                must_not_conditions.append(
-                    qdrant_models.FieldCondition(
-                        key="session_id",
-                        match=qdrant_models.MatchValue(value=exclude_session_id),
-                    )
-                )
-
-            query_filter = qdrant_models.Filter(
-                must=must_conditions,
-                must_not=must_not_conditions or None,
+            points = self._search_points(
+                client_id=client_id,
+                vector=vector,
+                limit=limit,
+                exclude_session_id=exclude_session_id,
             )
-            client = vector_store_manager.get_qdrant_client()
-            if hasattr(client, "query_points"):
-                response = client.query_points(
-                    collection_name=CHAT_HISTORY_COLLECTION_NAME,
-                    query=vector,
-                    query_filter=query_filter,
-                    with_payload=True,
-                    with_vectors=False,
-                    limit=limit,
-                )
-                points = list(getattr(response, "points", []) or [])
-            else:
-                # Backward compatibility with older client APIs.
-                points = client.search(
-                    collection_name=CHAT_HISTORY_COLLECTION_NAME,
-                    query_vector=vector,
-                    query_filter=query_filter,
-                    with_payload=True,
-                    with_vectors=False,
-                    limit=limit,
-                )
 
             matches: list[ChatHistoryMatch] = []
             for point in points:
-                payload = point.payload or {}
-                matches.append(
-                    ChatHistoryMatch(
-                        score=float(getattr(point, "score", 0.0) or 0.0),
-                        client_id=str(payload.get("client_id") or ""),
-                        session_id=str(payload.get("session_id") or ""),
-                        user_text=str(payload.get("user_text") or ""),
-                        assistant_text=str(payload.get("assistant_text") or ""),
-                        assistant_message_id=(
-                            str(payload.get("assistant_message_id"))
-                            if payload.get("assistant_message_id")
-                            else None
-                        ),
-                        created_at=(
-                            str(payload.get("created_at"))
-                            if payload.get("created_at")
-                            else None
-                        ),
-                    )
-                )
-            return [
-                match for match in matches if match.user_text and match.assistant_text
-            ]
+                match = self._point_to_match(point)
+                if match is not None:
+                    matches.append(match)
+            return matches
         except Exception:
             logger.exception(
                 "Failed semantic chat history search for client %s", client_id
@@ -173,18 +120,7 @@ class ChatHistoryVectorStore:
     def delete_client(self, client_id: str) -> None:
         try:
             self._ensure_collection()
-            vector_store_manager.get_qdrant_client().delete(
-                collection_name=CHAT_HISTORY_COLLECTION_NAME,
-                points_selector=qdrant_models.Filter(
-                    must=[
-                        qdrant_models.FieldCondition(
-                            key="client_id",
-                            match=qdrant_models.MatchValue(value=client_id),
-                        )
-                    ]
-                ),
-                wait=False,
-            )
+            self._delete_by_field(field_name="client_id", value=client_id)
         except Exception:
             logger.exception(
                 "Failed deleting chat history vectors for client %s", client_id
@@ -193,22 +129,99 @@ class ChatHistoryVectorStore:
     def delete_session(self, session_id: str) -> None:
         try:
             self._ensure_collection()
-            vector_store_manager.get_qdrant_client().delete(
-                collection_name=CHAT_HISTORY_COLLECTION_NAME,
-                points_selector=qdrant_models.Filter(
-                    must=[
-                        qdrant_models.FieldCondition(
-                            key="session_id",
-                            match=qdrant_models.MatchValue(value=session_id),
-                        )
-                    ]
-                ),
-                wait=False,
-            )
+            self._delete_by_field(field_name="session_id", value=session_id)
         except Exception:
             logger.exception(
                 "Failed deleting chat history vectors for session %s", session_id
             )
+
+    def _search_points(
+        self,
+        *,
+        client_id: str,
+        vector: list[float],
+        limit: int,
+        exclude_session_id: str | None,
+    ) -> list[Any]:
+        query_filter = self._build_search_filter(
+            client_id=client_id,
+            exclude_session_id=exclude_session_id,
+        )
+        client = vector_store_manager.get_qdrant_client()
+        if hasattr(client, "query_points"):
+            response = client.query_points(
+                collection_name=CHAT_HISTORY_COLLECTION_NAME,
+                query=vector,
+                query_filter=query_filter,
+                with_payload=True,
+                with_vectors=False,
+                limit=limit,
+            )
+            return list(getattr(response, "points", []) or [])
+
+        # Backward compatibility with older client APIs.
+        return client.search(
+            collection_name=CHAT_HISTORY_COLLECTION_NAME,
+            query_vector=vector,
+            query_filter=query_filter,
+            with_payload=True,
+            with_vectors=False,
+            limit=limit,
+        )
+
+    def _build_search_filter(
+        self,
+        *,
+        client_id: str,
+        exclude_session_id: str | None,
+    ) -> qdrant_models.Filter:
+        must_not_conditions = (
+            [self._field_condition("session_id", exclude_session_id)]
+            if exclude_session_id
+            else None
+        )
+        return qdrant_models.Filter(
+            must=[self._field_condition("client_id", client_id)],
+            must_not=must_not_conditions,
+        )
+
+    def _delete_by_field(self, *, field_name: str, value: str) -> None:
+        vector_store_manager.get_qdrant_client().delete(
+            collection_name=CHAT_HISTORY_COLLECTION_NAME,
+            points_selector=qdrant_models.Filter(
+                must=[self._field_condition(field_name, value)]
+            ),
+            wait=False,
+        )
+
+    @staticmethod
+    def _field_condition(field_name: str, value: str) -> qdrant_models.FieldCondition:
+        return qdrant_models.FieldCondition(
+            key=field_name,
+            match=qdrant_models.MatchValue(value=value),
+        )
+
+    @staticmethod
+    def _point_to_match(point: Any) -> ChatHistoryMatch | None:
+        payload = getattr(point, "payload", None) or {}
+        match = ChatHistoryMatch(
+            score=float(getattr(point, "score", 0.0) or 0.0),
+            client_id=str(payload.get("client_id") or ""),
+            session_id=str(payload.get("session_id") or ""),
+            user_text=str(payload.get("user_text") or ""),
+            assistant_text=str(payload.get("assistant_text") or ""),
+            assistant_message_id=(
+                str(payload.get("assistant_message_id"))
+                if payload.get("assistant_message_id")
+                else None
+            ),
+            created_at=(
+                str(payload.get("created_at")) if payload.get("created_at") else None
+            ),
+        )
+        if not match.user_text or not match.assistant_text:
+            return None
+        return match
 
     def _ensure_collection(self) -> None:
         if self._collection_checked:
