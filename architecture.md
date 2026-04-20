@@ -11,7 +11,7 @@ Both paths call the same orchestration classes/functions in `app/services/*`.
 
 ## High-Level Topology
 
-![High-Level Topology](docs/architecture.svg)
+<img src="docs/architecture.png" alt="High-Level Topology">
 
 1. Presentation
    - Streamlit pages: `ui/pages/*`
@@ -44,7 +44,7 @@ Both paths call the same orchestration classes/functions in `app/services/*`.
 
 ## Request + Ingestion Sequence Diagram
 
-![Request and Ingestion Sequence](docs/request_sequence.svg)
+<img src="docs/request_sequence.png" alt="Request and Ingestion Sequence">
 
 ## Core Flows
 
