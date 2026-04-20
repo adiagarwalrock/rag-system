@@ -11,6 +11,8 @@ Both paths call the same orchestration classes/functions in `app/services/*`.
 
 ## High-Level Topology
 
+![High-Level Topology](docs/architecture.svg)
+
 1. Presentation
    - Streamlit pages: `ui/pages/*`
    - UI adapter: `ui/lib/api.py` (`VecteraCore`)
@@ -18,11 +20,16 @@ Both paths call the same orchestration classes/functions in `app/services/*`.
    - FastAPI routes: `app/api/routes_clients.py`, `routes_documents.py`, `routes_query.py`, `routes_health.py`
 3. Service layer
    - Ingestion orchestration: `app/services/ingest_service.py`
+     - Queue and worker management: `app/services/ingest_queue.py`
+     - Metadata parsing and validation logic: `app/services/ingest_metadata.py`
    - Query orchestration: `app/services/query_service.py`
    - Session-aware chat: `app/services/chat_conversation_service.py`
    - Query history and context services: `app/services/query_history_service.py`, `chat_context_service.py`
 4. Retrieval + indexing
-   - Retrieval pipeline: `app/retrieval/*`
+   - Retrieval orchestration: `app/retrieval/retriever.py`
+     - Evidence selection & verification: `app/retrieval/evidence_selector.py`
+     - Prompt construction & contextualization: `app/retrieval/prompt_builder.py`
+     - Answer generation & LLM synthesis: `app/retrieval/synthesizer.py`
    - Vector store manager: `app/indexing/vector_store.py`
    - Chat memory vector store: `app/indexing/chat_history_store.py`
 5. Persistence
@@ -34,6 +41,10 @@ Both paths call the same orchestration classes/functions in `app/services/*`.
 - Streamlit does not call local REST endpoints; it calls service logic in-process via `VecteraCore`.
 - REST handlers are thin wrappers over the same service-layer workflows.
 - Business logic stays in `app/services/*`, not in UI pages or route handlers.
+
+## Request + Ingestion Sequence Diagram
+
+![Request and Ingestion Sequence](docs/request_sequence.svg)
 
 ## Core Flows
 

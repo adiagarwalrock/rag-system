@@ -25,24 +25,68 @@ Both entry points share the same service layer in `app/services/*`.
 
 ## Quick Start
 
-From repo root:
+Follow these steps from the repository root to get the application running:
 
-```bash
-cp .env.example .env
-./setup.sh
-docker-compose up -d qdrant
-uv run streamlit run streamlit_app.py
-```
+1. **Set up environment variables**  
+   Copy the example environment file and configure the minimum required variables:
 
-Streamlit is available at `http://localhost:8501`.
+   ```bash
+   cp .env.example .env
+   ```
 
-Optional API server:
+   *If you are using a minimal configuration, these are the key variables to set:*
 
-```bash
-uv run uvicorn api:app --reload --port 8000
-```
+   ```bash
+   # OpenAI-compatible key (required)
+   OPENAI_API_KEY=...
+   OPENAI_USE_RESPONSES=true
 
-API docs: `http://localhost:8000/docs`
+   # Qdrant connection
+   QDRANT_URL=http://localhost:6333
+   QDRANT_API_KEY=
+
+   # Optional Snowflake (if omitted, runtime falls back to local SQLite rag_local.db)
+   # Note: If using Snowflake, ensure the database and schema are created beforehand.
+   SNOWFLAKE_ACCOUNT=...
+   SNOWFLAKE_USER=...
+   SNOWFLAKE_PASSWORD=...
+   SNOWFLAKE_DATABASE=...
+   SNOWFLAKE_SCHEMA=PUBLIC
+   SNOWFLAKE_WAREHOUSE=...
+   SNOWFLAKE_ROLE=...
+   ```
+
+2. **Run the setup script**  
+   This installs Python dependencies via `uv` and necessary npm packages:
+
+   ```bash
+   ./setup.sh
+   ```
+
+3. **Start Qdrant**  
+   You can run Qdrant locally via Docker:
+
+   ```bash
+   docker-compose up -d qdrant
+   ```
+
+   *Alternative:* You can use Qdrant Cloud on their free hosting plan: <https://qdrant.tech/documentation/cloud/>. If using the cloud plan, simply set `QDRANT_URL` and `QDRANT_API_KEY` in your `.env` to match your cluster instead of running the docker command.
+
+4. **Start the Streamlit Application**  
+
+   ```bash
+   uv run streamlit run streamlit_app.py
+   ```
+
+   Streamlit is available at `http://localhost:8501`.
+
+5. **(Optional) Start the API Server**  
+
+   ```bash
+   uv run uvicorn api:app --reload --port 8000
+   ```
+
+   API docs will be available at `http://localhost:8000/docs`.
 
 ## Runtime Wiring
 
