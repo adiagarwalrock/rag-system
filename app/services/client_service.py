@@ -2,7 +2,6 @@
 Client service: workflows related to client lifecycle operations.
 """
 
-from __future__ import annotations
 
 import logging
 

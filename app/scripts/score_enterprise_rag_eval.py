@@ -5,7 +5,6 @@ Usage:
     uv run python -m app.scripts.score_enterprise_rag_eval
 """
 
-from __future__ import annotations
 
 import argparse
 import json

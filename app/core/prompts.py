@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 from llama_index.core.prompts import PromptTemplate
 

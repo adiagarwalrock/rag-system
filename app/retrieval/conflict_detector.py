@@ -6,7 +6,7 @@ from different document versions or sources.
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +83,7 @@ def detect_conflicts(
     evidence_nodes: list | None = None,
     max_conflicts: int = 3,
     question: str | None = None,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Analyze retrieved nodes for high-confidence conflicting information.
 
@@ -186,64 +186,63 @@ def _find_numeric_conflicts(
     min_context_overlap: int,
     max_conflicts: int,
 ) -> list[dict[str, Any]]:
+    from itertools import combinations
+
     conflicts: list[dict[str, Any]] = []
-    for i in range(len(node_facts)):
-        for j in range(i + 1, len(node_facts)):
-            left = node_facts[i]
-            right = node_facts[j]
-            if _is_non_conflict_pair(left, right, allow_cross_group):
-                continue
-            if not _shares_topic(
-                left.node.node.text or "",
-                right.node.node.text or "",
-                min_shared=min_topic_overlap,
-            ):
-                continue
+    for left, right in combinations(node_facts, 2):
+        if _is_non_conflict_pair(left, right, allow_cross_group):
+            continue
+        if not _shares_topic(
+            left.node.node.text or "",
+            right.node.node.text or "",
+            min_shared=min_topic_overlap,
+        ):
+            continue
 
-            for left_fact in left.facts:
-                for right_fact in right.facts:
-                    if not _facts_conflict(
-                        left_fact, right_fact, min_context_overlap=min_context_overlap
-                    ):
-                        continue
+        for left_fact in left.facts:
+            for right_fact in right.facts:
+                if not _facts_conflict(
+                    left_fact, right_fact, min_context_overlap=min_context_overlap
+                ):
+                    continue
 
-                    signature = _conflict_signature(left, right, left_fact, right_fact)
-                    if signature in seen_signatures:
-                        continue
-                    seen_signatures.add(signature)
+                signature = _conflict_signature(left, right, left_fact, right_fact)
+                if signature in seen_signatures:
+                    continue
+                seen_signatures.add(signature)
 
-                    overlap_tokens = sorted(
-                        left_fact.context_tokens & right_fact.context_tokens
-                    )
-                    overlap_label = (
-                        " ".join(overlap_tokens[:4])
-                        if overlap_tokens
-                        else left_fact.context_label
-                    )
-                    conflicts.append(
-                        {
-                            "conflict_type": "numeric_disagreement",
-                            "summary": (
-                                f"Conflicting values for '{overlap_label}': "
-                                f"'{left_fact.value_raw}' in {left.document_name} ({left.version_label}) "
-                                f"vs '{right_fact.value_raw}' in {right.document_name} ({right.version_label})"
-                            ),
-                            "supporting_chunks": [
-                                {
-                                    "document_name": left.document_name,
-                                    "version_label": left.version_label,
-                                    "text_snippet": (left.node.node.text or "")[:220],
-                                },
-                                {
-                                    "document_name": right.document_name,
-                                    "version_label": right.version_label,
-                                    "text_snippet": (right.node.node.text or "")[:220],
-                                },
-                            ],
-                        }
-                    )
-                    if len(conflicts) >= max_conflicts:
-                        return conflicts
+                overlap_tokens = sorted(
+                    left_fact.context_tokens & right_fact.context_tokens
+                )
+                overlap_label = (
+                    " ".join(overlap_tokens[:4])
+                    if overlap_tokens
+                    else left_fact.context_label
+                )
+                conflicts.append(
+                    {
+                        "conflict_type": "numeric_disagreement",
+                        "summary": (
+                            f"Conflicting values for '{overlap_label}': "
+                            f"'{left_fact.value_raw}' in {left.document_name} ({left.version_label}) "
+                            f"vs '{right_fact.value_raw}' in {right.document_name} ({right.version_label})"
+                        ),
+                        "supporting_chunks": [
+                            {
+                                "document_name": left.document_name,
+                                "version_label": left.version_label,
+                                "text_snippet": (left.node.node.text or "")[:220],
+                            },
+                            {
+                                "document_name": right.document_name,
+                                "version_label": right.version_label,
+                                "text_snippet": (right.node.node.text or "")[:220],
+                            },
+                        ],
+                    }
+                )
+                if len(conflicts) >= max_conflicts:
+                    return conflicts
     return conflicts
 
 

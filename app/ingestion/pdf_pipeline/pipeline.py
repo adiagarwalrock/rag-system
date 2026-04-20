@@ -70,7 +70,7 @@ class PDFIngestionPipeline:
         self.file_path = file_path
         self.document_metadata = document_metadata
         self.document_id = document_metadata.get("document_id") or str(uuid.uuid4())
-        self.source_file = os.path.basename(file_path)
+        self.source_file = Path(file_path).name
         self.paths = PipelinePaths.for_document(self.document_id)
 
         registry = PDFPipelineRegistry()

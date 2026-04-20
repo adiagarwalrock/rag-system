@@ -5,7 +5,6 @@ Run:
     uv run python -m app.scripts.setup_check
 """
 
-from __future__ import annotations
 
 import logging
 import sys
