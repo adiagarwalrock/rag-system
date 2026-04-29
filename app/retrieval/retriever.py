@@ -18,7 +18,7 @@ from app.retrieval.citation_builder import build_citations
 from app.retrieval.conflict_detector import detect_conflicts
 from app.retrieval.query_expansion import build_query_variants, should_expand_query
 
-# Sub-module imports — used by VecteraRetriever and its callers
+# Sub-module imports — used by RAGRetriever and its callers
 from app.retrieval.evidence_selector import (
     _build_retrieval_diagnostics,
     _ensure_image_evidence,
@@ -67,7 +67,7 @@ CONFLICT_EVIDENCE_LIMIT = 8
 # ---------------------------------------------------------------------------
 
 
-class VecteraRetriever:
+class RAGRetriever:
     """
     Full retrieval pipeline with client-scoped filtering,
     reranking, temporal awareness, conflict detection, and citations.

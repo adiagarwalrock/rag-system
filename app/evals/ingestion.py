@@ -122,4 +122,3 @@ def _metadata_completeness(
         per_chunk_scores.append(present / len(required))
 
     return float(mean(per_chunk_scores)) if per_chunk_scores else 0.0
-

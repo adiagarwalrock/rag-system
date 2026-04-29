@@ -16,7 +16,9 @@ def test_enqueue_document_ingestion_creates_queued_records(
         def enqueue(self, task):
             captured_tasks.append(task)
 
-    def fake_save_upload_file(file_content: bytes, filename: str, _dest_folder: str) -> str:
+    def fake_save_upload_file(
+        file_content: bytes, filename: str, _dest_folder: str
+    ) -> str:
         path = tmp_path / filename
         path.write_bytes(file_content)
         return str(path)
@@ -44,7 +46,9 @@ def test_enqueue_document_ingestion_creates_queued_records(
     assert captured_tasks[0].job_id == job.id
 
     persisted_doc = db_session.query(Document).filter(Document.id == doc.id).one()
-    persisted_job = db_session.query(IngestionJob).filter(IngestionJob.id == job.id).one()
+    persisted_job = (
+        db_session.query(IngestionJob).filter(IngestionJob.id == job.id).one()
+    )
     assert persisted_doc.status == "queued"
     assert persisted_job.status == "queued"
 
@@ -58,7 +62,9 @@ def test_enqueue_document_ingestion_marks_failure_when_queue_rejects(
         def enqueue(self, _task):
             raise ValueError("queue full")
 
-    def fake_save_upload_file(file_content: bytes, filename: str, _dest_folder: str) -> str:
+    def fake_save_upload_file(
+        file_content: bytes, filename: str, _dest_folder: str
+    ) -> str:
         path = tmp_path / filename
         path.write_bytes(file_content)
         return str(path)
@@ -79,9 +85,13 @@ def test_enqueue_document_ingestion_marks_failure_when_queue_rejects(
             db=db_session,
         )
 
-    failed_doc = db_session.query(Document).filter(Document.name == "queue_fail.pdf").one()
+    failed_doc = (
+        db_session.query(Document).filter(Document.name == "queue_fail.pdf").one()
+    )
     failed_job = (
-        db_session.query(IngestionJob).filter(IngestionJob.document_id == failed_doc.id).one()
+        db_session.query(IngestionJob)
+        .filter(IngestionJob.document_id == failed_doc.id)
+        .one()
     )
     assert failed_doc.status == "failed"
     assert failed_job.status == "failed"

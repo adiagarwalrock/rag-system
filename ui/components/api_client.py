@@ -3,18 +3,18 @@ from typing import TYPE_CHECKING
 import streamlit as st
 
 if TYPE_CHECKING:
-    from ui.lib.api import VecteraCore
+    from ui.lib.api import RAGCore
 
 
 @st.cache_resource
-def _create_api() -> "VecteraCore":
+def _create_api() -> "RAGCore":
     # Lazy import to avoid eager DB/network module import at module load.
-    from ui.lib.api import VecteraCore
+    from ui.lib.api import RAGCore
 
-    return VecteraCore()
+    return RAGCore()
 
 
-def get_api() -> "VecteraCore":
+def get_api() -> "RAGCore":
     """Get or create the API client."""
     api = _create_api()
     required_methods = (

@@ -202,7 +202,9 @@ def test_delete_client_cascades_documents_vectors_and_related_rows(
         == 0
     )
     assert (
-        db_session.query(QueryLog).filter(QueryLog.client_id == target_client.id).count()
+        db_session.query(QueryLog)
+        .filter(QueryLog.client_id == target_client.id)
+        .count()
         == 0
     )
     assert (

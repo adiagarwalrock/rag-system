@@ -5,9 +5,10 @@ Extracted from retriever.py to keep retrieval orchestration separate
 from evidence-level logic.
 """
 
-import re
 import logging
+import re
 from collections import Counter
+from functools import lru_cache
 from typing import Any
 
 logger = logging.getLogger(__name__)

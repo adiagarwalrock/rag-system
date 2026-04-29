@@ -15,7 +15,7 @@ Both paths call the same orchestration classes/functions in `app/services/*`.
 
 1. Presentation
    - Streamlit pages: `ui/pages/*`
-   - UI adapter: `ui/lib/api.py` (`VecteraCore`)
+   - UI adapter: `ui/lib/api.py` (`RAGCore`)
 2. API
    - FastAPI routes: `app/api/routes_clients.py`, `routes_documents.py`, `routes_query.py`, `routes_health.py`
 3. Service layer
@@ -38,7 +38,7 @@ Both paths call the same orchestration classes/functions in `app/services/*`.
 
 ## Runtime Boundaries
 
-- Streamlit does not call local REST endpoints; it calls service logic in-process via `VecteraCore`.
+- Streamlit does not call local REST endpoints; it calls service logic in-process via `RAGCore`.
 - REST handlers are thin wrappers over the same service-layer workflows.
 - Business logic stays in `app/services/*`, not in UI pages or route handlers.
 
@@ -63,7 +63,7 @@ Both paths call the same orchestration classes/functions in `app/services/*`.
 ### 2. Query + Answer Generation
 
 1. Query is executed via `ChatConversationService` (session-aware) and `execute_query`.
-2. `VecteraRetriever` performs client-scoped retrieval with hybrid Qdrant search.
+2. `RAGRetriever` performs client-scoped retrieval with hybrid Qdrant search.
 3. Query expansion may add rewrite variants for comparative/visual/conflict prompts.
 4. Reranker applies semantic + temporal/version + structure-aware adjustments.
 5. Conflict detector flags numeric disagreements across candidate evidence.

@@ -12,9 +12,7 @@ def test_ensure_runtime_schema_adds_chat_message_payload_columns_and_drops_legac
         conn.execute(text("CREATE TABLE user_roles (id VARCHAR PRIMARY KEY)"))
         conn.execute(text("CREATE TABLE user_client_access (id VARCHAR PRIMARY KEY)"))
 
-        conn.execute(
-            text(
-                """
+        conn.execute(text("""
                 CREATE TABLE clients (
                     id VARCHAR PRIMARY KEY,
                     name VARCHAR NOT NULL,
@@ -23,12 +21,8 @@ def test_ensure_runtime_schema_adds_chat_message_payload_columns_and_drops_legac
                     created_at DATETIME,
                     updated_at DATETIME
                 )
-                """
-            )
-        )
-        conn.execute(
-            text(
-                """
+                """))
+        conn.execute(text("""
                 CREATE TABLE chat_sessions (
                     id VARCHAR PRIMARY KEY,
                     client_id VARCHAR NOT NULL,
@@ -38,12 +32,8 @@ def test_ensure_runtime_schema_adds_chat_message_payload_columns_and_drops_legac
                     updated_at DATETIME NOT NULL,
                     last_activity_at DATETIME NOT NULL
                 )
-                """
-            )
-        )
-        conn.execute(
-            text(
-                """
+                """))
+        conn.execute(text("""
                 CREATE TABLE query_logs (
                     id VARCHAR PRIMARY KEY,
                     client_id VARCHAR NOT NULL,
@@ -51,12 +41,8 @@ def test_ensure_runtime_schema_adds_chat_message_payload_columns_and_drops_legac
                     status VARCHAR NOT NULL,
                     created_at DATETIME NOT NULL
                 )
-                """
-            )
-        )
-        conn.execute(
-            text(
-                """
+                """))
+        conn.execute(text("""
                 CREATE TABLE chat_messages (
                     id VARCHAR PRIMARY KEY,
                     client_id VARCHAR NOT NULL,
@@ -67,9 +53,7 @@ def test_ensure_runtime_schema_adds_chat_message_payload_columns_and_drops_legac
                     query_log_id VARCHAR,
                     created_at DATETIME NOT NULL
                 )
-                """
-            )
-        )
+                """))
 
     ensure_runtime_schema(engine)
     ensure_runtime_schema(engine)

@@ -5,7 +5,6 @@ Run:
     uv run python -m app.scripts.setup_check
 """
 
-
 import logging
 import sys
 import warnings
@@ -115,8 +114,35 @@ def check_qdrant() -> bool:
 
 def check_llm() -> bool:
     api_key = settings.ai_api_key
-    if settings.is_openai_api_key_placeholder:
+    provider = settings.ai_provider
+
+    if settings.is_ai_api_key_placeholder:
         emit("[FAIL] LLM: AI_API_KEY is missing or placeholder", level=logging.ERROR)
+        return False
+
+    if provider == "gemini":
+        try:
+            response = requests.get(
+                "https://generativelanguage.googleapis.com/v1beta/models",
+                params={"key": api_key},
+                timeout=15,
+            )
+        except requests.RequestException as exc:
+            emit(f"[FAIL] LLM: Gemini API unreachable ({exc})", level=logging.ERROR)
+            return False
+
+        if response.status_code == 200:
+            emit("[PASS] LLM: API key accepted by Gemini API")
+            return True
+
+        if response.status_code in {401, 403}:
+            emit("[FAIL] LLM: API key rejected by Gemini API", level=logging.ERROR)
+            return False
+
+        emit(
+            f"[FAIL] LLM: Gemini API returned status {response.status_code}",
+            level=logging.ERROR,
+        )
         return False
 
     try:

@@ -21,3 +21,4 @@ plan/*
 artifacts/*
 .codex
 logs/
+.coverage

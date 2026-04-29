@@ -5,7 +5,9 @@ from app.db.models import ChatMessage, ChatSession
 from ui.lib import api as ui_api
 
 
-def test_list_chat_messages_hydrates_assistant_result(db_session, seeded_entities, monkeypatch):
+def test_list_chat_messages_hydrates_assistant_result(
+    db_session, seeded_entities, monkeypatch
+):
     client = seeded_entities["client"]
     now = datetime.now(timezone.utc)
 
@@ -52,7 +54,7 @@ def test_list_chat_messages_hydrates_assistant_result(db_session, seeded_entitie
     db_session.commit()
 
     monkeypatch.setattr(ui_api, "SessionLocal", lambda: db_session)
-    core = object.__new__(ui_api.VecteraCore)
+    core = object.__new__(ui_api.RAGCore)
 
     messages = core.list_chat_messages(session.id, limit=10)
 
@@ -102,7 +104,7 @@ def test_list_chat_messages_handles_invalid_citations_json(
     db_session.commit()
 
     monkeypatch.setattr(ui_api, "SessionLocal", lambda: db_session)
-    core = object.__new__(ui_api.VecteraCore)
+    core = object.__new__(ui_api.RAGCore)
 
     messages = core.list_chat_messages(session.id, limit=10)
 

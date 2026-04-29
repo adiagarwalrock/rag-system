@@ -5,7 +5,6 @@ Usage:
     uv run python -m app.scripts.score_enterprise_rag_eval
 """
 
-
 import argparse
 import json
 from pathlib import Path
@@ -20,7 +19,9 @@ DEFAULT_GOLD_PATH = Path("enterprise_rag_eval_gold_test4.jsonl")
 
 def _load_jsonl(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for line_no, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for line_no, raw_line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
         line = raw_line.strip()
         if not line:
             continue
@@ -98,8 +99,16 @@ def main() -> int:
     questions_path = _resolve_path(args.questions)
     answers_path = _resolve_path(args.answers)
     gold_path = _resolve_path(args.gold)
-    output_path = _resolve_path(args.output) if args.output else _derive_scored_output_path(answers_path)
-    summary_path = _resolve_path(args.summary_output) if args.summary_output else _derive_summary_output_path(output_path)
+    output_path = (
+        _resolve_path(args.output)
+        if args.output
+        else _derive_scored_output_path(answers_path)
+    )
+    summary_path = (
+        _resolve_path(args.summary_output)
+        if args.summary_output
+        else _derive_summary_output_path(output_path)
+    )
 
     _validate_file(questions_path, "Questions file")
     _validate_file(answers_path, "Answers file")

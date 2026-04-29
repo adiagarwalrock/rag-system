@@ -2,8 +2,8 @@ from datetime import datetime, timezone
 
 from app.db.models import ChatMessage, ChatSession
 from app.indexing.chat_history_store import ChatHistoryMatch
-from app.services.chat_context_service import ChatContextService
 from app.services import chat_context_service
+from app.services.chat_context_service import ChatContextService
 
 
 def test_build_context_bundle_includes_recent_and_cross_session_pairs(

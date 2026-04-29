@@ -10,8 +10,8 @@ from app.db.snowflake import get_db
 from app.schemas.client import ClientCreate, ClientResponse, ClientUpdate
 from app.services.client_service import (
     ClientLookupService,
-    delete_client as delete_client_with_cascade,
 )
+from app.services.client_service import delete_client as delete_client_with_cascade
 
 router = APIRouter()
 

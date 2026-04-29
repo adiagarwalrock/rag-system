@@ -9,7 +9,7 @@
 
 ## Runtime Wiring
 
-- `streamlit_app.py` and `api.py` share the same service layer; Streamlit uses `ui/lib/api.py` (`VecteraCore`) and does not call local HTTP routes.
+- `streamlit_app.py` and `api.py` share the same service layer; Streamlit uses `ui/lib/api.py` (`RAGCore`) and does not call local HTTP routes.
 - Keep business logic in `app/services/*`; keep API routes (`app/api/*`) and UI pages (`ui/pages/*`) thin.
 - Boundaries: orchestration `app/services/`, ingestion `app/ingestion/`, retrieval `app/retrieval/`, vector infra `app/indexing/`, DB/session state `app/db/`.
 

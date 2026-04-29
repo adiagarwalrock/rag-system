@@ -5,16 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from llama_index.core.ingestion import IngestionPipeline
-from llama_index.core.node_parser import SemanticSplitterNodeParser
-from llama_index.core.schema import BaseNode
-from sqlalchemy import true
-from sqlalchemy.orm import Session
-
 from llama_index.core import Settings as LlamaSettings
-from app.core.config import settings
-from app.db.snowflake import SessionLocal
-from app.indexing.vector_store import COLLECTION_NAME, vector_store_manager
 from llama_index.core.extractors import (
     DocumentContextExtractor,
     KeywordExtractor,
@@ -22,8 +13,13 @@ from llama_index.core.extractors import (
     SummaryExtractor,
     TitleExtractor,
 )
+from llama_index.core.ingestion import IngestionPipeline
+from llama_index.core.node_parser import SemanticSplitterNodeParser
+from llama_index.core.schema import BaseNode
+from sqlalchemy import true
+from sqlalchemy.orm import Session
 
-from app.ingestion.parser import parse_document, save_upload_file
+from app.core.config import settings
 from app.db.models.client import Client
 from app.db.models.document import (
     Document,
@@ -31,21 +27,24 @@ from app.db.models.document import (
     IngestionJob,
     VectorNodeRegistry,
 )
+from app.db.snowflake import SessionLocal
+from app.indexing.vector_store import COLLECTION_NAME, vector_store_manager
+from app.ingestion.parser import parse_document, save_upload_file
 from app.ingestion.validator import (
     compute_checksum,
     validate_file_size,
     validate_file_type,
 )
 from app.ingestion.version_resolver import resolve_version
-
-# --- Delegated Imports ---
-from app.services.ingest_queue import IngestionQueueTask, get_ingestion_queue_manager
 from app.services.ingest_metadata import (
     _apply_metadata_exclusions,
     _apply_ref_doc_ids,
     _apply_retrieval_metadata,
     _build_non_layout_node_parser,
 )
+
+# --- Delegated Imports ---
+from app.services.ingest_queue import IngestionQueueTask, get_ingestion_queue_manager
 
 logger = logging.getLogger(__name__)
 

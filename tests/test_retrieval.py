@@ -4,10 +4,11 @@ from types import SimpleNamespace
 from llama_index.core.base.llms.types import TextBlock, ThinkingBlock
 from llama_index.core.schema import NodeWithScore, TextNode
 
+import app.retrieval.retriever as retriever_module
 from app.retrieval.citation_builder import build_citations
 from app.retrieval.query_expansion import should_expand_query
 from app.retrieval.retriever import (
-    VecteraRetriever,
+    RAGRetriever,
     _build_conversation_context_block,
     _build_retrieval_diagnostics,
     _collect_image_evidence_paths,
@@ -47,7 +48,7 @@ def test_query_expansion_routes_broad_and_version_questions_only():
 
 
 def test_retrieve_with_mode_passes_recent_turns_in_expansion_question(monkeypatch):
-    retriever = VecteraRetriever(
+    retriever = RAGRetriever(
         "client-1",
         top_k=5,
         conversation_context={
@@ -87,7 +88,7 @@ def test_retrieve_with_mode_passes_recent_turns_in_expansion_question(monkeypatc
 
 
 def test_retrieve_with_mode_uses_history_aware_query_variants(monkeypatch):
-    retriever = VecteraRetriever(
+    retriever = RAGRetriever(
         "client-1",
         top_k=5,
         conversation_context={
@@ -157,7 +158,7 @@ def test_fuse_node_batches_dedupes_and_boosts_repeated_nodes():
 
 
 def test_latest_query_prefers_current_version_nodes():
-    retriever = VecteraRetriever("client-1", top_k=5)
+    retriever = RAGRetriever("client-1", top_k=5)
 
     current = _node(
         "current",
@@ -187,7 +188,7 @@ def test_latest_query_prefers_current_version_nodes():
 
 
 def test_citations_are_bounded_subset_of_ranked_candidates():
-    retriever = VecteraRetriever("client-1", top_k=10)
+    retriever = RAGRetriever("client-1", top_k=10)
     ranked = [
         _node(
             f"node-{i}",
@@ -215,7 +216,7 @@ def test_citations_are_bounded_subset_of_ranked_candidates():
 
 
 def test_comparison_queries_select_multiple_versions_for_citations():
-    retriever = VecteraRetriever("client-1", top_k=10)
+    retriever = RAGRetriever("client-1", top_k=10)
     nodes = [
         _node(
             "v2-primary",
@@ -264,7 +265,7 @@ def test_comparison_queries_select_multiple_versions_for_citations():
 
 
 def test_comparison_query_deprioritizes_reasoning_chunks_for_factual_delta_questions():
-    retriever = VecteraRetriever("client-1", top_k=10)
+    retriever = RAGRetriever("client-1", top_k=10)
     ranked = [
         _node(
             "reasoning-v2",
@@ -340,7 +341,7 @@ def test_retrieval_diagnostics_reports_reasoning_and_document_diversity():
 
 
 def test_conflict_query_diversifies_evidence_when_versions_are_missing():
-    retriever = VecteraRetriever("client-1", top_k=10)
+    retriever = RAGRetriever("client-1", top_k=10)
     ranked = [
         _node(
             "doc-a-primary",
@@ -383,7 +384,7 @@ def test_conflict_query_diversifies_evidence_when_versions_are_missing():
 
 
 def test_table_query_ensures_table_evidence_when_available():
-    retriever = VecteraRetriever("client-1", top_k=10)
+    retriever = RAGRetriever("client-1", top_k=10)
     ranked = [
         _node(
             f"text-{i}",
@@ -419,7 +420,7 @@ def test_table_query_ensures_table_evidence_when_available():
 
 
 def test_time_anchored_query_does_not_force_latest_version_bias():
-    retriever = VecteraRetriever("client-1", top_k=5)
+    retriever = RAGRetriever("client-1", top_k=5)
     old = _node(
         "old-2025",
         0.95,
@@ -559,7 +560,7 @@ def test_collect_image_evidence_paths_respects_max_images(tmp_path):
 
 
 def test_visual_query_injects_image_evidence_when_top_evidence_has_no_images():
-    retriever = VecteraRetriever("client-1", top_k=10)
+    retriever = RAGRetriever("client-1", top_k=10)
     ranked = [
         _node(
             f"text-{i}",
@@ -692,7 +693,7 @@ def test_synthesize_answer_prefers_responses_path(monkeypatch):
         lambda _response: "<answer>Grounded response.</answer>",
     )
 
-    retriever = VecteraRetriever("client-1", top_k=5)
+    retriever = RAGRetriever("client-1", top_k=5)
     result = retriever._synthesize_answer(
         question="What changed?",
         citations=[

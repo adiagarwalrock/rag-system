@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import mimetypes
 import re
-import hashlib
 import time
 import uuid
 from collections import defaultdict
@@ -1263,9 +1263,7 @@ def _apply_heuristic_chart_fields(figure: FigureArtifact) -> None:
         figure.trend_summary = (
             "Increasing trend"
             if numbers[-1] > numbers[0]
-            else "Decreasing trend"
-            if numbers[-1] < numbers[0]
-            else "Flat trend"
+            else "Decreasing trend" if numbers[-1] < numbers[0] else "Flat trend"
         )
         figure.numeric_extraction_confidence = 0.42
 

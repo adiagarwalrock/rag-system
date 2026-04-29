@@ -7,7 +7,7 @@ This repo supports two verification modes:
 
 ## Prerequisites
 
-From repo root (`/home/adiagarwal/vectera`):
+From repo root:
 
 ```bash
 cp .env.example .env
@@ -17,7 +17,7 @@ docker-compose up -d qdrant
 
 Notes:
 
-- Runtime startup requires a valid AI API key (`AI_API_KEY` / `OPENAI_API_KEY` aliases).
+- Runtime startup requires a valid AI provider API key (`GEMINI_API_KEY`/`GOOGLE_API_KEY` or `OPENAI_API_KEY`, with `AI_API_KEY` as fallback).
 - `setup_check` is stricter than runtime fallback and expects Snowflake + Qdrant + AI key.
 
 ## Run Tests

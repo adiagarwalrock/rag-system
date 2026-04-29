@@ -1,4 +1,3 @@
-
 from llama_index.core.prompts import PromptTemplate
 
 QUERY_EXPANSION_PROMPT = PromptTemplate(

@@ -208,7 +208,7 @@ def _predict_query_rewrites(
         ),
         reasoning_effort="low",
         max_output_tokens=220,
-        prompt_cache_key="vectera:query-expansion:v2",
+        prompt_cache_key="rag:query-expansion:v2",
         prompt_cache_retention=settings.RESPONSE_PROMPT_CACHE_RETENTION,
         safety_identifier=(
             f"{settings.RESPONSE_SAFETY_IDENTIFIER_PREFIX}:query-expansion"

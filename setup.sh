@@ -4,7 +4,7 @@
 set -e
 
 echo "======================================"
-echo "    Setting up Vectera Project"
+echo "    Setting up RAG Project"
 echo "======================================"
 
 echo ""

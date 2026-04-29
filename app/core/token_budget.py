@@ -236,7 +236,8 @@ class ResponsesInputBudgeter:
                 "CURRENT_SESSION_RECENT_TURNS:\n"
                 + (
                     "\n".join(
-                        f"- {msg['role'].upper()}: {msg['content']}" for msg in history_messages
+                        f"- {msg['role'].upper()}: {msg['content']}"
+                        for msg in history_messages
                     )
                     if history_messages
                     else "- (none)"
