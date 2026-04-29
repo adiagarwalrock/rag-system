@@ -1,3 +1,6 @@
 {
-    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python"
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+    "python.pyrefly.displayTypeErrors": "default",
+    "python.analysis.completeFunctionParens": false,
+    "python.analysis.showHoverGoToLinks": true
 }

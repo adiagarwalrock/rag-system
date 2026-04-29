@@ -1,19 +1,17 @@
 from pathlib import Path
+from datetime import datetime
 
 import streamlit as st
 
-from ui.components.auth import get_api
-from ui.components.layout import get_current_user_id, render_page_shell
-from ui.components.utils import get_client_options
+from ui.components.api_client import get_api
+from ui.components.layout import render_page_shell
+from ui.components.utils import (
+    CLIENTS_CACHE_KEY,
+    bump_cache_revision,
+    get_client_options,
+)
 
-
-def _ensure_chat_history():
-    st.session_state.setdefault("chat_history_by_client", {})
-
-
-def _get_chat_history(client_id: str) -> list[dict]:
-    _ensure_chat_history()
-    return st.session_state.chat_history_by_client.setdefault(client_id, [])
+REASONING_EFFORT_OPTIONS = ("low", "medium", "high")
 
 
 def _stream_text(text: str):
@@ -140,6 +138,21 @@ def _render_result_details(result: dict):
             )
         )
 
+    reasoning_effort = result.get("reasoning_effort")
+    if reasoning_effort:
+        effort_applied = bool(result.get("reasoning_effort_applied"))
+        summary_badges.append(
+            (
+                (
+                    f"Reasoning {reasoning_effort}"
+                    if effort_applied
+                    else f"Reasoning {reasoning_effort} (not applied)"
+                ),
+                ":material/psychology:",
+                "gray",
+            )
+        )
+
     _badge_rows(summary_badges, per_row=4)
 
     reasoning = (result.get("reasoning") or "").strip()
@@ -261,27 +274,58 @@ def _render_chat_message(message: dict):
             _render_result_details(result)
 
 
-def _submit_question(api, client_id: str, question: str):
-    chat_history = _get_chat_history(client_id)
-    chat_history.append({"role": "user", "content": question})
-
+def _submit_question(
+    api,
+    client_id: str,
+    question: str,
+    reasoning_effort: str,
+    session_id: str | None,
+) -> dict:
     with st.chat_message("user"):
         st.markdown(question)
 
     with st.chat_message("assistant"):
         with st.spinner("Searching documents and drafting a sourced answer..."):
-            try:
-                result = api.query(client_id, question, user_id=get_current_user_id())
-                answer = result.get("answer", "No answer generated.")
-                streamed_answer = st.write_stream(_stream_text(answer))
-                _render_result_details(result)
-                chat_history.append(
-                    {"role": "assistant", "content": streamed_answer, "result": result}
-                )
-            except Exception as exc:
-                error_msg = f"I could not complete that search: {exc}"
-                st.error(error_msg)
-                chat_history.append({"role": "assistant", "content": error_msg})
+            result = api.query(
+                client_id,
+                question,
+                reasoning_effort=reasoning_effort,
+                session_id=session_id,
+            )
+            answer = result.get("answer", "No answer generated.")
+            st.write_stream(_stream_text(answer))
+            _render_result_details(result)
+            return result
+
+
+def _format_session_timestamp(raw_value: str | None) -> str:
+    if not raw_value:
+        return "n/a"
+    try:
+        parsed = datetime.fromisoformat(raw_value.replace("Z", "+00:00"))
+        return parsed.astimezone().strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return raw_value
+
+
+def _session_label(session: dict) -> str:
+    title = session.get("title") or "Untitled session"
+    timestamp = _format_session_timestamp(session.get("last_activity_at"))
+    return f"{title} · {timestamp}"
+
+
+def _active_session_key(client_id: str) -> str:
+    return f"query_active_session_{client_id}"
+
+
+def _resolve_active_session_id(client_id: str, sessions: list[dict]) -> str | None:
+    key = _active_session_key(client_id)
+    available_ids = [session["id"] for session in sessions]
+    active_id = st.session_state.get(key)
+    if active_id not in available_ids:
+        active_id = available_ids[0] if available_ids else None
+        st.session_state[key] = active_id
+    return active_id
 
 
 def render_query():
@@ -299,22 +343,109 @@ def render_query():
         st.info("Create a client before starting a chat.")
         return
 
+    active_name = st.session_state.get("query_active_client_name")
+    if active_name not in client_names:
+        active_name = client_names[0]
+        st.session_state["query_active_client_name"] = active_name
+
+    st.session_state["query_active_client_id"] = client_options[active_name]
+    st.session_state.setdefault("query_reasoning_effort", "medium")
+
     with st.sidebar:
-        selected_name = st.selectbox(
-            "Client workspace",
-            client_names,
-            key="query_client",
-            help="Every answer is limited to documents for this client.",
+        with st.form("query_workspace_form"):
+            selected_name = st.selectbox(
+                "Client workspace",
+                client_names,
+                index=max(
+                    0,
+                    (
+                        client_names.index(st.session_state["query_active_client_name"])
+                        if st.session_state["query_active_client_name"] in client_names
+                        else 0
+                    ),
+                ),
+                help="Every answer is limited to documents for this client.",
+            )
+            if st.form_submit_button(
+                "Apply workspace",
+                icon=":material/check:",
+                type="primary",
+                width="stretch",
+            ):
+                st.session_state["query_active_client_name"] = selected_name
+                st.session_state["query_active_client_id"] = client_options[
+                    selected_name
+                ]
+                st.rerun()
+
+        selected_name = st.session_state["query_active_client_name"]
+        selected_client_id = st.session_state["query_active_client_id"]
+        sessions = api.list_chat_sessions(selected_client_id, limit=100)
+        active_session_id = _resolve_active_session_id(selected_client_id, sessions)
+
+        if sessions:
+            session_ids = [session["id"] for session in sessions]
+            selected_session_id = st.selectbox(
+                "Session",
+                session_ids,
+                index=max(
+                    0,
+                    (
+                        session_ids.index(active_session_id)
+                        if active_session_id in session_ids
+                        else 0
+                    ),
+                ),
+                format_func=lambda sid: _session_label(
+                    next(session for session in sessions if session["id"] == sid)
+                ),
+                help="Sessions are isolated by client. Semantic memory still draws relevant context from other sessions.",
+            )
+            st.session_state[_active_session_key(selected_client_id)] = (
+                selected_session_id
+            )
+            active_session_id = selected_session_id
+        else:
+            st.caption("No session yet. Ask a question to start one automatically.")
+
+        selected_reasoning_effort = st.selectbox(
+            "Reasoning effort",
+            REASONING_EFFORT_OPTIONS,
+            index=max(
+                0,
+                (
+                    REASONING_EFFORT_OPTIONS.index(
+                        st.session_state.get("query_reasoning_effort", "medium")
+                    )
+                    if st.session_state.get("query_reasoning_effort", "medium")
+                    in REASONING_EFFORT_OPTIONS
+                    else 1
+                ),
+            ),
+            help="Controls response depth. Applied when OpenAI Responses mode is enabled.",
         )
-        selected_client_id = client_options[selected_name]
+        st.session_state["query_reasoning_effort"] = selected_reasoning_effort
 
         if st.button(
-            "Clear chat",
+            "New session",
+            icon=":material/add_circle:",
+            key="new_chat_session",
+            width="stretch",
+        ):
+            created_session = api.create_chat_session(selected_client_id)
+            st.session_state[_active_session_key(selected_client_id)] = created_session[
+                "id"
+            ]
+            st.rerun()
+
+        if st.button(
+            "Clear session",
             icon=":material/delete:",
             key="clear_chat",
             width="stretch",
+            disabled=not bool(active_session_id),
         ):
-            st.session_state.chat_history_by_client[selected_client_id] = []
+            api.clear_chat_session(active_session_id)
             st.rerun()
 
         if st.button(
@@ -323,18 +454,34 @@ def render_query():
             key="refresh_query_clients",
             width="stretch",
         ):
-            st.session_state.pop("clients", None)
+            bump_cache_revision(CLIENTS_CACHE_KEY)
             st.rerun()
 
-    chat_history = _get_chat_history(selected_client_id)
-
-    if pending := st.session_state.pop("pending_question", None):
-        _submit_question(api, selected_client_id, pending)
-        st.rerun()
-
+    sessions = api.list_chat_sessions(selected_client_id, limit=100)
+    active_session_id = _resolve_active_session_id(selected_client_id, sessions)
+    chat_history = (
+        api.list_chat_messages(active_session_id, limit=500)
+        if active_session_id
+        else []
+    )
     for message in chat_history:
         _render_chat_message(message)
 
     if question := st.chat_input(f"Ask about {selected_name}'s documents"):
-        _submit_question(api, selected_client_id, question.strip())
-        st.rerun()
+        trimmed = question.strip()
+        if trimmed:
+            try:
+                result = _submit_question(
+                    api,
+                    selected_client_id,
+                    trimmed,
+                    st.session_state.get("query_reasoning_effort", "medium"),
+                    active_session_id,
+                )
+                returned_session_id = result.get("session_id")
+                if returned_session_id:
+                    st.session_state[_active_session_key(selected_client_id)] = (
+                        returned_session_id
+                    )
+            except Exception as exc:
+                st.error(str(exc))

@@ -5,8 +5,8 @@ Run:
     uv run python -m app.scripts.setup_check
 """
 
-from __future__ import annotations
 
+import logging
 import sys
 import warnings
 from pathlib import Path
@@ -20,6 +20,7 @@ if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from app.core.config import settings
+from app.core.logging_config import configure_logging
 
 SPARSE_VECTOR_NAME = "text-sparse-new"
 
@@ -28,6 +29,21 @@ warnings.filterwarnings(
     message="Api key is used with an insecure connection.",
     category=UserWarning,
 )
+
+configure_logging()
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+logger.propagate = False
+
+for handler in logging.getLogger().handlers:
+    if isinstance(handler, logging.FileHandler):
+        if handler not in logger.handlers:
+            logger.addHandler(handler)
+
+
+def emit(message: str, *, level: int = logging.INFO) -> None:
+    print(message)
+    logger.log(level, message)
 
 
 def check_snowflake() -> bool:
@@ -42,8 +58,8 @@ def check_snowflake() -> bool:
     }
     missing = [name for name, value in required_values.items() if not value]
     if missing:
-        print("[FAIL] Snowflake: missing required settings:")
-        print(f"       {', '.join(missing)}")
+        emit("[FAIL] Snowflake: missing required settings:", level=logging.ERROR)
+        emit(f"       {', '.join(missing)}", level=logging.ERROR)
         return False
 
     conn_str = (
@@ -58,10 +74,10 @@ def check_snowflake() -> bool:
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-        print("[PASS] Snowflake: connection successful")
+        emit("[PASS] Snowflake: connection successful")
         return True
     except Exception as exc:
-        print(f"[FAIL] Snowflake: connection failed ({exc})")
+        emit(f"[FAIL] Snowflake: connection failed ({exc})", level=logging.ERROR)
         return False
     finally:
         engine.dispose()
@@ -71,75 +87,80 @@ def check_qdrant() -> bool:
     try:
         client = QdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY)
         client.get_collections()
-        print(f"[PASS] Qdrant: reachable at {settings.QDRANT_URL}")
+        emit(f"[PASS] Qdrant: reachable at {settings.QDRANT_URL}")
 
         if client.collection_exists(settings.COLLECTION_NAME):
             info = client.get_collection(settings.COLLECTION_NAME)
             sparse_vectors = info.config.params.sparse_vectors or {}
             if SPARSE_VECTOR_NAME in sparse_vectors:
-                print(
+                emit(
                     f"[PASS] Qdrant: collection '{settings.COLLECTION_NAME}' has hybrid sparse vectors"
                 )
             else:
-                print(
-                    f"[WARN] Qdrant: collection '{settings.COLLECTION_NAME}' exists but is dense-only"
+                emit(
+                    f"[WARN] Qdrant: collection '{settings.COLLECTION_NAME}' exists but is dense-only",
+                    level=logging.WARNING,
                 )
         else:
-            print(
-                f"[WARN] Qdrant: collection '{settings.COLLECTION_NAME}' not found yet (created on first index)"
+            emit(
+                f"[WARN] Qdrant: collection '{settings.COLLECTION_NAME}' not found yet (created on first index)",
+                level=logging.WARNING,
             )
 
         return True
     except Exception as exc:
-        print(f"[FAIL] Qdrant: connection failed ({exc})")
+        emit(f"[FAIL] Qdrant: connection failed ({exc})", level=logging.ERROR)
         return False
 
 
 def check_llm() -> bool:
-    api_key = settings.google_api_key
-    if settings.is_google_api_key_placeholder:
-        print("[FAIL] LLM: GOOGLE_API_KEY is missing or placeholder")
+    api_key = settings.ai_api_key
+    if settings.is_openai_api_key_placeholder:
+        emit("[FAIL] LLM: AI_API_KEY is missing or placeholder", level=logging.ERROR)
         return False
 
     try:
         response = requests.get(
-            "https://generativelanguage.googleapis.com/v1beta/models",
-            params={"key": api_key},
+            "https://api.openai.com/v1/models",
+            headers={"Authorization": f"Bearer {api_key}"},
             timeout=15,
         )
     except requests.RequestException as exc:
-        print(f"[FAIL] LLM: Gemini API unreachable ({exc})")
+        emit(f"[FAIL] LLM: OpenAI API unreachable ({exc})", level=logging.ERROR)
         return False
 
     if response.status_code == 200:
-        print("[PASS] LLM: GOOGLE_API_KEY accepted by Gemini API")
+        emit("[PASS] LLM: AI_API_KEY accepted by OpenAI API")
         return True
 
     if response.status_code in {401, 403}:
-        print("[FAIL] LLM: GOOGLE_API_KEY rejected by Gemini API")
+        emit("[FAIL] LLM: AI_API_KEY rejected by OpenAI API", level=logging.ERROR)
         return False
 
-    print(f"[FAIL] LLM: Gemini API returned status {response.status_code}")
+    emit(
+        f"[FAIL] LLM: OpenAI API returned status {response.status_code}",
+        level=logging.ERROR,
+    )
     return False
 
 
 def main() -> None:
-    print("RAG-System setup check")
-    print("=" * 50)
+    emit("RAG-System setup check")
+    emit("=" * 50)
 
     snowflake_ok = check_snowflake()
     qdrant_ok = check_qdrant()
     llm_ok = check_llm()
 
-    print("=" * 50)
+    emit("=" * 50)
     passed = int(snowflake_ok) + int(qdrant_ok) + int(llm_ok)
-    print(f"Checks passed: {passed}/3")
+    emit(f"Checks passed: {passed}/3")
 
     if passed == 3:
-        print("[READY] All required integrations are configured correctly.")
+        emit("[READY] All required integrations are configured correctly.")
         sys.exit(0)
 
-    print("[NOT READY] Fix failed checks and run again.")
+    emit("[NOT READY] Fix failed checks and run again.", level=logging.ERROR)
     sys.exit(1)
 
 

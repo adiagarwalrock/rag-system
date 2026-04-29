@@ -5,7 +5,6 @@ Document parser facade.
 - Non-PDF: legacy parsing path.
 """
 
-from __future__ import annotations
 
 import logging
 import uuid
@@ -63,16 +62,19 @@ def parse_document(
     if path.suffix.lower() == ".pdf" and settings.ENABLE_LAYOUT_AWARE_PDF:
         try:
             return parse_pdf_layout_aware(file_path, document_metadata)
-        except Exception:
+        except Exception as exc:
             if settings.STRICT_LAYOUT_AWARE_PDF_FAILURE:
                 logger.exception(
                     "Layout-aware PDF parsing failed for %s with strict mode enabled.",
                     path.name,
                 )
                 raise
-            logger.exception(
-                "Layout-aware PDF parsing failed for %s. Falling back to legacy parser.",
+            logger.warning(
+                "Layout-aware PDF parsing failed for %s. Falling back to legacy parser. "
+                "Cause=%s: %s",
                 path.name,
+                type(exc).__name__,
+                exc,
             )
 
     docs, units = _parse_legacy(file_path, document_metadata)

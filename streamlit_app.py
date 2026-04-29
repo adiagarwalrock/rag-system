@@ -1,7 +1,11 @@
 import streamlit as st
 
+from app.core.logging_config import configure_logging
+from app.core.ai_provider import initialize_ai_provider
 from app.core.config import validate_runtime_settings
-from ui.components.layout import render_account_sidebar, require_auth
+from ui.components.layout import render_runtime_sidebar
+
+configure_logging()
 
 st.set_page_config(
     page_title="RAG-System",
@@ -26,7 +30,11 @@ pg = st.navigation(
             "ui/pages/2_Documents.py", title="Documents", icon=":material/upload_file:"
         ),
         st.Page("ui/pages/3_Clients.py", title="Clients", icon=":material/domain:"),
-        st.Page("ui/pages/4_Quality.py", title="Quality", icon=":material/monitoring:"),
+        st.Page(
+            "ui/pages/4_Quality.py",
+            title="Quality (pre-alpha)",
+            icon=":material/monitoring:",
+        ),
         st.Page(
             "ui/pages/5_Qdrant_Inspector.py",
             title="Qdrant Inspector",
@@ -38,8 +46,8 @@ pg = st.navigation(
 
 def main():
     validate_runtime_settings()
-    require_auth()
-    render_account_sidebar()
+    initialize_ai_provider()
+    render_runtime_sidebar()
     pg.run()
 
 

@@ -1,3 +1,4 @@
+from app.db.models.chat import ChatMessage, ChatSession
 from app.db.models.client import Client
 from app.db.models.document import (
     ConflictLog,
@@ -8,14 +9,11 @@ from app.db.models.document import (
     RetrievalLog,
     VectorNodeRegistry,
 )
-from app.db.models.user import Role, User, UserClientAccess, UserRole
 
 __all__ = [
-    "User",
-    "Role",
-    "UserRole",
-    "UserClientAccess",
     "Client",
+    "ChatSession",
+    "ChatMessage",
     "Document",
     "DocumentVersion",
     "IngestionJob",

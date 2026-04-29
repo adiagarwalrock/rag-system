@@ -1,9 +1,8 @@
 import pytest
 
+from app.core.config import settings
 from app.db.models import ConflictLog, QueryLog, RetrievalLog, VectorNodeRegistry
 from app.services import query_service
-
-from app.core.config import settings
 
 VECTOR_COLLECTION = settings.VECTOR_COLLECTION
 
@@ -11,7 +10,6 @@ VECTOR_COLLECTION = settings.VECTOR_COLLECTION
 def test_execute_query_persists_query_retrieval_and_conflict_logs(
     db_session, seeded_entities, monkeypatch
 ):
-    user = seeded_entities["user"]
     client = seeded_entities["client"]
     document = seeded_entities["document"]
 
@@ -28,11 +26,19 @@ def test_execute_query_persists_query_retrieval_and_conflict_logs(
     db_session.commit()
 
     class FakeRetriever:
-        def __init__(self, client_id: str):
+        def __init__(
+            self,
+            client_id: str,
+            reasoning_effort: str = "medium",
+            conversation_context: dict | None = None,
+        ):
             self.client_id = client_id
+            self.reasoning_effort = reasoning_effort
+            self.conversation_context = conversation_context
 
         def query(self, question: str) -> dict:
             assert self.client_id == client.id
+            assert self.reasoning_effort == "medium"
             assert question == "What changed in v2?"
             return {
                 "answer": "Policy v2 changes renewal terms.",
@@ -57,7 +63,6 @@ def test_execute_query_persists_query_retrieval_and_conflict_logs(
     result = query_service.execute_query(
         question="What changed in v2?",
         client_id=client.id,
-        user_id=user.id,
         db=db_session,
     )
 
@@ -94,12 +99,18 @@ def test_execute_query_persists_query_retrieval_and_conflict_logs(
 def test_execute_query_marks_query_log_failed_on_retrieval_error(
     db_session, seeded_entities, monkeypatch
 ):
-    user = seeded_entities["user"]
     client = seeded_entities["client"]
 
     class FailingRetriever:
-        def __init__(self, client_id: str):
+        def __init__(
+            self,
+            client_id: str,
+            reasoning_effort: str = "medium",
+            conversation_context: dict | None = None,
+        ):
             self.client_id = client_id
+            self.reasoning_effort = reasoning_effort
+            self.conversation_context = conversation_context
 
         def query(self, question: str) -> dict:
             raise RuntimeError("simulated retrieval failure")
@@ -110,7 +121,6 @@ def test_execute_query_marks_query_log_failed_on_retrieval_error(
         query_service.execute_query(
             question="Why did this fail?",
             client_id=client.id,
-            user_id=user.id,
             db=db_session,
         )
 

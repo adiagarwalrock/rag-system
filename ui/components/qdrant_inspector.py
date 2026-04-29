@@ -377,7 +377,11 @@ def _group_points_by_document(points: list[dict[str, Any]]) -> list[dict[str, An
             }
         )
         client_ids = sorted(
-            {str(client_id) for client_id in (p.get("client_id") for p in points_in_group) if client_id}
+            {
+                str(client_id)
+                for client_id in (p.get("client_id") for p in points_in_group)
+                if client_id
+            }
         )
 
         result.append(

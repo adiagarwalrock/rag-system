@@ -1,5 +1,6 @@
 import logging
 
+from app.core.logging_config import configure_logging
 from app.db.base import Base
 from app.db.models.client import Client
 from app.db.models.document import (
@@ -8,12 +9,10 @@ from app.db.models.document import (
     IngestionJob,
     VectorNodeRegistry,
 )
-
-# Import all models to ensure they are registered with Base.metadata
-from app.db.models.user import Role, User, UserClientAccess, UserRole
 from app.db.snowflake import engine
 
-logging.basicConfig(level=logging.INFO)
+configure_logging()
+
 logger = logging.getLogger(__name__)
 
 

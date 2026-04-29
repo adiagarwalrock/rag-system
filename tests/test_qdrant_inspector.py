@@ -108,7 +108,10 @@ def test_normalize_exposes_separate_metadata_and_parsed_text():
 
     assert normalized is not None
     assert normalized["parsed_text"] == "Social Content Platform"
-    assert normalized["node_metadata"]["document_id"] == "46882477-afe3-4ec9-9790-250987a857ed"
+    assert (
+        normalized["node_metadata"]["document_id"]
+        == "46882477-afe3-4ec9-9790-250987a857ed"
+    )
     assert normalized["top_level_metadata"]["document_id"] is None
     assert "_node_content" not in normalized["top_level_metadata"]
 

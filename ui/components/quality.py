@@ -28,7 +28,6 @@ from app.evals import (
 from ui.components.layout import render_page_shell
 from ui.components.utils import get_client_options
 
-
 DEFAULT_RETRIEVAL_CASES = [
     {
         "query": "What changed in the latest policy version?",
@@ -334,9 +333,7 @@ def _render_live_telemetry_tab(client_id: str | None, client_name: str):
                     "conflicts": int(row.conflicts or 0),
                 }
             )
-        st.dataframe(
-            pd.DataFrame(query_rows), width="stretch", hide_index=True
-        )
+        st.dataframe(pd.DataFrame(query_rows), width="stretch", hide_index=True)
     else:
         st.caption("No queries recorded yet.")
 
@@ -357,9 +354,7 @@ def _render_live_telemetry_tab(client_id: str | None, client_name: str):
                     ),
                 }
             )
-        st.dataframe(
-            pd.DataFrame(ingestion_rows), width="stretch", hide_index=True
-        )
+        st.dataframe(pd.DataFrame(ingestion_rows), width="stretch", hide_index=True)
     else:
         st.caption("No ingestions recorded yet.")
 

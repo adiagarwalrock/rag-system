@@ -15,5 +15,11 @@ services:
       - "8501:8501"
     env_file:
       - .env
+    environment:
+      RAW_DATA_DIR: /app/data/raw
+      PARSED_ARTIFACTS_DIR: /app/artifacts/parsed
+    volumes:
+      - ./data/raw:/app/data/raw
+      - ./artifacts/parsed:/app/artifacts/parsed
     depends_on:
       - qdrant

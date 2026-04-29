@@ -5,7 +5,7 @@ showSidebarNavigation = true
 gatherUsageStats = false
 
 [server]
-serverAddress = "0.0.0.0"
+address = "0.0.0.0"
 runOnSave = false
 headless = true
 enableCORS = true
@@ -23,9 +23,9 @@ level = "info"
 messageFormat = "%(asctime)s %(message)s"
 
 [theme]
-base = "light"
+base = "dark"
 primaryColor = "#155EEF"
-backgroundColor = "#F6F8FB"
-secondaryBackgroundColor = "#FFFFFF"
-textColor = "#101828"
+# backgroundColor = "#F6F8FB"
+# secondaryBackgroundColor = "#FFFFFF"
+# textColor = "#101828"
 font = "sans serif"

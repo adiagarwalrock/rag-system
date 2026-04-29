@@ -7,7 +7,20 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-TABLE_QUERY_TERMS = ("table", "row", "rows", "column", "columns")
+TABLE_QUERY_TERMS = (
+    "table",
+    "row",
+    "rows",
+    "column",
+    "columns",
+    "matrix",
+    "tabular",
+    "breakdown",
+    "top ",
+    "top-",
+    "portfolio composition",
+    "market mix",
+)
 CHART_QUERY_TERMS = (
     "chart",
     "graph",
@@ -16,6 +29,11 @@ CHART_QUERY_TERMS = (
     "map",
     "diagram",
     "figure",
+    "legend",
+    "infographic",
+    "pie",
+    "bar",
+    "line",
 )
 IMAGE_QUERY_TERMS = ("image", "images", "screenshot", "screenshots", "visual")
 NUMERIC_QUERY_TERMS = (
@@ -80,7 +98,7 @@ def _temporal_adjustment(
 
     is_current = _safe_bool(metadata.get("is_current"), None)
     if is_current is True:
-        adjustment += 0.1
+        adjustment += 0.1 if prefer_latest else 0.01
     elif is_current is False and prefer_latest:
         adjustment -= 0.05
 
@@ -137,6 +155,7 @@ def _structural_adjustment(metadata: dict, query: str | None) -> float:
     wants_chart = any(term in normalized_query for term in CHART_QUERY_TERMS)
     wants_image = any(term in normalized_query for term in IMAGE_QUERY_TERMS)
     wants_numeric = any(term in normalized_query for term in NUMERIC_QUERY_TERMS)
+    wants_structured = wants_table or wants_chart or "legend" in normalized_query
 
     is_table_chunk = chunk_type in {
         "full_table",
@@ -167,6 +186,8 @@ def _structural_adjustment(metadata: dict, query: str | None) -> float:
         adjustment += 0.06
     if wants_numeric and _safe_bool(metadata.get("contains_numeric_data"), False):
         adjustment += 0.03
+    if wants_structured and (is_table_chunk or is_chart_chunk):
+        adjustment += 0.06
 
     return min(adjustment, 0.2)
 

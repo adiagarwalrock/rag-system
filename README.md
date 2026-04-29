@@ -1,183 +1,212 @@
 # RAG System
 
-A comprehensive RAG system featuring an independent, loosely-coupled presentation layer (Streamlit) alongside a discrete REST API (FastAPI) that share a common internal Python services backbone. This design enables the UI to remain incredibly snappy by directly hooking into databases and ingestion logic, while simultaneously allowing for robust REST communication for potential downstream systems.
+A Python monolith for client-scoped document RAG with two entry points:
+
+- Streamlit app (`streamlit_app.py`) as the primary UI.
+- FastAPI app (`api.py`) as an optional REST surface.
+
+Both entry points share the same service layer in `app/services/*`.
+
+## Current Status
+
+- UI and API both use the same in-process business logic (no duplicated workflow code).
+- Ingestion runs through a background queue with worker threads.
+- Retrieval uses hybrid Qdrant search (dense + sparse) with dense fallback.
+- Session-aware chat is enabled, including cross-session semantic memory.
+- Access control is removed; runtime is internal single-tenant mode.
+- Runtime startup requires a valid OpenAI-compatible API key (`OPENAI_API_KEY` / `AI_API_KEY`).
 
 ## Requirements
 
-- Python 3.12+ (Using `uv`)
-- Docker & Docker Compose
+- Python 3.12+
+- `uv`
+- Docker + Docker Compose
+- `npm` (for global `@llamaindex/liteparse` install during setup)
 
-### Install uv
+## Quick Start
 
-If `uv` is not installed yet:
+Follow these steps from the repository root to get the application running:
 
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-Windows (PowerShell):
-
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-Verify installation:
-
-```bash
-uv --version
-```
-
-## Global Setup
-
-Run all commands from the repository root.
-
-### Quick Start
-
-After cloning, run the setup script to install all dependencies (requires `uv` and `npm`):
-
-```bash
-./setup.sh
-```
-
-### Manual Setup
-
-1. Create your environment file:
+1. **Set up environment variables**  
+   Copy the example environment file and configure the minimum required variables:
 
    ```bash
    cp .env.example .env
    ```
 
-2. Update `.env` values:
-   - Set all `SNOWFLAKE_*` fields for Snowflake.
-   - Set `GOOGLE_API_KEY` for real LLM and embedding responses.
-   - Keep `QDRANT_URL` as `http://localhost:6333` for local Docker.
-   - If `SNOWFLAKE_*` values are omitted, the app uses local SQLite (`vectera_local.db`) as a fallback.
-
-3. Install dependencies:
+   *If you are using a minimal configuration, these are the key variables to set:*
 
    ```bash
-   uv sync
+   # OpenAI-compatible key (required)
+   OPENAI_API_KEY=...
+   OPENAI_USE_RESPONSES=true
+
+   # Qdrant connection
+   QDRANT_URL=http://localhost:6333
+   QDRANT_API_KEY=
+
+   # Optional Snowflake (if omitted, runtime falls back to local SQLite rag_local.db)
+   # Note: If using Snowflake, ensure the database and schema are created beforehand.
+   SNOWFLAKE_ACCOUNT=...
+   SNOWFLAKE_USER=...
+   SNOWFLAKE_PASSWORD=...
+   SNOWFLAKE_DATABASE=...
+   SNOWFLAKE_SCHEMA=PUBLIC
+   SNOWFLAKE_WAREHOUSE=...
+   SNOWFLAKE_ROLE=...
    ```
 
-4. Start local vector database (Qdrant):
+2. **Run the setup script**  
+   This installs Python dependencies via `uv` and necessary npm packages:
+
+   ```bash
+   ./setup.sh
+   ```
+
+3. **Start Qdrant**  
+   You can run Qdrant locally via Docker:
 
    ```bash
    docker-compose up -d qdrant
    ```
 
-5. (Optional) Seed a local admin account if auth is enabled:
+   *Alternative:* You can use Qdrant Cloud on their free hosting plan: <https://qdrant.tech/documentation/cloud/>. If using the cloud plan, simply set `QDRANT_URL` and `QDRANT_API_KEY` in your `.env` to match your cluster instead of running the docker command.
+
+4. **Start the Streamlit Application**  
 
    ```bash
-   uv run python -m app.scripts.seed_admin
+   uv run streamlit run streamlit_app.py
    ```
 
-6. Run setup checks for Snowflake, Qdrant, and LLM config:
+   Streamlit is available at `http://localhost:8501`.
+
+5. **(Optional) Start the API Server**  
 
    ```bash
-   uv run python -m app.scripts.setup_check
+   uv run uvicorn api:app --reload --port 8000
    ```
 
-   This validates:
-   - Snowflake connectivity with `SELECT 1`
-   - Qdrant connectivity and collection readiness
-   - Google API key validity against the Gemini API
+   API docs will be available at `http://localhost:8000/docs`.
 
-## Running the UI (Streamlit)
+## Runtime Wiring
 
-The primary UI entry point leverages Streamlit. It directly utilizes internal models and services (`app.services.*`) without executing HTTP requests internally.
+- `streamlit_app.py` loads multipage UI routes from `ui/pages/*`.
+- UI pages call `ui/lib/api.py` (`VecteraCore`), which invokes `app/services/*` directly.
+- There is no internal HTTP hop between Streamlit and business services.
+- `api.py` exposes the same workflows over REST via `app/api/routes_*`.
+
+## Architecture and Boundaries
+
+See [architecture.md](./architecture.md) for the full system map. Current boundaries are:
+
+- Orchestration: `app/services/*`
+- Ingestion/parsing: `app/ingestion/*`
+- Retrieval: `app/retrieval/*`
+- Vector store integration: `app/indexing/vector_store.py`
+- Relational data/session state: `app/db/*`
+
+## Environment and Integrations
+
+Configuration is loaded from `.env` via `pydantic-settings` (`app/core/config.py`).
+
+### API key behavior
+
+- `AI_API_KEY` accepts aliases including `OPENAI_API_KEY`.
+- Placeholder or missing keys fail startup validation (`validate_runtime_settings`).
+- AI provider initialization is centralized in `app/core/ai_provider.py`.
+
+### Database behavior
+
+- If `SNOWFLAKE_ACCOUNT` and `SNOWFLAKE_USER` are set, SQLAlchemy uses Snowflake.
+- Otherwise, runtime falls back to local SQLite (`rag_local.db`).
+- `api.py` ensures schema at startup with `ensure_runtime_schema(engine)`.
+
+### Qdrant behavior
+
+- Main collection uses `settings.COLLECTION_NAME` (default `rag_collection_oai`).
+- Retrieval prefers hybrid dense+sparse mode; dense fallback is automatic.
+- Vector dimension mismatches are enforced and can require collection recreation.
+
+## Ingestion Flow (Current)
+
+1. Upload is validated and persisted (`Document`, `IngestionJob`) in queued state.
+2. Raw file is saved to `data/raw`.
+3. Background workers process queued ingestion tasks.
+4. Parsing:
+   - PDF uses layout-aware pipeline by default (with legacy fallback unless strict mode is enabled).
+   - DOCX/PPTX and fallback paths use the legacy parser.
+5. Version metadata is resolved and persisted (`DocumentVersion` + supersession logic).
+6. Nodes are indexed into Qdrant and mapped in `VectorNodeRegistry`.
+7. Document/job statuses are updated (`queued` -> `processing` -> `indexed`/`failed`).
+
+## Retrieval and Chat Flow (Current)
+
+1. Queries are scoped by `client_id`.
+2. Optional query expansion is applied for comparative/visual/conflict prompts.
+3. Retrieval runs in hybrid mode with dense fallback.
+4. Deterministic reranking applies semantic + temporal + structural metadata signals.
+5. Conflict detection flags numeric disagreements across relevant sources.
+6. Citations are generated from selected evidence nodes.
+7. Grounded answer synthesis runs via configured OpenAI mode.
+8. Query logs, retrieval logs, and conflict logs are persisted.
+
+Chat orchestration (`ChatConversationService`) adds:
+
+- Session creation and message persistence.
+- Session summary refresh.
+- Cross-session semantic memory using a dedicated Qdrant chat-history collection.
+
+## Document Lifecycle Operations
+
+### Retry ingestion
+
+- Available for `failed`, `indexed`, or `completed` documents.
+- Requires original raw file to still exist in `data/raw`.
+
+UI: Document Library -> `Retry`  
+API: `POST /api/v1/documents/{document_id}/retry`
+
+### Delete document
+
+- Removes vectors, relational mappings, ingestion jobs, and raw file.
+- On failure, status is set to `deleting_failed`.
+
+UI: Document Library -> `Delete`  
+API: `DELETE /api/v1/documents/{document_id}?hard=true`
+
+## Verification
+
+For a dedicated guide on running tests and enterprise evaluation runs, see
+[`EVALUATION.md`](./EVALUATION.md).
+
+Full integration setup check:
 
 ```bash
-uv run streamlit run app.py --server.port 8502
+uv run python -m app.scripts.setup_check
 ```
 
-*UI will run on <http://localhost:8502>*
+The setup check is strict and expects all three to pass:
 
-## Running the API (FastAPI)
+- Snowflake connectivity
+- Qdrant connectivity
+- OpenAI key validation
 
-If you wish to interact with Vectera programmatically or build an alternate frontend down the line, the FastAPI interface is separately available.
+Test suite:
 
 ```bash
-uv run uvicorn api:app --reload --port 8000
+uv run pytest
 ```
 
-*API will run on <http://localhost:8000>*
-*Swagger docs at <http://localhost:8000/docs>*
+Focused tests:
 
-## Architecture
+```bash
+uv run pytest tests/test_retrieval.py
+uv run pytest tests/test_retrieval.py::test_name
+```
 
-Please see [architecture.md](./architecture.md) for a comprehensive diagrammatic and structural breakdown of the application architecture.
+## Known Constraints
 
-## Implementation Details
-
-### Database (Snowflake / SQLite)
-
-- The system heavily relies on SQLAlchemy ORM using Snowflake for production, with a seamless fallback to a local SQLite database (`vectera_local.db`).
-- It tracks relational metadata such as Client workspaces, Document families/versions, Vector registry metadata mappings (mapping Qdrant node IDs to physical documents), and Query Logs to enable robust document management without overloading the vector database with broad document relationship logic.
-
-### Chunking Strategy
-
-- Input documents (PDF, DOCX, PPTX) are processed natively via `LlamaIndex`'s specific file readers in `app/ingestion/parser.py`.
-- During parsing, structural data (like page numbers and slide numbers) are extracted and attached to chunks.
-- For non-layout-aware documents, the pipeline uses `SemanticSplitterNodeParser` with configurable `SEMANTIC_SPLITTER_BREAKPOINT_PERCENTILE` and `SEMANTIC_SPLITTER_BUFFER_SIZE`.
-- Layout-aware PDF ingestion keeps its specialized artifact-aware chunking path (tables/charts/figures) and skips this generic splitter stage.
-- Optional pipeline enhancements include `TitleExtractor` when API keys are available to fortify LLM metadata contexts.
-
-### Retrieval Approach
-
-Retrieval relies on a specialized, multi-stage retrieval pipeline (`app/retrieval/retriever.py`):
-
-1. **Vector Retrieval**: Starts with client-isolated `ExactMatchFilter` retrieval executing against the Qdrant backend, pulling the top `K+5` nearest neighbors using `gemini-embedding-001`.
-2. **Authority & Recency Reranking**: Re-scores outputs pushing documents with higher authority indicators or newer internal version rankings to the top (`reranker.py`).
-3. **Temporal Ranking**: Adjusts scores logically based on explicitly resolved `effective_from`/`effective_to` dates relative to the current UTC timestamp, penalizing expired sources (`temporal_ranker.py`).
-4. **Citation Building**: Translates standard chunk nodes into explicitly labeled citation structures that are fed directly inside the synthesized generation prompt, referencing source text precisely via `page_num` and `version_label`.
-
-### Handling Document Versioning
-
-- Versioning is deeply ingrained. `version_resolver.py` scans filename and snippet inputs during ingestion to identify patterns corresponding to quarters (e.g., Q1_2024), years, explicit version numbers (v2), and status cues (draft/final).
-- Parsed documents are mapped into a unified `document_family`.
-- When new, current variants of the same document family are uploaded, older versions are dynamically identified and marked `is_current = False`.
-- Non-current versions are penalized during the retrieval phase but kept in the index in case historical contexts are necessary.
-
-### Handling Conflicting Information
-
-- `conflict_detector.py` operates automatically at the end of the retrieval pipeline to flag contradictions spanning retrieved context chunks.
-- It clusters retrieved vectors based on the document or version groups and uses regex-based heuristic extractions across source strings to find "numeric disagreements" mapping to identical topics.
-- If conflicts are identified (for instance, versions containing different numeric facts referencing similar contexts like quarterly revenue), it builds warning alerts pushed directly into the Streamlit UI, helping operators cross-check the authoritative source rather than receiving obfuscated hallucinations.
-
-### Handling Charts/Tables
-
-- Tables and visual chart data representation are partially handled during parsing via textual heuristic signals.
-- `parser.py` flags specific pages/chunks with indicators (`table_detected = True`, `chart_detected = True`) by counting structured text artifacts like tabs, pipemarks (`|`), or references to standard diagram nomenclature ("Figure A", "graph").
-- These indicators are embedded as metadata for LlamaIndex pipeline filtering and context awareness but do not currently rebuild tabular markdown extraction or utilize multimodal Computer Vision reading.
-
-### Known Limitations
-
-- **Ingestion Blocking**: Document processing and parsing routines operate synchronously. Uploading large multi-hundred-page files blocks the Streamlit frontend.
-- **Tabular Insight Limitations**: Because the system does not utilize Vision-Language Models (VLMs) or advanced OCR, complex nested tables or image-based visual charts cannot be queried effectively. It relies strictly on textual scrape artifacts.
-- **Conflict Regex Brittleness**: The numeric extraction algorithm in `conflict_detector.py` handles standard financial phraseology ("X grew by Y%") but misses abstract prose contradictions effectively due to the absence of dedicated LLM contradiction verification.
-
-### What I would improve with more time
-
-- **Asynchronous Task Processing**: Shift the ingestion pipeline (embedding, semantic extractions, vector insertions) into a Celery/Redis queue or background FastAPI task pattern to untether the UI thread.
-- **Multimodal Visual Embeddings**: Implement LlamaIndex's vision pipelines using a multimodal Gemini model to correctly ingest visual graphs and convert bounded tables into raw markdown formats during the ingestion phase for precise layout querying.
-- **Advanced Cross-Encoder Reranking**: Swap the basic additive metadata-heuristics reranker for a Neural Cross-Encoder logic model (like Cohere Rerank) that drastically improves top-k contextual sorting over plain embeddings without degrading performance.
-
-## Operations & Document Lifecycle
-
-Documents uploaded to Vectera move through several ingestion states: `processing` -> `indexed` (or `failed`).
-
-### Retrying Failed Documents
-
-If a document upload fails (e.g., due to an API timeout or malformed parser data), the status will be marked as `failed` and an `error_message` will be preserved in the latest `IngestionJob`.
-
-- **Method**: Navigate to the Streamlit UI, open the Document Details panel, and click **Retry Ingestion**. Alternatively, trigger a POST call to `/api/v1/documents/{document_id}/retry`.
-- **Note**: The original uploaded raw file must still exist in `data/raw/` in order to retry successfully.
-
-### Deleting Documents
-
-Documents can be permanently retired from the vector search space using the delete feature.
-
-- **Method**: From the Document Details panel, click **Delete Document** and confirm. Alternatively, issue a `DELETE /api/v1/documents/{document_id}?hard=true`.
-- **Behavior**: This attempts a coordinated wipe. It removes vector node points from Qdrant, drops associated metadata records and chunks from the database, removes the physical file from `data/raw/`, and deletes the database record entirely. If vector deletion fails partially, the status will downgrade to `deleting_failed` to signal an operator.
-
-**Database Schemas and Status Tracking**: We utilize an implicit string-based enum for statuses which allows for in-place workflow expansion without destructive SQL schema migrations. No manual `CREATE TABLE` alterations are required unless you add entirely new column properties.
+- Startup validation fails without a real AI API key.
+- `setup_check` can fail even when runtime fallback to SQLite is acceptable.
+- Changing embedding/vector dimensions against an existing Qdrant collection may require recreating it.
+- Chat session management is currently exposed through the internal Streamlit adapter (`ui/lib/api.py`), while REST query endpoints accept `session_id` but do not provide dedicated session CRUD routes.
