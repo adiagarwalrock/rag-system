@@ -9,12 +9,9 @@ from llama_index.core import Settings as LlamaSettings
 from llama_index.core.base.llms.types import (
     TextBlock,
 )
+from pydantic import BaseModel
 
-from app.core.ai_factory import DEFAULT_REASONING_EFFORT as _DEFAULT_REASONING_EFFORT
-from app.core.ai_factory import GEMINI_PROVIDER
-from app.core.ai_factory import (
-    SUPPORTED_REASONING_EFFORTS as _SUPPORTED_REASONING_EFFORTS,
-)
+from app.core.ai_factory import AIProvider
 from app.core.ai_factory import (
     AIProviderFactoryResolver,
     is_placeholder_api_key,
@@ -25,8 +22,6 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 _CONFIGURED_SIGNATURE: tuple[Any, ...] | None = None
-DEFAULT_REASONING_EFFORT = _DEFAULT_REASONING_EFFORT
-SUPPORTED_REASONING_EFFORTS = _SUPPORTED_REASONING_EFFORTS
 
 
 def _build_provider_resolver() -> AIProviderFactoryResolver:
@@ -37,7 +32,9 @@ def _build_provider_resolver() -> AIProviderFactoryResolver:
     )
 
 
-def _resolve_factory(model: str | None) -> tuple[str, Any, AIProviderFactoryResolver]:
+def _resolve_factory(
+    model: str | None,
+) -> tuple[AIProvider, Any, AIProviderFactoryResolver]:
     resolver = _build_provider_resolver()
     provider = resolver.resolve_provider(model=model)
     factory = resolver.get_factory(provider)
@@ -84,6 +81,7 @@ def invoke_llm_chat(
     *,
     model: str,
     input_messages: list[dict[str, Any]],
+    structured_output_cls: type[BaseModel] | None = None,
     reasoning_effort: str | None = None,
     max_output_tokens: int | None = None,
     prompt_cache_key: str | None = None,
@@ -95,6 +93,8 @@ def invoke_llm_chat(
     """Invoke a chat completion through the centralized LlamaIndex provider."""
     provider, factory, _ = _resolve_factory(model)
     llm = get_llm(model=model, reasoning_effort=reasoning_effort)
+    if structured_output_cls is not None:
+        llm = llm.as_structured_llm(structured_output_cls)
     messages = factory.to_chat_messages(input_messages)
     runtime_kwargs = factory.build_chat_runtime_kwargs(
         max_output_tokens=max_output_tokens,
@@ -106,7 +106,7 @@ def invoke_llm_chat(
         use_responses_api=settings.OPENAI_USE_RESPONSES,
     )
 
-    if provider == GEMINI_PROVIDER:
+    if provider == AIProvider.GEMINI:
         runtime_kwargs.pop("timeout", None)
         runtime_kwargs.pop("user", None)
 
@@ -189,7 +189,7 @@ def initialize_ai_provider(force: bool = False) -> None:
     LlamaSettings.embed_model = get_embeddings(api_key=embedding_api_key)
     _CONFIGURED_SIGNATURE = signature
 
-    if llm_provider == GEMINI_PROVIDER:
+    if llm_provider == AIProvider.GEMINI:
         llm_api_mode = "google_genai"
     else:
         llm_api_mode = (

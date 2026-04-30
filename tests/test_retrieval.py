@@ -1,4 +1,3 @@
-import app.retrieval.retriever as retriever_module
 from types import SimpleNamespace
 
 from llama_index.core.base.llms.types import TextBlock, ThinkingBlock
@@ -743,3 +742,108 @@ def test_extract_answer_and_reasoning_from_chat_falls_back_to_message_content():
 
     assert answer == "Tagged answer"
     assert reasoning == "Hidden reasoning"
+
+
+def test_numeric_intent_triggers_structured_evidence_without_table_keyword():
+    """Phase 1: queries with numeric intent should trigger structured injection."""
+    retriever = RAGRetriever("client-1", top_k=10)
+    ranked = [
+        _node(
+            f"text-{i}",
+            1.0 - (i * 0.01),
+            {"chunk_type": "body_text", "document_id": f"doc-{i}"},
+        )
+        for i in range(7)
+    ]
+    ranked.append(
+        _node(
+            "table-data",
+            0.3,
+            {
+                "chunk_type": "full_table",
+                "document_id": "doc-table",
+                "table_detected": True,
+            },
+        )
+    )
+
+    # Query has numeric intent ("revenue", "increase") but no word "table"
+    evidence = retriever._select_evidence_nodes(
+        "What was the revenue increase from 2023 to 2024?", ranked
+    )
+    chunk_types = [node.node.metadata.get("chunk_type") for node in evidence]
+
+    assert "full_table" in chunk_types
+
+
+def test_version_consistency_penalty_applied_for_single_version_query():
+    """Phase 4: non-comparison queries should penalize non-dominant versions."""
+    from app.retrieval.reranker import rerank_nodes
+
+    nodes = [
+        _node(
+            "v2-chunk-1",
+            0.9,
+            {
+                "document_id": "policy-doc",
+                "version_label": "v2",
+                "is_current": "true",
+            },
+        ),
+        _node(
+            "v2-chunk-2",
+            0.88,
+            {
+                "document_id": "policy-doc",
+                "version_label": "v2",
+                "is_current": "true",
+            },
+        ),
+        _node(
+            "v1-chunk",
+            0.85,
+            {
+                "document_id": "policy-doc",
+                "version_label": "v1",
+                "is_current": "false",
+            },
+        ),
+    ]
+
+    ranked = rerank_nodes(nodes, top_k=3, query="What is the cancellation policy?")
+
+    v1_node = next(n for n in ranked if n.node.node_id == "v1-chunk")
+    v2_node1 = next(n for n in ranked if n.node.node_id == "v2-chunk-1")
+
+    # v1 should have been penalized relative to v2
+    assert v1_node.score < v2_node1.score
+
+
+def test_version_consistency_penalty_skipped_for_comparison_query():
+    """Phase 4: comparison queries should NOT apply version penalty."""
+    from app.retrieval.reranker import rerank_nodes
+
+    nodes = [
+        _node(
+            "v2-chunk",
+            0.9,
+            {
+                "document_id": "policy-doc",
+                "version_label": "v2",
+            },
+        ),
+        _node(
+            "v1-chunk",
+            0.88,
+            {
+                "document_id": "policy-doc",
+                "version_label": "v1",
+            },
+        ),
+    ]
+
+    ranked = rerank_nodes(nodes, top_k=2, query="Compare v1 versus v2 changes")
+
+    v1_node = next(n for n in ranked if n.node.node_id == "v1-chunk")
+    # v1 should NOT be penalized (comparison query), so its score should be >= original 0.88
+    assert v1_node.score >= 0.85

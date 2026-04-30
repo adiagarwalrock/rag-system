@@ -1,10 +1,10 @@
-from typing import Any
 import uuid
-
-from llama_index.core.schema import BaseNode, NodeRelationship, RelatedNodeInfo
-from llama_index.core.node_parser import SemanticSplitterNodeParser
+from typing import Any
 
 from llama_index.core import Settings as LlamaSettings
+from llama_index.core.node_parser import SemanticSplitterNodeParser
+from llama_index.core.schema import BaseNode, NodeRelationship, RelatedNodeInfo
+
 from app.core.config import settings
 from app.indexing.vector_store import vector_store_manager
 

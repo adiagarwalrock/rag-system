@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from enum import Enum
 from typing import Any
 
 from google.genai import types as genai_types
@@ -17,11 +18,21 @@ from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.google_genai import GoogleGenAI
 from llama_index.llms.openai import OpenAI, OpenAIResponses
 
-DEFAULT_REASONING_EFFORT = "medium"
-SUPPORTED_REASONING_EFFORTS = {"low", "medium", "high"}
 
-OPENAI_PROVIDER = "openai"
-GEMINI_PROVIDER = "gemini"
+class SupportedReasoningEffort(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+DEFAULT_REASONING_EFFORT = SupportedReasoningEffort.MEDIUM
+SUPPORTED_REASONING_EFFORTS = SupportedReasoningEffort
+
+
+class AIProvider(str, Enum):
+    OPENAI = "openai"
+    GEMINI = "gemini"
+
 
 _PLACEHOLDER_API_KEYS = {
     "your_openai_api_key_here",
@@ -60,15 +71,18 @@ def is_placeholder_api_key(value: str | None) -> bool:
     return not key or key in _PLACEHOLDER_API_KEYS or key.startswith("your_")
 
 
-def normalize_reasoning_effort(reasoning_effort: str | None) -> str:
+def normalize_reasoning_effort(
+    reasoning_effort: str | None,
+) -> SupportedReasoningEffort:
     effort = (reasoning_effort or "").strip().lower()
-    if effort in SUPPORTED_REASONING_EFFORTS:
-        return effort
-    return DEFAULT_REASONING_EFFORT
+    try:
+        return SupportedReasoningEffort(effort)
+    except ValueError:
+        return DEFAULT_REASONING_EFFORT
 
 
 class BaseAIProviderFactory(ABC):
-    provider_name: str
+    provider_name: AIProvider
 
     @abstractmethod
     def create_llm(
@@ -152,7 +166,7 @@ class BaseAIProviderFactory(ABC):
 
 
 class OpenAIProviderFactory(BaseAIProviderFactory):
-    provider_name = OPENAI_PROVIDER
+    provider_name = AIProvider.OPENAI
 
     def create_llm(
         self,
@@ -221,7 +235,7 @@ class OpenAIProviderFactory(BaseAIProviderFactory):
 
 
 class GeminiProviderFactory(BaseAIProviderFactory):
-    provider_name = GEMINI_PROVIDER
+    provider_name = AIProvider.GEMINI
 
     def create_llm(
         self,
@@ -272,9 +286,28 @@ class GeminiProviderFactory(BaseAIProviderFactory):
         if cached_content:
             generation_config["cached_content"] = cached_content
 
-        if not generation_config:
-            return {}
-        return {"generation_config": generation_config}
+        kwargs: dict[str, Any] = {}
+        if generation_config:
+            kwargs["generation_config"] = generation_config
+
+        if safety_identifier:
+            kwargs["safety_settings"] = [
+                genai_types.SafetySetting(
+                    category=genai_types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                    threshold=genai_types.HarmBlockThreshold.BLOCK_NONE,
+                )
+            ]
+
+        if timeout_seconds is not None:
+            # Map timeout to GoogleGenAI's request_options.timeout
+            kwargs["request_options"] = {"timeout": timeout_seconds}
+
+        # user_tag can be mapped if LlamaIndex updates their Gemini integration
+        # For now we'll pass it, but invoke_llm_chat may pop it for safety
+        if user_tag:
+            kwargs["user"] = user_tag
+
+        return kwargs
 
     def _resolve_message_role(self, value: Any) -> MessageRole:
         role = super()._resolve_message_role(value)
@@ -286,7 +319,7 @@ class GeminiProviderFactory(BaseAIProviderFactory):
     def _build_reasoning_generation_config(
         *,
         model: str,
-        reasoning_effort: str,
+        reasoning_effort: str | SupportedReasoningEffort,
     ) -> genai_types.GenerateContentConfig:
         effort = normalize_reasoning_effort(reasoning_effort)
         normalized_model = model.lower()
@@ -325,19 +358,19 @@ class AIProviderFactoryResolver:
         self.gemini_api_key = normalize_api_key(gemini_api_key)
         self.google_api_key = normalize_api_key(google_api_key)
 
-    def resolve_provider(self, *, model: str | None) -> str:
+    def resolve_provider(self, *, model: str | None) -> AIProvider:
         if self.gemini_api_key or self.google_api_key:
-            return GEMINI_PROVIDER
+            return AIProvider.GEMINI
         if self.openai_api_key:
-            return OPENAI_PROVIDER
+            return AIProvider.OPENAI
 
         model_name = (model or "").strip().lower()
         if "gemini" in model_name:
-            return GEMINI_PROVIDER
-        return OPENAI_PROVIDER
+            return AIProvider.GEMINI
+        return AIProvider.OPENAI
 
-    def resolve_api_key(self, *, provider: str, fallback_key: str | None) -> str:
-        if provider == GEMINI_PROVIDER:
+    def resolve_api_key(self, *, provider: AIProvider, fallback_key: str | None) -> str:
+        if provider == AIProvider.GEMINI:
             return (
                 self.gemini_api_key
                 or self.google_api_key
@@ -346,7 +379,7 @@ class AIProviderFactoryResolver:
         return self.openai_api_key or normalize_api_key(fallback_key)
 
     @staticmethod
-    def get_factory(provider: str) -> BaseAIProviderFactory:
-        if provider == GEMINI_PROVIDER:
+    def get_factory(provider: AIProvider) -> BaseAIProviderFactory:
+        if provider == AIProvider.GEMINI:
             return GeminiProviderFactory()
         return OpenAIProviderFactory()

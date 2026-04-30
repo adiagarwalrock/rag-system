@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from collections import defaultdict
 from collections.abc import Iterable
@@ -725,7 +726,87 @@ def _base_chunk_metadata(
         "continuation_flag": continuation_flag,
         "figure_type": figure_type,
         "source_artifact_type": source_artifact_type,
+        "slide_purpose": _classify_slide_purpose(manifest),
+        "visible_page_num": _extract_visible_page_num(manifest),
     }
+
+
+_OVERVIEW_HEADING_KEYWORDS = (
+    "quick facts",
+    "fast facts",
+    "at a glance",
+    "key stats",
+    "key facts",
+    "headline stats",
+    "overview",
+    "portfolio highlights",
+    "company highlights",
+    "investment highlights",
+    "summary statistics",
+)
+
+
+def _classify_slide_purpose(manifest: "PageManifest | None") -> str:
+    """Classify a slide's primary purpose for retrieval priority boosting.
+
+    Returns one of: overview_stats | chart_analysis | table_data | narrative
+    """
+    if manifest is None:
+        return "narrative"
+
+    page_text_lower = (manifest.full_page_text or "").lower()
+
+    if any(kw in page_text_lower for kw in _OVERVIEW_HEADING_KEYWORDS):
+        return "overview_stats"
+
+    if manifest.page_class == "visual_heavy_page":
+        return "chart_analysis"
+
+    if manifest.page_class == "table_heavy_page":
+        return "table_data"
+
+    # Quick-facts slides: short text with dense numeric-labeled pairs
+    # Heuristic: high numeric density + short page text = stats slide
+    page_text = manifest.full_page_text or ""
+    if len(page_text) < 800 and numeric_density(page_text) > 0.08:
+        return "overview_stats"
+
+    return "narrative"
+
+
+_VISIBLE_PAGE_PATTERN = re.compile(
+    r"(?:^|\s)(\d{1,3})(?:\s*$)",  # standalone number at end of text
+    re.MULTILINE,
+)
+_PAGE_LABEL_PATTERN = re.compile(r"(?:page|slide|pg\.?)\s*(\d{1,3})", re.IGNORECASE)
+
+
+def _extract_visible_page_num(manifest: "PageManifest | None") -> int | None:
+    """Extract the visible slide/page number from page text, if present.
+
+    Investor decks typically show a page number in the footer (e.g. "14" or "Page 14").
+    Returns the extracted integer, or None if not found or ambiguous.
+    """
+    if manifest is None:
+        return None
+    text = (manifest.full_page_text or "").strip()
+    if not text:
+        return None
+
+    # Try "Page N" / "Slide N" pattern first (unambiguous)
+    for match in _PAGE_LABEL_PATTERN.finditer(text):
+        num = int(match.group(1))
+        if 1 <= num <= 300:
+            return num
+
+    # Fall back to standalone number at the very end of the page (footer)
+    tail = text[-120:]
+    for match in _VISIBLE_PAGE_PATTERN.finditer(tail):
+        num = int(match.group(1))
+        if 1 <= num <= 300:
+            return num
+
+    return None
 
 
 def _regions_by_page(regions: list[Region]) -> dict[int, list[Region]]:

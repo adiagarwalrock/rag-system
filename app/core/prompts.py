@@ -41,11 +41,25 @@ def build_chart_caption_prompt(
 
     return "\n".join(
         [
-            "You are extracting chart structure from a financial report.",
-            "Extract all fields in the provided response schema.",
-            "Capture explicit chart labels and values whenever legible.",
-            "Use approximate values when exact values are not readable.",
-            "Do not speculate beyond visible chart evidence.",
+            "You are extracting chart structure from a financial investor presentation.",
+            "Extract ALL fields in the provided response schema. Be exhaustive, not selective.",
+            "",
+            "Extraction rules by chart type:",
+            "- PIE or DONUT chart: populate pie_segments with EVERY slice.",
+            "  Each slice needs its label and exact percentage value.",
+            "  Do not summarize or combine segments.",
+            "- BAR, COLUMN, or LINE chart: populate approx_datapoints with EVERY bar or data point.",
+            "  Record the exact value for each category on each series.",
+            "- COMPARISON MATRIX or GRID: populate matrix_cells with EVERY cell.",
+            "  Each cell needs its row header, column header, and cell value.",
+            "- QUICK-FACTS or STAT BOX (tiled metrics panel): populate stat_box_values.",
+            "  Each entry should be 'Label: value unit' (e.g. 'Properties: 179', 'WALT: 7.6 years').",
+            "  Capture EVERY labeled statistic visible, including those in small tiles.",
+            "",
+            "General rules:",
+            "- Use approximate values when exact values are not readable; mark approximate=True.",
+            "- Do not speculate beyond visible chart evidence.",
+            "- Do not summarize — list all data points individually.",
             f"Page: {page_num}",
             f"Page class: {page_class}",
             f"Caption: {caption}",
@@ -85,16 +99,27 @@ def build_artifact_enrichment_prompt(
 
 
 PAGE_SCREENSHOT_PROMPT = """\
-You are a data analyst reviewing a full document page/slide screenshot.
-Describe everything visible: charts, tables, maps, diagrams, annotations, and key numbers.
-Fill the provided structured fields with:
-- Page layout description (what elements are present and how they relate)
-- Numeric values, metrics, and units visible
-- Chart/graph descriptions including axes, trends, and approximate data points
-- Table contents summarized with key rows and columns
-- Map/diagram annotations and geographic/spatial data
-- Key takeaways and relationships between visual elements
-Be exhaustive. Do not omit any numbers, labels, or annotations visible on the page.
+You are a data analyst reviewing a full investor presentation slide screenshot.
+Extract ALL structured data visible. Be exhaustive, not selective.
+
+Fill the provided structured fields:
+- layout_description: describe what visual elements are present and how they relate.
+- labeled_values: for EVERY labeled statistic or metric tile visible, write "Label: value unit".
+  Examples: "Properties: 179", "WALT: 7.6 years", "Dividend Yield: 4.7%", "Occupancy: 89.4%".
+  Include EVERY box, tile, or bullet-point metric — do not skip any.
+- numeric_values: any standalone numeric values not already captured in labeled_values.
+- chart_descriptions: for each chart, describe type, axes, series, and list every data point.
+- pie_chart_segments: for EVERY pie or donut chart, list each slice as "label: value%".
+  Example: ["Same Store: 76%", "Acquisitions: 14%", "Developments & Expansions: 10%"].
+  Include ALL slices; do not combine or summarize.
+- matrix_cell_values: for EVERY comparison matrix or grid, list each cell as "row | col | value".
+  Example: ["Net Lease | Co-tenancy Clause | No", "Office | Co-tenancy Clause | Yes"].
+  Include ALL cells.
+- table_summaries: for text-based tables, summarize key rows and columns with their values.
+- map_or_diagram_annotations: geographic/spatial labels, property counts, state/metro labels.
+- key_takeaways: the 3–5 most important points this slide is communicating.
+
+Be exhaustive. Do not omit any numbers, labels, percentages, or annotations visible on the page.
 """
 
 
@@ -178,7 +203,13 @@ GROUNDED_ANSWER_DEVELOPER_PROMPT = (
     "4) Prefer the most current/effective version unless asked to compare.\n"
     "5) If conflict hints are empty, avoid absolute claims about no conflicts.\n"
     "6) When images are attached, use them for chart/table/map interpretation.\n"
-    "7) Return this exact format:\n"
+    "7) When evidence contains tables or structured data, extract and cite exact "
+    "values (numbers, percentages, dates) rather than paraphrasing. "
+    "Preserve original units and precision.\n"
+    "8) If multiple evidence chunks discuss the same metric with different values, "
+    "note the discrepancy and prefer the source with the most specific context "
+    "(e.g., table data over narrative text).\n"
+    "9) Return this exact format:\n"
     "<thinking>\n"
     "step-by-step grounded reasoning with source indices\n"
     "</thinking>\n"

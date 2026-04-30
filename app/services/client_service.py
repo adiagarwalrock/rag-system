@@ -2,7 +2,6 @@
 Client service: workflows related to client lifecycle operations.
 """
 
-
 import logging
 
 from sqlalchemy.orm import Session

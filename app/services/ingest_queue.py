@@ -3,8 +3,8 @@ from dataclasses import dataclass
 from queue import Full, Queue
 from threading import Lock, Thread
 
-from app.db.snowflake import SessionLocal
 from app.db.models.document import Document, IngestionJob
+from app.db.snowflake import SessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -78,12 +78,13 @@ class IngestionQueueManager:
                 self._queue.task_done()
 
     def _run_task(self, task: IngestionQueueTask, worker_index: int) -> None:
+        from datetime import datetime, timezone
+        from pathlib import Path
+
         from app.services.ingest_service import (
             _execute_pipeline,
             _handle_ingestion_failure,
         )
-        from datetime import datetime, timezone
-        from pathlib import Path
 
         with SessionLocal() as db:
             db_doc = db.query(Document).filter(Document.id == task.document_id).first()
