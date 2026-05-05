@@ -31,6 +31,30 @@ from app.retrieval.prompt_builder import (
 
 logger = logging.getLogger(__name__)
 
+# Signals that indicate a question has multiple sub-parts requiring a longer answer.
+_COMPLEX_QUERY_SIGNALS = (
+    "what are the",
+    "list all",
+    "breakdown",
+    "for each",
+    "and what",
+    "how much of",
+    "what percentage",
+    "quick facts",
+    "fast facts",
+    "headline stats",
+)
+_COMPLEX_QUERY_SIGNAL_THRESHOLD = 2
+
+
+def _effective_max_output_tokens(question: str) -> int:
+    """Return a larger token budget for multi-part enumeration questions."""
+    normalized = question.lower()
+    signal_count = sum(1 for sig in _COMPLEX_QUERY_SIGNALS if sig in normalized)
+    if signal_count >= _COMPLEX_QUERY_SIGNAL_THRESHOLD:
+        return max(settings.RESPONSE_MAX_OUTPUT_TOKENS, 2000)
+    return settings.RESPONSE_MAX_OUTPUT_TOKENS
+
 
 # ---------------------------------------------------------------------------
 # Result dataclass
@@ -165,7 +189,7 @@ class GroundedAnswerSynthesizer:
                 model=settings.LLM_MODEL,
                 input_messages=input_messages,
                 reasoning_effort=self.reasoning_effort,
-                max_output_tokens=settings.RESPONSE_MAX_OUTPUT_TOKENS,
+                max_output_tokens=_effective_max_output_tokens(question),
                 prompt_cache_key=settings.RESPONSE_PROMPT_CACHE_KEY,
                 prompt_cache_retention=settings.RESPONSE_PROMPT_CACHE_RETENTION,
                 safety_identifier=f"{settings.RESPONSE_SAFETY_IDENTIFIER_PREFIX}:{self.client_id}",

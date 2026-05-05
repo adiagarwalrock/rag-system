@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 from app.core.config import settings
 from app.ingestion.pdf_pipeline import (
@@ -493,17 +494,14 @@ def test_run_reasoning_inference_prefers_structured_output(monkeypatch):
     monkeypatch.setattr(
         artifact_builders,
         "invoke_llm_chat",
-        lambda **_kwargs: {"id": "resp-1"},
-    )
-    monkeypatch.setattr(
-        artifact_builders,
-        "extract_chat_response_text",
-        lambda _response: (
-            '{"key_insights":["Structured insight"],'
-            '"metric_comparisons":["Q4 > Q3"],'
-            '"trend_statement":"Upward trend",'
-            '"caveats":["Approximate values"],'
-            '"evidence_refs":["table-1: net revenue"]}'
+        lambda **_kwargs: SimpleNamespace(
+            raw=artifact_builders.ReasoningStructuredResponse(
+                key_insights=["Structured insight"],
+                metric_comparisons=["Q4 > Q3"],
+                trend_statement="Upward trend",
+                caveats=["Approximate values"],
+                evidence_refs=["table-1: net revenue"],
+            )
         ),
     )
 
@@ -519,17 +517,17 @@ def test_run_reasoning_inference_uses_user_prompt_kwarg(monkeypatch):
 
     def _fake_invoke_llm_chat(**kwargs):
         captured["input_messages"] = kwargs.get("input_messages")
-        return {"id": "resp-1"}
+        captured["structured_output_cls"] = kwargs.get("structured_output_cls")
+        return SimpleNamespace(
+            raw=artifact_builders.ReasoningStructuredResponse(
+                key_insights=["Structured insight"],
+            )
+        )
 
     monkeypatch.setattr(
         artifact_builders,
         "invoke_llm_chat",
         _fake_invoke_llm_chat,
-    )
-    monkeypatch.setattr(
-        artifact_builders,
-        "extract_chat_response_text",
-        lambda _response: '{"key_insights":["Structured insight"]}',
     )
 
     result = artifact_builders._run_reasoning_inference("analyze this", 2000)
@@ -541,6 +539,10 @@ def test_run_reasoning_inference_uses_user_prompt_kwarg(monkeypatch):
     assert isinstance(messages, list)
     assert messages[1]["role"] == "user"
     assert messages[1]["content"] == "analyze this"
+    assert (
+        captured["structured_output_cls"]
+        is artifact_builders.ReasoningStructuredResponse
+    )
 
 
 def test_run_structured_text_inference_uses_user_prompt_kwarg(monkeypatch):

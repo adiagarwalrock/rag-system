@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     CHAT_SUMMARY_MAX_OUTPUT_TOKENS: int = 300
     SESSION_SUMMARY_TIMEOUT_SECONDS: int = 15
 
-    COLLECTION_NAME: str = "rag_collection_oai"
+    COLLECTION_NAME: str = "rag_collection_oai_v2"
     CHAT_HISTORY_COLLECTION_NAME: str = "chat_history"
     VECTOR_DIMENSIONS: int = 3072
 
@@ -86,7 +86,7 @@ class Settings(BaseSettings):
 
     # Reasoning enrichment (artifact-first grounded analysis)
     ENABLE_LLM_REASONING_ENRICHMENT: bool = True
-    REASONING_MAX_PAGES: int = 5
+    REASONING_MAX_PAGES: int = 12
     REASONING_MAX_ARTIFACTS_PER_PAGE: int = 4
     REASONING_MAX_OUTPUT_TOKENS: int = 700
     REASONING_TIMEOUT_SECONDS: int = 30

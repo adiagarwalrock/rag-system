@@ -25,7 +25,7 @@ from llama_index.core.base.llms.types import (
 from PIL import Image, ImageStat
 from pydantic import BaseModel
 
-from app.core.ai_provider import extract_chat_response_text, invoke_llm_chat
+from app.core.ai_provider import invoke_llm_chat
 from app.core.config import settings
 from app.core.prompts import (
     _GENERIC_STRUCTURED_PROMPT,
@@ -66,6 +66,9 @@ from app.ingestion.pdf_pipeline.models import (  # Artifacts; Response Models
 )
 
 logger = logging.getLogger(__name__)
+
+_REASONING_RETRY_TOKEN_CAP = 1200
+_REASONING_RETRY_TOKEN_INCREMENT = 350
 
 _Job = TypeVar("_Job")
 _Result = TypeVar("_Result")
@@ -174,6 +177,29 @@ def _is_transient_provider_error(exc: Exception) -> bool:
             "try again",
         )
     )
+
+
+def _is_incomplete_structured_output_error(exc: Exception) -> bool:
+    markers = (
+        "invalid json: eof while parsing",
+        "json_invalid",
+        "failed to produce a structured response",
+    )
+    current: Exception | None = exc
+    while current is not None:
+        message = str(current).lower()
+        if any(marker in message for marker in markers):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _reasoning_retry_output_tokens(max_output_tokens: int | None) -> int | None:
+    if max_output_tokens is None or max_output_tokens <= 0:
+        return None
+    scaled = int(max_output_tokens * 1.6)
+    expanded = max(max_output_tokens + _REASONING_RETRY_TOKEN_INCREMENT, scaled)
+    return min(_REASONING_RETRY_TOKEN_CAP, max(max_output_tokens, expanded))
 
 
 def _coerce_structured_output(output: Any, output_cls: type[_Model]) -> _Model | None:
@@ -290,7 +316,7 @@ class DefaultArtifactStage(ArtifactStage):
         regions: list[Region],
         figure_dir: Path,
     ) -> ArtifactResult:
-        table_fragments = build_table_artifacts(pymupdf_pages, regions)
+        table_fragments = build_table_artifacts(pymupdf_pages, regions, page_manifests)
         merged_tables = merge_table_artifacts(table_fragments)
         figures = build_figure_artifacts(
             pdf_doc=pdf_doc,
@@ -318,9 +344,15 @@ class DefaultArtifactStage(ArtifactStage):
 def build_table_artifacts(
     pymupdf_pages: list[dict[str, Any]],
     regions: list[Region],
+    page_manifests: list[PageManifest] | None = None,
 ) -> list[TableArtifact]:
     artifacts: list[TableArtifact] = []
     by_page = _regions_by_page(regions)
+    screenshot_by_page: dict[int, str] = {}
+    if page_manifests:
+        for m in page_manifests:
+            if m.screenshot_path:
+                screenshot_by_page[m.page_num] = m.screenshot_path
 
     for page in pymupdf_pages:
         page_num = int(page.get("page_num", 1))
@@ -329,6 +361,7 @@ def build_table_artifacts(
             page_num=page_num,
             page=page,
             page_regions=page_regions,
+            screenshot_path=screenshot_by_page.get(page_num, ""),
         )
         for candidate in candidates:
             artifact = _table_artifact_from_candidate(
@@ -347,6 +380,7 @@ def _table_candidates_for_page(
     page_num: int,
     page: dict[str, Any],
     page_regions: list[Region],
+    screenshot_path: str = "",
 ) -> list[dict[str, Any]]:
     candidates = list(page.get("table_candidates") or [])
     if candidates:
@@ -355,23 +389,125 @@ def _table_candidates_for_page(
     table_regions = [
         region for region in page_regions if region.region_type == "table_region"
     ]
-    if not table_regions:
-        return candidates
+    if table_regions:
+        merged_rows = parse_table_like_text(
+            "\n".join(region.text for region in table_regions)
+        )
+        if len(merged_rows) >= 2:
+            candidates.append(
+                {
+                    "candidate_id": f"text_regions_page_{page_num}",
+                    "bbox": _union_region_bbox(table_regions),
+                    "rows": merged_rows,
+                }
+            )
+            return candidates
 
-    merged_rows = parse_table_like_text(
-        "\n".join(region.text for region in table_regions)
+    # Tier 3: Chonkie TableChef fallback for tables missed by PyMuPDF + text regions
+    body_text = "\n".join(
+        region.text
+        for region in page_regions
+        if region.region_type in {"body_text", "table_region"}
     )
-    if len(merged_rows) < 2:
-        return candidates
+    if body_text.strip():
+        candidates.extend(_tablechef_extract(body_text, page_num))
 
-    candidates.append(
-        {
-            "candidate_id": f"text_regions_page_{page_num}",
-            "bbox": _union_region_bbox(table_regions),
-            "rows": merged_rows,
-        }
-    )
+    # Tier 4: img2table fallback — extracts image-rendered tables from page screenshot
+    if not candidates and screenshot_path:
+        candidates.extend(_img2table_extract(screenshot_path, page_num))
+
     return candidates
+
+
+def _tablechef_extract(
+    page_text: str,
+    page_num: int,
+) -> list[dict[str, Any]]:
+    """Use Chonkie TableChef to detect tables in page body text."""
+    try:
+        from chonkie import TableChef
+    except ImportError:
+        return []
+
+    try:
+        chef = TableChef()
+        doc = chef.process(page_text)
+        if not hasattr(doc, "tables") or not doc.tables:
+            return []
+
+        candidates: list[dict[str, Any]] = []
+        for idx, table in enumerate(doc.tables):
+            content = getattr(table, "content", "") or ""
+            rows = parse_table_like_text(content)
+            if len(rows) >= 2:
+                candidates.append(
+                    {
+                        "candidate_id": f"tablechef_page_{page_num}_{idx}",
+                        "bbox": [0.0, 0.0, 0.0, 0.0],
+                        "rows": rows,
+                    }
+                )
+        return candidates
+    except Exception:
+        logger.debug("TableChef fallback failed for page %s", page_num)
+        return []
+
+
+def _img2table_extract(
+    screenshot_path: str,
+    page_num: int,
+) -> list[dict[str, Any]]:
+    """Extract image-rendered tables from a page screenshot using img2table + EasyOCR.
+
+    Fires only when PyMuPDF, text-region, and TableChef tiers all returned zero candidates.
+    img2table uses OpenCV line detection so it can find tables not present in extracted text.
+    """
+    if not screenshot_path or not Path(screenshot_path).exists():
+        return []
+    try:
+        from img2table.document import Image as Img2TableImage  # type: ignore[import]
+        from img2table.ocr import EasyOCR  # type: ignore[import]
+    except ImportError:
+        logger.debug("img2table not installed; skipping Tier 4 for page %s", page_num)
+        return []
+
+    try:
+        doc = Img2TableImage(src=screenshot_path)
+        ocr = EasyOCR(lang=["en"])
+        extracted = doc.extract_tables(ocr=ocr, borderless_tables=True, min_confidence=50)
+        candidates: list[dict[str, Any]] = []
+        for idx, table_obj in enumerate(extracted or []):
+            df = getattr(table_obj, "df", None)
+            if df is None or df.empty:
+                continue
+            # Convert DataFrame to list[list[str]] row format
+            rows: list[list[str]] = [
+                [str(cell) if cell is not None else "" for cell in row]
+                for row in df.values.tolist()
+            ]
+            if df.columns is not None and not all(
+                str(c).startswith("Unnamed") for c in df.columns
+            ):
+                header = [str(c) for c in df.columns]
+                rows = [header] + rows
+            if len(rows) >= 2:
+                candidates.append(
+                    {
+                        "candidate_id": f"img2table_page_{page_num}_{idx}",
+                        "bbox": [0.0, 0.0, 0.0, 0.0],
+                        "rows": rows,
+                    }
+                )
+        if candidates:
+            logger.info(
+                "img2table extracted %d table(s) from screenshot on page %s",
+                len(candidates),
+                page_num,
+            )
+        return candidates
+    except Exception:
+        logger.debug("img2table fallback failed for page %s", page_num, exc_info=True)
+        return []
 
 
 def _table_artifact_from_candidate(
@@ -1226,6 +1362,10 @@ def _apply_llm_chart_fields(figure: FigureArtifact, payload: dict[str, Any]) -> 
     figure.numeric_extraction_confidence = _to_float(
         payload.get("numeric_extraction_confidence")
     )
+    # Exhaustive structured extractions for specific visual types
+    figure.pie_segments = _coerce_list_of_dicts(payload.get("pie_segments"))
+    figure.matrix_cells = _coerce_list_of_dicts(payload.get("matrix_cells"))
+    figure.stat_box_values = _clean_str_list(payload.get("stat_box_values"))
 
 
 def _apply_heuristic_chart_fields(figure: FigureArtifact) -> None:
@@ -1285,6 +1425,21 @@ def _chart_summary_text(figure: FigureArtifact) -> str:
         pieces.append(f"trend={figure.trend_summary}")
     if figure.key_chart_facts:
         pieces.extend(figure.key_chart_facts[:4])
+    # Exhaustive visual type extractions
+    if figure.pie_segments:
+        seg_strs = [
+            f"{s.get('label', '?')}: {s.get('value', '?')}{s.get('unit', '%')}"
+            for s in figure.pie_segments[:20]
+        ]
+        pieces.append("pie_segments=" + "; ".join(seg_strs))
+    if figure.matrix_cells:
+        cell_strs = [
+            f"{c.get('row_header', '?')} | {c.get('col_header', '?')} | {c.get('value', '?')}"
+            for c in figure.matrix_cells[:30]
+        ]
+        pieces.append("matrix_cells=" + "; ".join(cell_strs))
+    if figure.stat_box_values:
+        pieces.append("stat_boxes=" + " | ".join(figure.stat_box_values[:20]))
     return " | ".join(piece for piece in pieces if piece)
 
 
@@ -1340,6 +1495,13 @@ def _coerce_datapoints(value: Any) -> list[dict[str, Any]]:
     return datapoints
 
 
+def _coerce_list_of_dicts(value: Any) -> list[dict[str, Any]]:
+    """Coerce a JSON-parsed list of dicts, discarding non-dict items."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
 def _coerce_reasoning_list(value: Any) -> list[str]:
     if value is None:
         return []
@@ -1373,8 +1535,11 @@ def _render_page_screenshot_summary(summary: PageScreenshotResponse) -> str:
     if layout:
         sections.append(f"Layout: {layout}")
 
-    group_specs = [
+    group_specs: list[tuple[str, list[str], int]] = [
+        ("Labeled values", summary.labeled_values, 20),
         ("Numeric values", summary.numeric_values, 12),
+        ("Pie chart segments", summary.pie_chart_segments, 20),
+        ("Matrix cells", summary.matrix_cell_values, 30),
         ("Charts", summary.chart_descriptions, 6),
         ("Tables", summary.table_summaries, 6),
         ("Maps/diagrams", summary.map_or_diagram_annotations, 6),
@@ -1861,41 +2026,65 @@ def _run_reasoning_inference(
         if timeout_seconds is not None
         else float(settings.REASONING_TIMEOUT_SECONDS)
     )
-    developer_prompt = (
-        "Return only valid JSON with keys: key_insights (list[str]), "
-        "metric_comparisons (list[str]), trend_statement (str), "
-        "caveats (list[str]), evidence_refs (list[str]). "
-        "Do not include markdown, prose outside JSON, or code fences."
-    )
-
     if not settings.is_openai_api_key_placeholder:
+        base_tokens: int | None
+        if settings.OPENAI_USE_RESPONSES:
+            base_tokens = None
+        elif max_output_tokens > 0:
+            base_tokens = max_output_tokens
+        else:
+            base_tokens = None
+
+        retry_tokens = _reasoning_retry_output_tokens(base_tokens)
         for attempt in range(2):
+            attempt_tokens = base_tokens if attempt == 0 else retry_tokens
             try:
                 response = invoke_llm_chat(
                     model=resolved_model,
                     input_messages=[
-                        {"role": "developer", "content": developer_prompt},
+                        {
+                            "role": "developer",
+                            "content": (
+                                "Extract structured reasoning from the provided "
+                                "context and fill the schema fields accurately. "
+                                "Keep outputs concise: each list item must be a "
+                                "single short sentence, avoid long quotes, and use "
+                                "compact evidence references."
+                            ),
+                        },
                         {"role": "user", "content": prompt},
                     ],
+                    structured_output_cls=ReasoningStructuredResponse,
                     reasoning_effort="low",
-                    max_output_tokens=max_output_tokens,
+                    max_output_tokens=attempt_tokens,
                     timeout_seconds=resolved_timeout,
                 )
-                text = extract_chat_response_text(response)
-                parsed = _parse_chart_json_response(normalize_whitespace(text))
-                if not isinstance(parsed, dict):
+                structured_payload = _coerce_structured_output(
+                    response,
+                    ReasoningStructuredResponse,
+                )
+                if structured_payload is None:
                     raise ValueError(
-                        "reasoning inference returned invalid JSON payload"
+                        "reasoning inference returned invalid structured payload"
                     )
-                normalized = ReasoningStructuredResponse.model_validate(
-                    parsed
-                ).model_dump()
                 return ReasoningInferenceResult(
-                    payload=normalized,
+                    payload=structured_payload.model_dump(),
                     used_structured_output=True,
                 )
-            except Exception:
-                if attempt == 0:
+            except Exception as exc:
+                if _is_incomplete_structured_output_error(exc):
+                    if attempt == 0:
+                        logger.warning(
+                            "Reasoning structured output incomplete at max_output_tokens=%s; retrying with %s",
+                            attempt_tokens,
+                            retry_tokens,
+                        )
+                    else:
+                        logger.warning(
+                            "Reasoning structured output incomplete after retry (max_output_tokens=%s)",
+                            attempt_tokens,
+                        )
+                elif attempt == 0:
                     logger.exception("Reasoning inference failed, retrying once")
                 else:
                     logger.exception("Reasoning inference retry also failed")
@@ -1919,20 +2108,5 @@ def _run_reasoning_inference(
                 used_structured_output=True,
             )
     except Exception:
-        logger.exception(
-            "Structured reasoning fallback failed, attempting raw JSON parsing"
-        )
-
-    try:
-        response = LlamaSettings.llm.complete(prompt)
-        text = normalize_whitespace(str(response))
-        parsed = _parse_chart_json_response(text if text else "")
-        if parsed is not None:
-            normalized = ReasoningStructuredResponse.model_validate(parsed).model_dump()
-            return ReasoningInferenceResult(
-                payload=normalized,
-                used_structured_output=False,
-            )
-    except Exception:
-        logger.exception("Reasoning fallback completion failed")
+        logger.exception("Structured reasoning fallback failed")
     return None

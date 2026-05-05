@@ -98,6 +98,27 @@ CHART_EVIDENCE_TERMS = (
     "line",
     "bar",
 )
+NUMERIC_INTENT_TERMS = (
+    "how much",
+    "what percent",
+    "percentage",
+    "difference between",
+    "increase",
+    "decrease",
+    "grew",
+    "declined",
+    "revenue",
+    "margin",
+    "ratio",
+    "total",
+    "average",
+)
+DATA_RETRIEVAL_TERMS = (
+    "list all",
+    "what are the",
+    "ranking",
+    "how many",
+)
 TIME_ANCHORED_TERMS = (
     "as of",
     "q1",
@@ -109,6 +130,7 @@ TIME_ANCHORED_TERMS = (
     "expected close",
 )
 YEAR_PATTERN = re.compile(r"\b(?:19|20)\d{2}\b")
+_NUMERIC_DENSITY_PATTERN = re.compile(r"\b\d[\d,.]*\b")
 
 
 # ---------------------------------------------------------------------------
@@ -152,9 +174,24 @@ def _is_time_anchored_query(question: str) -> bool:
     return any(term in normalized for term in TIME_ANCHORED_TERMS)
 
 
+def _has_numeric_density(question: str) -> bool:
+    """Return True when a query contains 2+ numeric tokens, suggesting tabular data."""
+    return len(_NUMERIC_DENSITY_PATTERN.findall(question)) >= 2
+
+
+def _has_implicit_structured_intent(question: str) -> bool:
+    """Return True for queries that imply structured data without explicit keywords."""
+    normalized = question.lower()
+    return any(term in normalized for term in NUMERIC_INTENT_TERMS) or any(
+        term in normalized for term in DATA_RETRIEVAL_TERMS
+    )
+
+
 def _wants_table_evidence(question: str) -> bool:
     normalized = question.lower()
-    return any(term in normalized for term in TABLE_EVIDENCE_TERMS)
+    if any(term in normalized for term in TABLE_EVIDENCE_TERMS):
+        return True
+    return _has_implicit_structured_intent(question) or _has_numeric_density(question)
 
 
 def _wants_chart_evidence(question: str) -> bool:

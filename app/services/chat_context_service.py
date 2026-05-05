@@ -1,4 +1,3 @@
-
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -88,7 +87,9 @@ class ChatContextService:
         chat_history_store.delete_client(client_id)
 
     def _get_session_summary(self, session_id: str) -> str:
-        session = self.db.query(ChatSession).filter(ChatSession.id == session_id).first()
+        session = (
+            self.db.query(ChatSession).filter(ChatSession.id == session_id).first()
+        )
         if not session:
             return ""
         return (session.summary_text or "").strip()

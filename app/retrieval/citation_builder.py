@@ -64,7 +64,8 @@ def build_citations(source_nodes: list) -> List[Dict[str, Any]]:
             or metadata.get("source_file")
             or "Unknown",
             "source_file": metadata.get("source_file", ""),
-            "page_num": metadata.get("page_num"),
+            # Prefer the visible page number printed on the slide over the PDF page index
+            "page_num": metadata.get("visible_page_num") or metadata.get("page_num"),
             "slide_num": metadata.get("slide_num"),
             "section_title": metadata.get("section_title"),
             "chunk_type": chunk_type,
@@ -99,8 +100,9 @@ def _build_fallback_label(metadata: dict, rank: int) -> str:
     )
     parts.append(doc_name)
 
-    if metadata.get("page_num"):
-        parts.append(f"p.{metadata['page_num']}")
+    display_page = metadata.get("visible_page_num") or metadata.get("page_num")
+    if display_page:
+        parts.append(f"p.{display_page}")
     if metadata.get("slide_num"):
         parts.append(f"slide {metadata['slide_num']}")
     if metadata.get("version_label"):

@@ -12,44 +12,43 @@ from typing import Any, Dict, List
 
 from llama_index.core.vector_stores import ExactMatchFilter, MetadataFilters
 
-from app.core.ai_provider import normalize_reasoning_effort
+# Backward-compatible re-exports: tests monkeypatch these on retriever_module
+from app.core.ai_provider import (  # noqa: F401
+    extract_chat_response_text,
+    invoke_llm_chat,
+    normalize_reasoning_effort,
+)
+from app.core.token_budget import ResponsesInputBudgeter  # noqa: F401
 from app.indexing.vector_store import vector_store_manager
 from app.retrieval.citation_builder import build_citations
 from app.retrieval.conflict_detector import detect_conflicts
-from app.retrieval.query_expansion import build_query_variants, should_expand_query
 
 # Sub-module imports — used by RAGRetriever and its callers
 from app.retrieval.evidence_selector import (
     _build_retrieval_diagnostics,
     _ensure_image_evidence,
     _ensure_structured_evidence,
+    _evidence_diversity_key,
     _has_numeric_signal,
     _is_comparison_or_conflict_query,
     _is_conflict_focused_query,
     _is_reasoning_chunk,
     _is_reasoning_priority_query,
     _is_time_anchored_query,
-    _node_unique_key,
-    _evidence_diversity_key,
     _node_has_image_assets,
+    _node_unique_key,
 )
 from app.retrieval.prompt_builder import (
     _build_conversation_context_block,
     _collect_image_evidence_paths,
 )
+from app.retrieval.query_expansion import build_query_variants, should_expand_query
 from app.retrieval.synthesizer import (
     GroundedAnswerResult,
     GroundedAnswerSynthesizer,
     _extract_answer_and_reasoning_from_chat,
     _split_reasoning_from_text,
 )
-
-# Backward-compatible re-exports: tests monkeypatch these on retriever_module
-from app.core.ai_provider import (
-    extract_chat_response_text,
-    invoke_llm_chat,
-)  # noqa: F401
-from app.core.token_budget import ResponsesInputBudgeter  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
