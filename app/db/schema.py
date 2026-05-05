@@ -1,4 +1,3 @@
-
 import logging
 
 from sqlalchemy import inspect, text
@@ -65,7 +64,9 @@ def _ensure_query_logs_user_id(engine: Engine) -> None:
     try:
         with engine.begin() as conn:
             conn.execute(
-                text("ALTER TABLE query_logs ADD COLUMN user_id VARCHAR DEFAULT 'internal'")
+                text(
+                    "ALTER TABLE query_logs ADD COLUMN user_id VARCHAR DEFAULT 'internal'"
+                )
             )
         logger.info("Added query_logs.user_id runtime column.")
     except Exception:

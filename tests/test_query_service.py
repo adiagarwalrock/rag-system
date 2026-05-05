@@ -58,7 +58,7 @@ def test_execute_query_persists_query_retrieval_and_conflict_logs(
                 ],
             }
 
-    monkeypatch.setattr(query_service, "VecteraRetriever", FakeRetriever)
+    monkeypatch.setattr(query_service, "RAGRetriever", FakeRetriever)
 
     result = query_service.execute_query(
         question="What changed in v2?",
@@ -115,7 +115,7 @@ def test_execute_query_marks_query_log_failed_on_retrieval_error(
         def query(self, question: str) -> dict:
             raise RuntimeError("simulated retrieval failure")
 
-    monkeypatch.setattr(query_service, "VecteraRetriever", FailingRetriever)
+    monkeypatch.setattr(query_service, "RAGRetriever", FailingRetriever)
 
     with pytest.raises(RuntimeError, match="simulated retrieval failure"):
         query_service.execute_query(

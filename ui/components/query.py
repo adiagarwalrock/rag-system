@@ -1,5 +1,5 @@
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
 import streamlit as st
 
@@ -356,14 +356,7 @@ def render_query():
             selected_name = st.selectbox(
                 "Client workspace",
                 client_names,
-                index=max(
-                    0,
-                    (
-                        client_names.index(st.session_state["query_active_client_name"])
-                        if st.session_state["query_active_client_name"] in client_names
-                        else 0
-                    ),
-                ),
+                index=client_names.index(st.session_state["query_active_client_name"]),
                 help="Every answer is limited to documents for this client.",
             )
             if st.form_submit_button(
@@ -388,14 +381,7 @@ def render_query():
             selected_session_id = st.selectbox(
                 "Session",
                 session_ids,
-                index=max(
-                    0,
-                    (
-                        session_ids.index(active_session_id)
-                        if active_session_id in session_ids
-                        else 0
-                    ),
-                ),
+                index=session_ids.index(active_session_id),
                 format_func=lambda sid: _session_label(
                     next(session for session in sessions if session["id"] == sid)
                 ),
@@ -408,20 +394,14 @@ def render_query():
         else:
             st.caption("No session yet. Ask a question to start one automatically.")
 
+        active_effort = st.session_state.get("query_reasoning_effort", "medium")
+        if active_effort not in REASONING_EFFORT_OPTIONS:
+            active_effort = "medium"
+
         selected_reasoning_effort = st.selectbox(
             "Reasoning effort",
             REASONING_EFFORT_OPTIONS,
-            index=max(
-                0,
-                (
-                    REASONING_EFFORT_OPTIONS.index(
-                        st.session_state.get("query_reasoning_effort", "medium")
-                    )
-                    if st.session_state.get("query_reasoning_effort", "medium")
-                    in REASONING_EFFORT_OPTIONS
-                    else 1
-                ),
-            ),
+            index=REASONING_EFFORT_OPTIONS.index(active_effort),
             help="Controls response depth. Applied when OpenAI Responses mode is enabled.",
         )
         st.session_state["query_reasoning_effort"] = selected_reasoning_effort

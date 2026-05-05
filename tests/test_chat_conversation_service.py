@@ -2,9 +2,9 @@ import json
 from datetime import datetime, timezone
 
 from app.db.models import ChatMessage, ChatSession
+from app.services import chat_conversation_service
 from app.services.chat_context_service import ChatContextBundle
 from app.services.chat_conversation_service import ChatConversationService
-from app.services import chat_conversation_service
 
 
 def test_execute_client_query_creates_session_and_persists_turns(

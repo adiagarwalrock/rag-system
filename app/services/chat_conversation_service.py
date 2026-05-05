@@ -264,7 +264,7 @@ class ChatConversationService:
                 ],
                 reasoning_effort="low",
                 max_output_tokens=settings.CHAT_SUMMARY_MAX_OUTPUT_TOKENS,
-                prompt_cache_key="vectera:session-summary:v1",
+                prompt_cache_key="rag:session-summary:v1",
                 prompt_cache_retention=settings.RESPONSE_PROMPT_CACHE_RETENTION,
                 safety_identifier=(
                     f"{settings.RESPONSE_SAFETY_IDENTIFIER_PREFIX}:{session.client_id}"

@@ -2,7 +2,6 @@
 Shared helpers for eval scoring and payload shaping.
 """
 
-
 from dataclasses import asdict, is_dataclass
 from statistics import mean
 from typing import Any

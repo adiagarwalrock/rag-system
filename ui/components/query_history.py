@@ -78,12 +78,14 @@ def render_query_history():
                 list(status_options.keys()),
                 index=max(
                     0,
-                    list(status_options.keys()).index(
-                        st.session_state["query_history_applied"]["status_label"]
-                    )
-                    if st.session_state["query_history_applied"]["status_label"]
-                    in status_options
-                    else 0,
+                    (
+                        list(status_options.keys()).index(
+                            st.session_state["query_history_applied"]["status_label"]
+                        )
+                        if st.session_state["query_history_applied"]["status_label"]
+                        in status_options
+                        else 0
+                    ),
                 ),
             )
         with filter_cols[2]:
@@ -96,11 +98,14 @@ def render_query_history():
             page_size = st.selectbox(
                 "Rows",
                 [25, 50, 100],
-                index=[25, 50, 100].index(
-                    st.session_state["query_history_applied"]["page_size"]
-                )
-                if st.session_state["query_history_applied"]["page_size"] in [25, 50, 100]
-                else 1,
+                index=(
+                    [25, 50, 100].index(
+                        st.session_state["query_history_applied"]["page_size"]
+                    )
+                    if st.session_state["query_history_applied"]["page_size"]
+                    in [25, 50, 100]
+                    else 1
+                ),
             )
 
         apply_filters = st.form_submit_button(
@@ -121,7 +126,10 @@ def render_query_history():
         st.rerun()
 
     applied = st.session_state["query_history_applied"]
-    if applied["client_name"] != "All clients" and applied["client_name"] not in client_options:
+    if (
+        applied["client_name"] != "All clients"
+        and applied["client_name"] not in client_options
+    ):
         applied["client_name"] = "All clients"
         st.session_state["query_history_applied"] = applied
     selected_client_id = (

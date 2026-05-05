@@ -19,7 +19,7 @@ from app.db.models.document import (
     RetrievalLog,
     VectorNodeRegistry,
 )
-from app.retrieval.retriever import VecteraRetriever
+from app.retrieval.retriever import RAGRetriever
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +131,7 @@ class QueryExecutionService:
 
     def __init__(self, db: Session, retriever_factory: Any | None = None):
         self.db = db
-        self.retriever_factory = retriever_factory or VecteraRetriever
+        self.retriever_factory = retriever_factory or RAGRetriever
         self.log_writer = QueryLogWriter(db)
 
     def execute(self, request: QueryExecutionRequest) -> dict[str, Any]:

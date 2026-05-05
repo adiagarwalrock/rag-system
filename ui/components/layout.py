@@ -5,9 +5,9 @@ from app.core.config import settings
 
 def render_runtime_sidebar() -> None:
     st.sidebar.caption(":material/tune: Runtime")
-    if settings.is_openai_api_key_placeholder:
+    if settings.is_ai_api_key_placeholder:
         st.sidebar.warning(
-            "OpenAI API key missing or placeholder. Runtime startup validation will fail until this is configured.",
+            "AI provider API key missing or placeholder. Runtime startup validation will fail until this is configured.",
             icon=":material/warning:",
         )
 

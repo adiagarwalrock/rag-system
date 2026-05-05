@@ -14,7 +14,7 @@ Both entry points share the same service layer in `app/services/*`.
 - Retrieval uses hybrid Qdrant search (dense + sparse) with dense fallback.
 - Session-aware chat is enabled, including cross-session semantic memory.
 - Access control is removed; runtime is internal single-tenant mode.
-- Runtime startup requires a valid OpenAI-compatible API key (`OPENAI_API_KEY` / `AI_API_KEY`).
+- Runtime startup requires a valid AI provider API key (`GEMINI_API_KEY`/`GOOGLE_API_KEY` or `OPENAI_API_KEY`, with `AI_API_KEY` as fallback).
 
 ## Requirements
 
@@ -37,8 +37,13 @@ Follow these steps from the repository root to get the application running:
    *If you are using a minimal configuration, these are the key variables to set:*
 
    ```bash
-   # OpenAI-compatible key (required)
-   OPENAI_API_KEY=...
+   # Provider keys (set one provider-specific key)
+   GEMINI_API_KEY=...
+   # GOOGLE_API_KEY=...
+   # OPENAI_API_KEY=...
+
+   # Optional generic fallback key
+   AI_API_KEY=...
    OPENAI_USE_RESPONSES=true
 
    # Qdrant connection
@@ -91,7 +96,7 @@ Follow these steps from the repository root to get the application running:
 ## Runtime Wiring
 
 - `streamlit_app.py` loads multipage UI routes from `ui/pages/*`.
-- UI pages call `ui/lib/api.py` (`VecteraCore`), which invokes `app/services/*` directly.
+- UI pages call `ui/lib/api.py` (`RAGCore`), which invokes `app/services/*` directly.
 - There is no internal HTTP hop between Streamlit and business services.
 - `api.py` exposes the same workflows over REST via `app/api/routes_*`.
 
@@ -111,7 +116,10 @@ Configuration is loaded from `.env` via `pydantic-settings` (`app/core/config.py
 
 ### API key behavior
 
-- `AI_API_KEY` accepts aliases including `OPENAI_API_KEY`.
+- Provider routing is deterministic:
+  - `GEMINI_API_KEY` or `GOOGLE_API_KEY` => Gemini
+  - `OPENAI_API_KEY` => OpenAI
+  - `AI_API_KEY` => fallback when provider-specific keys are unset
 - Placeholder or missing keys fail startup validation (`validate_runtime_settings`).
 - AI provider initialization is centralized in `app/core/ai_provider.py`.
 
@@ -147,7 +155,7 @@ Configuration is loaded from `.env` via `pydantic-settings` (`app/core/config.py
 4. Deterministic reranking applies semantic + temporal + structural metadata signals.
 5. Conflict detection flags numeric disagreements across relevant sources.
 6. Citations are generated from selected evidence nodes.
-7. Grounded answer synthesis runs via configured OpenAI mode.
+7. Grounded answer synthesis runs via the configured provider mode.
 8. Query logs, retrieval logs, and conflict logs are persisted.
 
 Chat orchestration (`ChatConversationService`) adds:
@@ -189,7 +197,7 @@ The setup check is strict and expects all three to pass:
 
 - Snowflake connectivity
 - Qdrant connectivity
-- OpenAI key validation
+- AI provider key validation
 
 Test suite:
 

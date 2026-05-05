@@ -1,11 +1,10 @@
-
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LOG_DIR = PROJECT_ROOT / "logs"
-DEFAULT_LOG_FILE = "vectera.log"
+DEFAULT_LOG_FILE = "rag.log"
 _MAX_LOG_FILE_BYTES = 10 * 1024 * 1024
 _LOG_BACKUP_COUNT = 5
 

@@ -5,7 +5,6 @@ Document parser facade.
 - Non-PDF: legacy parsing path.
 """
 
-
 import logging
 import uuid
 from pathlib import Path

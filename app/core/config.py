@@ -1,6 +1,5 @@
 from pathlib import Path
 
-from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,28 +26,29 @@ class Settings(BaseSettings):
         Path(__file__).resolve().parents[2] / "artifacts" / "parsed"
     )
 
-    # OpenAI / LlamaIndex
-    AI_API_KEY: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices(
-            "OPENAI_API_KEY",
-            "AI_API_KEY",
-            "GEMINI_API_KEY",
-            "GOOGLE_API_KEY",
-        ),
-    )
+    # AI provider keys and models
+    OPENAI_API_KEY: str | None = None
+    GEMINI_API_KEY: str | None = None
+    GOOGLE_API_KEY: str | None = None
+    AI_API_KEY: str | None = None
+    # LLM_MODEL: str = "gemini-2.5-flash"
+    # QUERY_EXPANSION_MODEL: str = "gemini-2.5-flash"
+    # SESSION_SUMMARY_MODEL: str = "gemini-2.5-flash"
+
     LLM_MODEL: str = "gpt-5.2"
     QUERY_EXPANSION_MODEL: str = "gpt-5.4-mini"
     SESSION_SUMMARY_MODEL: str = "gpt-5.4-mini"
+
     OPENAI_USE_RESPONSES: bool = True
+    # EMBEDDING_MODEL: str = "gemini-embedding-2-preview"
     EMBEDDING_MODEL: str = "text-embedding-3-large"
     EMBEDDING_OUTPUT_DIMENSION: int | None = None
     RESPONSE_INPUT_BUDGET_RATIO: float = 0.8
     RESPONSE_MAX_OUTPUT_TOKENS: int = 1200
-    RESPONSE_PROMPT_CACHE_KEY: str = "vectera:grounded-answer:v2"
+    RESPONSE_PROMPT_CACHE_KEY: str = "rag:grounded-answer:v2"
     RESPONSE_PROMPT_CACHE_RETENTION: str = "24h"
     RESPONSE_USER_TAG: str = "developer"
-    RESPONSE_SAFETY_IDENTIFIER_PREFIX: str = "vectera-client"
+    RESPONSE_SAFETY_IDENTIFIER_PREFIX: str = "rag-client"
     TOKEN_BUDGET_ENCODING: str = "o200k_base"
     LLM_CONTEXT_WINDOW_TOKENS: int = 200000
     CHAT_SUMMARY_MAX_OUTPUT_TOKENS: int = 300
@@ -71,10 +71,10 @@ class Settings(BaseSettings):
     ENABLE_PDF_REPAIR_PREPASS: bool = True
     SUPPRESS_MUPDF_STDERR: bool = True
     ENABLE_LLM_ARTIFACT_ENRICHMENT: bool = True
-    LLM_ARTIFACT_ENRICHMENT_MAX_PAGES: int = 3
+    LLM_ARTIFACT_ENRICHMENT_MAX_PAGES: int = 8
     ENABLE_MULTIMODAL_CAPTIONING: bool = True
-    LLM_CAPTION_MAX_PAGES: int = 3
-    LLM_CAPTION_MAX_ARTIFACTS_PER_PAGE: int = 3
+    LLM_CAPTION_MAX_PAGES: int = 8
+    LLM_CAPTION_MAX_ARTIFACTS_PER_PAGE: int = 5
     LLM_CAPTION_TIMEOUT_SECONDS: int = 25
     LLM_SCREENSHOT_TIMEOUT_SECONDS: int = 45
     LLM_SCREENSHOT_MAX_WORKERS: int = 2
@@ -113,19 +113,56 @@ class Settings(BaseSettings):
         return key.strip("'\"").strip()
 
     @property
-    def ai_api_key(self) -> str:
+    def openai_api_key(self) -> str:
+        return self._normalize_secret(self.OPENAI_API_KEY)
+
+    @property
+    def gemini_api_key(self) -> str:
+        return self._normalize_secret(self.GEMINI_API_KEY)
+
+    @property
+    def google_api_key(self) -> str:
+        return self._normalize_secret(self.GOOGLE_API_KEY)
+
+    @property
+    def fallback_ai_api_key(self) -> str:
         return self._normalize_secret(self.AI_API_KEY)
 
     @property
-    def is_openai_api_key_placeholder(self) -> bool:
+    def ai_provider(self) -> str:
+        if self.gemini_api_key or self.google_api_key:
+            return "gemini"
+        if self.openai_api_key:
+            return "openai"
+        if "gemini" in self.LLM_MODEL.lower():
+            return "gemini"
+        return "openai"
+
+    @property
+    def ai_api_key(self) -> str:
+        if self.ai_provider == "gemini":
+            return (
+                self.gemini_api_key or self.google_api_key or self.fallback_ai_api_key
+            )
+        return self.openai_api_key or self.fallback_ai_api_key
+
+    @property
+    def is_ai_api_key_placeholder(self) -> bool:
         key = self.ai_api_key.lower()
         placeholders = {
             "your_openai_api_key_here",
             "your_api_key_here",
             "your_api_key",
             "your_ai_api_key",
+            "your_gemini_api_key_here",
+            "your_google_api_key_here",
         }
         return not key or key in placeholders or key.startswith("your_")
+
+    @property
+    def is_openai_api_key_placeholder(self) -> bool:
+        """Backward-compatible alias used by existing callers/tests."""
+        return self.is_ai_api_key_placeholder
 
     @property
     def effective_vector_dimensions(self) -> int:
@@ -142,5 +179,5 @@ settings = Settings()
 
 def validate_runtime_settings() -> None:
     """Validate mandatory runtime configuration before serving requests."""
-    if settings.is_openai_api_key_placeholder:
+    if settings.is_ai_api_key_placeholder:
         raise RuntimeError("AI_API_KEY must be set to a valid key before startup.")

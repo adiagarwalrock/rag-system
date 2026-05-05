@@ -2,5 +2,10 @@
     "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
     "python.pyrefly.displayTypeErrors": "default",
     "python.analysis.completeFunctionParens": false,
-    "python.analysis.showHoverGoToLinks": true
+    "python.analysis.showHoverGoToLinks": true,
+    "python.testing.pytestArgs": [
+        "tests"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true
 }

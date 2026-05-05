@@ -202,4 +202,3 @@ def _conflict_attribution(
         if item.get("conflict_type") or item.get("conflicts"):
             return 1.0
     return 0.0
-

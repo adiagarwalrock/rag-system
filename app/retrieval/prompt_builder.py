@@ -7,8 +7,8 @@ separate from retrieval orchestration.
 
 import base64
 import hashlib
-import mimetypes
 import logging
+import mimetypes
 from pathlib import Path
 from typing import Any
 

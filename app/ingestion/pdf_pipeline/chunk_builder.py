@@ -386,10 +386,7 @@ def split_body_text(text: str) -> list[str]:
     if overlap_tokens >= max_tokens:
         overlap_tokens = max_tokens - 1
 
-    if (
-        count_tokens(text, encoding_name=settings.TOKEN_BUDGET_ENCODING)
-        <= max_tokens
-    ):
+    if count_tokens(text, encoding_name=settings.TOKEN_BUDGET_ENCODING) <= max_tokens:
         return [text]
 
     try:

@@ -14,8 +14,8 @@ from app.db.models.document import (
     IngestionJob,
     VectorNodeRegistry,
 )
-from app.db.snowflake import SessionLocal, engine
 from app.db.schema import ensure_runtime_schema
+from app.db.snowflake import SessionLocal, engine
 from app.services.chat_conversation_service import ChatConversationService
 from app.services.client_service import delete_client as delete_client_with_cascade
 from app.services.ingest_service import (
@@ -28,7 +28,7 @@ from app.services.query_history_service import QueryHistoryFilters, QueryHistory
 logger = logging.getLogger(__name__)
 
 
-class VecteraCore:
+class RAGCore:
     """
     Native internal wrapper mocking the old API schema for the frontend.
     """
@@ -209,7 +209,9 @@ class VecteraCore:
                 logger.error(f"Query Error: {e}")
                 raise ValueError(str(e))
 
-    def list_chat_sessions(self, client_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+    def list_chat_sessions(
+        self, client_id: str, limit: int = 50
+    ) -> List[Dict[str, Any]]:
         with SessionLocal() as db:
             sessions = ChatConversationService(db).list_sessions(
                 client_id=client_id,
@@ -236,7 +238,9 @@ class VecteraCore:
                 for session in sessions
             ]
 
-    def create_chat_session(self, client_id: str, title: str | None = None) -> Dict[str, Any]:
+    def create_chat_session(
+        self, client_id: str, title: str | None = None
+    ) -> Dict[str, Any]:
         with SessionLocal() as db:
             session = ChatConversationService(db).create_session(
                 client_id=client_id, title=title
@@ -246,8 +250,12 @@ class VecteraCore:
                 "client_id": session.client_id,
                 "title": session.title,
                 "summary_text": session.summary_text,
-                "created_at": session.created_at.isoformat() if session.created_at else None,
-                "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+                "created_at": (
+                    session.created_at.isoformat() if session.created_at else None
+                ),
+                "updated_at": (
+                    session.updated_at.isoformat() if session.updated_at else None
+                ),
                 "last_activity_at": (
                     session.last_activity_at.isoformat()
                     if session.last_activity_at
@@ -255,7 +263,9 @@ class VecteraCore:
                 ),
             }
 
-    def list_chat_messages(self, session_id: str, limit: int = 200) -> List[Dict[str, Any]]:
+    def list_chat_messages(
+        self, session_id: str, limit: int = 200
+    ) -> List[Dict[str, Any]]:
         with SessionLocal() as db:
             messages = ChatConversationService(db).list_messages(
                 session_id=session_id, limit=limit
@@ -281,9 +291,7 @@ class VecteraCore:
                             decoded = json.loads(message.citations_json)
                             if isinstance(decoded, list):
                                 citations = [
-                                    item
-                                    for item in decoded
-                                    if isinstance(item, dict)
+                                    item for item in decoded if isinstance(item, dict)
                                 ]
                         except Exception:
                             citations = []

@@ -113,9 +113,7 @@ def test_parse_document_pdf_layout_strict_mode_raises(monkeypatch, tmp_path, cap
     assert "strict mode enabled" in parser_errors[0].message
 
 
-def test_parse_document_pdf_layout_non_strict_falls_back(
-    monkeypatch, tmp_path, caplog
-):
+def test_parse_document_pdf_layout_non_strict_falls_back(monkeypatch, tmp_path, caplog):
     file_path = tmp_path / "nonstrict-financial.pdf"
     _create_sample_financial_pdf(file_path)
 

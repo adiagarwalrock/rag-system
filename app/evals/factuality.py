@@ -106,9 +106,7 @@ def evaluate_factuality(
     gold_by_id = {row.get("id"): row for row in gold_rows}
 
     missing_gold_ids = [
-        question_id
-        for question_id in questions_by_id
-        if question_id not in gold_by_id
+        question_id for question_id in questions_by_id if question_id not in gold_by_id
     ]
     if missing_gold_ids:
         raise ValueError(
@@ -164,7 +162,9 @@ def _resolve_score(*, verdict: str, value: Any) -> float:
     try:
         score = float(value)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"Invalid score value {value!r} for verdict {verdict}") from exc
+        raise ValueError(
+            f"Invalid score value {value!r} for verdict {verdict}"
+        ) from exc
     return max(0.0, min(1.0, score))
 
 
@@ -190,12 +190,10 @@ def _build_summary(rows: list[FactualityScoreRow]) -> FactualityScoreSummary:
                 partially_correct=sum(
                     1 for item in items if item.verdict == VERDICT_PARTIAL
                 ),
-                incorrect=sum(
-                    1 for item in items if item.verdict == VERDICT_INCORRECT
+                incorrect=sum(1 for item in items if item.verdict == VERDICT_INCORRECT),
+                weighted_factuality=(
+                    float(mean([item.score for item in items])) if items else 0.0
                 ),
-                weighted_factuality=float(mean([item.score for item in items]))
-                if items
-                else 0.0,
             )
         )
 

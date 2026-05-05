@@ -7,7 +7,7 @@ def _test_settings() -> SimpleNamespace:
     return SimpleNamespace(
         QUERY_EXPANSION_MODEL="gpt-5.4-mini",
         RESPONSE_PROMPT_CACHE_RETENTION="24h",
-        RESPONSE_SAFETY_IDENTIFIER_PREFIX="vectera-client",
+        RESPONSE_SAFETY_IDENTIFIER_PREFIX="rag-client",
         RESPONSE_USER_TAG="developer",
     )
 
@@ -169,7 +169,7 @@ def test_build_query_variants_builds_with_query_expansion_model(monkeypatch):
         SimpleNamespace(
             QUERY_EXPANSION_MODEL="gpt-4.1-mini",
             RESPONSE_PROMPT_CACHE_RETENTION="24h",
-            RESPONSE_SAFETY_IDENTIFIER_PREFIX="vectera-client",
+            RESPONSE_SAFETY_IDENTIFIER_PREFIX="rag-client",
             RESPONSE_USER_TAG="developer",
         ),
     )
