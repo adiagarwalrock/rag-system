@@ -78,7 +78,10 @@ class ChunkArtifactAssembler:
                 ).strip()
                 if not merged_text:
                     continue
-                for split_idx, part in enumerate(split_body_text(merged_text), start=1):
+                page_class = manifest.page_class if manifest else "simple_text_page"
+                for split_idx, part in enumerate(
+                    split_body_text(merged_text, page_class=page_class), start=1
+                ):
                     chunks.append(
                         ChunkArtifact(
                             chunk_id=str(uuid.uuid4()),
@@ -186,8 +189,9 @@ class ChunkArtifactAssembler:
             )
 
     def _append_reasoning_chunks(self, chunks: list[ChunkArtifact]) -> None:
+        figures_by_id = {fig.figure_id: fig for fig in self._inputs.figures}
         for reasoning in self._inputs.reasoning_artifacts:
-            chunks.extend(_reasoning_to_chunks(reasoning, self._manifests))
+            chunks.extend(_reasoning_to_chunks(reasoning, self._manifests, figures_by_id))
 
 
 class DefaultChunkStage(ChunkStage):
@@ -381,11 +385,31 @@ def write_artifact_bundle(
         )
 
 
-def split_body_text(text: str) -> list[str]:
-    max_tokens = max(1, int(settings.BODY_TEXT_CHUNK_MAX_TOKENS))
-    overlap_tokens = max(0, int(settings.BODY_TEXT_CHUNK_OVERLAP_TOKENS))
+def _body_text_chunk_size(page_class: str) -> tuple[int, int]:
+    """Return (max_tokens, overlap_tokens) based on page visual density.
+
+    Visual-heavy and mixed pages carry chart/table annotations alongside
+    body text — larger chunks keep that context together instead of splitting
+    it across multiple evidence slots.
+    """
+    base_max = max(1, int(settings.BODY_TEXT_CHUNK_MAX_TOKENS))
+    base_overlap = max(0, int(settings.BODY_TEXT_CHUNK_OVERLAP_TOKENS))
+    if page_class in {"visual_heavy_page", "mixed_page"}:
+        max_tokens = int(base_max * 1.5)   # e.g. 900 → 1350
+        overlap_tokens = int(base_overlap * 1.5)  # e.g. 80 → 120
+    elif page_class == "table_heavy_page":
+        max_tokens = int(base_max * 1.25)  # e.g. 900 → 1125
+        overlap_tokens = int(base_overlap * 1.25)
+    else:
+        max_tokens = base_max
+        overlap_tokens = base_overlap
     if overlap_tokens >= max_tokens:
         overlap_tokens = max_tokens - 1
+    return max_tokens, overlap_tokens
+
+
+def split_body_text(text: str, page_class: str = "simple_text_page") -> list[str]:
+    max_tokens, overlap_tokens = _body_text_chunk_size(page_class)
 
     if count_tokens(text, encoding_name=settings.TOKEN_BUDGET_ENCODING) <= max_tokens:
         return [text]
@@ -475,6 +499,12 @@ def _table_to_chunks(
     metadata["table_title"] = table.caption_text
     metadata["llm_enriched"] = table.llm_enriched
     metadata["llm_enrichment_confidence"] = table.llm_enrichment_confidence
+    metadata["image_scope"] = "page_screenshot"
+
+    # Use page screenshot as visual fallback for complex table layouts
+    table_asset_refs: list[str] = []
+    if manifest and manifest.screenshot_path:
+        table_asset_refs.append(manifest.screenshot_path)
 
     table_chunks = [normalized_text]
     if markdown and len(rows) > settings.TABLE_CHUNK_ROW_THRESHOLD:
@@ -501,6 +531,7 @@ def _table_to_chunks(
                 page_nums=table.page_nums,
                 text=text,
                 metadata=metadata,
+                asset_refs=table_asset_refs,
             )
         )
 
@@ -531,6 +562,7 @@ def _table_to_chunks(
 def _reasoning_to_chunks(
     reasoning: ReasoningArtifact,
     manifests: dict[int, PageManifest],
+    figures_by_id: dict[str, FigureArtifact] | None = None,
 ) -> list[ChunkArtifact]:
     """Convert a ReasoningArtifact into one or more indexable chunks."""
     if not reasoning.text.strip():
@@ -567,6 +599,25 @@ def _reasoning_to_chunks(
     metadata["llm_enriched"] = True
     metadata["claims"] = reasoning.claims
 
+    # Propagate asset_refs from source figures so reasoning chunks carry visual context
+    asset_refs: list[str] = []
+    if figures_by_id:
+        for src_id in reasoning.source_artifact_ids or []:
+            fig = figures_by_id.get(src_id)
+            if fig:
+                ref = fig.crop_path or fig.page_screenshot_path
+                if ref and ref not in asset_refs:
+                    asset_refs.append(ref)
+    # For page_reasoning, also add the manifest screenshot
+    if reasoning.reasoning_type == "page_reasoning":
+        if manifest and manifest.screenshot_path and manifest.screenshot_path not in asset_refs:
+            asset_refs.append(manifest.screenshot_path)
+
+    if asset_refs:
+        metadata["image_scope"] = "figure_crop" if any(
+            "crop" in r or "figure" in r for r in asset_refs
+        ) else "page_screenshot"
+
     return [
         ChunkArtifact(
             chunk_id=str(uuid.uuid4()),
@@ -576,6 +627,7 @@ def _reasoning_to_chunks(
             page_nums=reasoning.page_nums,
             text=reasoning.text,
             metadata=metadata,
+            asset_refs=_dedupe_asset_refs(asset_refs),
         )
     ]
 
@@ -618,6 +670,7 @@ def _figure_to_chunks(
     preferred_assets = (
         [figure.crop_path] if figure.crop_path else [figure.page_screenshot_path]
     )
+    metadata["image_scope"] = "figure_crop" if figure.crop_path else "page_screenshot"
     assets = _dedupe_asset_refs(preferred_assets)
     chunks = [
         ChunkArtifact(
@@ -877,6 +930,12 @@ def _format_chart_datapoints_text(figure: FigureArtifact) -> str:
             suffix = " (approx)" if approx else ""
             unit_text = f" {unit}" if unit else ""
             lines.append(f"- {series} | x={x_val} | y={y_val}{unit_text}{suffix}")
+    else:
+        lines.append(
+            "Datapoints: not extractable from text — "
+            "refer to the attached image to read bar heights or line positions. "
+            "Estimate values visually from the axis scale if needed."
+        )
     if figure.numeric_extraction_confidence is not None:
         lines.append(
             f"Numeric extraction confidence: {figure.numeric_extraction_confidence:.2f}"

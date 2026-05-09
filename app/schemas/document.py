@@ -74,7 +74,7 @@ class ConflictDetail(BaseModel):
 
 class QueryResponse(BaseModel):
     answer: str
-    reasoning: Optional[str] = None
+    reasoning: str = ""
     citations: List[Dict[str, Any]] = []
     conflicts: List[Dict[str, Any]] = []
     query_id: Optional[str] = None

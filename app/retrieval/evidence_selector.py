@@ -131,6 +131,16 @@ TIME_ANCHORED_TERMS = (
 )
 YEAR_PATTERN = re.compile(r"\b(?:19|20)\d{2}\b")
 _NUMERIC_DENSITY_PATTERN = re.compile(r"\b\d[\d,.]*\b")
+_MAP_LAYOUT_TERMS = (
+    "map",
+    "floor plan",
+    "geographic",
+    "footprint",
+    "location map",
+    "property map",
+    "world map",
+    "us map",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +175,15 @@ def _is_reasoning_priority_query(question: str) -> bool:
 def _is_visual_or_image_query(question: str) -> bool:
     normalized = question.lower()
     return any(term in normalized for term in VISUAL_QUERY_TERMS)
+
+
+def _is_map_or_layout_query(question: str) -> bool:
+    normalized = question.lower()
+    return any(term in normalized for term in _MAP_LAYOUT_TERMS)
+
+
+def _is_page_card_node(node: Any) -> bool:
+    return str((node.node.metadata or {}).get("chunk_type") or "") == "page_card"
 
 
 def _is_time_anchored_query(question: str) -> bool:
@@ -481,5 +500,38 @@ def _ensure_image_evidence(
         selected[replace_idx] = candidate
         selected_keys.add(candidate_key)
         image_node_count += 1
+
+    # For map/layout queries, also attempt to inject a page_card with a screenshot
+    if _is_map_or_layout_query(question):
+        for candidate in ranked_nodes:
+            if image_node_count >= desired_image_nodes:
+                break
+            if not _is_page_card_node(candidate) or not _node_has_image_assets(candidate):
+                continue
+            candidate_key = _node_unique_key(candidate)
+            if candidate_key in selected_keys:
+                continue
+
+            if len(selected) < evidence_cap:
+                selected.append(candidate)
+                selected_keys.add(candidate_key)
+                image_node_count += 1
+                continue
+
+            replace_idx = next(
+                (
+                    idx
+                    for idx, node in reversed(list(enumerate(selected)))
+                    if not _node_has_image_assets(node)
+                ),
+                None,
+            )
+            if replace_idx is None:
+                break
+
+            selected_keys.discard(_node_unique_key(selected[replace_idx]))
+            selected[replace_idx] = candidate
+            selected_keys.add(candidate_key)
+            image_node_count += 1
 
     return selected

@@ -1,0 +1,2078 @@
+warning[deprecated]: The function `on_event` is deprecated
+  --> api.py:24:6
+   |
+24 | @app.on_event("startup")
+   |      ^^^^^^^^ 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+   |
+
+error[invalid-argument-type]: Argument to function `enqueue_document_ingestion` is incorrect
+   --> app/api/routes_documents.py:117:9
+    |
+117 |         filename=file.filename,
+    |         ^^^^^^^^^^^^^^^^^^^^^^ Expected `str`, found `str | None`
+    |
+info: element `None` of union `str | None` is not assignable to `str`
+info: Function defined here
+   --> app/services/ingest_service.py:170:5
+    |
+170 | def enqueue_document_ingestion(
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+171 |     file_content: bytes,
+172 |     filename: str,
+    |     ------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `enqueue_document_ingestion` is incorrect
+   --> app/api/routes_documents.py:119:9
+    |
+119 |         client_name=client.name,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Function defined here
+   --> app/services/ingest_service.py:170:5
+    |
+170 | def enqueue_document_ingestion(
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+171 |     file_content: bytes,
+172 |     filename: str,
+173 |     client_id: str,
+174 |     client_name: str,
+    |     ---------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument is incorrect
+  --> app/api/routes_query.py:35:9
+   |
+35 |         reasoning=result.get("reasoning"),
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Expected `str`, found `Unknown | None`
+   |
+info: element `None` of union `Unknown | None` is not assignable to `str`
+
+error[invalid-argument-type]: Argument is incorrect
+   --> app/core/ai_factory.py:334:56
+    |
+334 |             thinking_config=genai_types.ThinkingConfig(thinking_level=effort)
+    |                                                        ^^^^^^^^^^^^^^^^^^^^^ Expected `ThinkingLevel | None`, found `SupportedReasoningEffort`
+    |
+
+error[invalid-return-type]: Return type does not match returned value
+  --> app/core/logging_config.py:29:20
+   |
+29 |             return handler
+   |                    ^^^^^^^ expected `FileHandler | None`, found `Handler`
+   |
+  ::: app/core/logging_config.py:22:6
+   |
+22 | ) -> logging.FileHandler | None:
+   |      -------------------------- Expected `FileHandler | None` because of return type
+   |
+
+error[invalid-argument-type]: Argument is incorrect
+   --> app/indexing/chat_history_store.py:185:13
+    |
+185 |             must_not=must_not_conditions,
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Expected `list[FieldCondition | IsEmptyCondition | IsNullCondition | ... omitted 4 union elements] | FieldCondition | IsEmptyCondition | ... omitted 6 union elements`, found `list[FieldCondition] | None`
+    |
+info: element `list[FieldCondition]` of union `list[FieldCondition] | None` is not assignable to `list[FieldCondition | IsEmptyCondition | IsNullCondition | ... omitted 4 union elements] | FieldCondition | IsEmptyCondition | ... omitted 6 union elements`
+info: └── type `list[FieldCondition]` is not assignable to any element of the union `list[FieldCondition | IsEmptyCondition | IsNullCondition | ... omitted 4 union elements] | FieldCondition | IsEmptyCondition | ... omitted 6 union elements`
+info:     ├── element `IsEmptyCondition` of union `FieldCondition | IsEmptyCondition | IsNullCondition | ... omitted 4 union elements` is not assignable to `FieldCondition`
+info:     └── ... omitted 8 union elements without additional context
+
+error[no-matching-overload]: No overload of bound method `MutableMapping.update` matches arguments
+   --> app/indexing/vector_store.py:175:13
+    |
+175 | /             kwargs.update(
+176 | |                 {
+177 | |                     "vector_store_query_mode": "hybrid",
+178 | |                     "sparse_top_k": sparse_top_k or similarity_top_k,
+179 | |                     "hybrid_top_k": hybrid_top_k or similarity_top_k,
+180 | |                 }
+181 | |             )
+    | |_____________^
+    |
+info: First overload defined here
+    --> stdlib/typing.pyi:1871:5
+     |
+1871 | /     @overload
+1872 | |     def update(self, m: SupportsKeysAndGetItem[_KT, _VT], /) -> None:
+1873 | |         """D.update([E, ]**F) -> None.  Update D from mapping/iterable E and F.
+1874 | |         If E present and has a .keys() method, does:     for k in E.keys(): D[k] = E[k]
+1875 | |         If E present and lacks .keys() method, does:     for (k, v) in E: D[k] = v
+1876 | |         In either case, this is followed by: for k, v in F.items(): D[k] = v
+1877 | |         """
+     | |___________^ First overload defined here
+     |
+info: Possible overloads for bound method `update`:
+info:   (self, m: SupportsKeysAndGetItem[_KT@MutableMapping, _VT@MutableMapping], /) -> None
+info:   (self: SupportsGetItem[str, _VT@MutableMapping], m: SupportsKeysAndGetItem[str, _VT@MutableMapping], /, **kwargs: _VT@MutableMapping) -> None
+info:   (self, m: Iterable[tuple[_KT@MutableMapping, _VT@MutableMapping]], /) -> None
+info:   (self: SupportsGetItem[str, _VT@MutableMapping], m: Iterable[tuple[str, _VT@MutableMapping]], /, **kwargs: _VT@MutableMapping) -> None
+info:   (self: SupportsGetItem[str, _VT@MutableMapping], /, **kwargs: _VT@MutableMapping) -> None
+
+error[invalid-argument-type]: Argument to bound method `PDFReader.load_data` is incorrect
+   --> app/ingestion/parser.py:142:56
+    |
+142 |         for i, doc in enumerate(reader_cls().load_data(file_path)):
+    |                                                        ^^^^^^^^^ Expected `Path | PurePosixPath`, found `str`
+    |
+info: Method defined here
+  --> .venv/lib/python3.12/site-packages/llama_index/readers/file/docs/base.py:40:9
+   |
+40 |     def load_data(
+   |         ^^^^^^^^^
+41 |         self,
+42 |         file: Union[Path, PurePosixPath],
+   |         -------------------------------- Parameter declared here
+   |
+info: Union variant `bound method PDFReader.load_data(file: Path | PurePosixPath, extra_info: dict[Unknown, Unknown] | None = None, fs: AbstractFileSystem | None = None) -> list[Document]` is incompatible with this call site
+info: Attempted to call union type `(bound method PDFReader.load_data(file: Path | PurePosixPath, extra_info: dict[Unknown, Unknown] | None = None, fs: AbstractFileSystem | None = None) -> list[Document]) | (bound method PptxReader.load_data(file: str | Path, extra_info: dict[Unknown, Unknown] | None = None, fs: AbstractFileSystem | None = None) -> list[Document]) | (bound method DocxReader.load_data(file: Path, extra_info: dict[Unknown, Unknown] | None = None, fs: AbstractFileSystem | None = None) -> list[Document])`
+
+error[invalid-argument-type]: Argument to bound method `DocxReader.load_data` is incorrect
+   --> app/ingestion/parser.py:142:56
+    |
+142 |         for i, doc in enumerate(reader_cls().load_data(file_path)):
+    |                                                        ^^^^^^^^^ Expected `Path`, found `str`
+    |
+info: Method defined here
+   --> .venv/lib/python3.12/site-packages/llama_index/readers/file/docs/base.py:106:9
+    |
+106 |     def load_data(
+    |         ^^^^^^^^^
+107 |         self,
+108 |         file: Path,
+    |         ---------- Parameter declared here
+    |
+info: Union variant `bound method DocxReader.load_data(file: Path, extra_info: dict[Unknown, Unknown] | None = None, fs: AbstractFileSystem | None = None) -> list[Document]` is incompatible with this call site
+info: Attempted to call union type `(bound method PDFReader.load_data(file: Path | PurePosixPath, extra_info: dict[Unknown, Unknown] | None = None, fs: AbstractFileSystem | None = None) -> list[Document]) | (bound method PptxReader.load_data(file: str | Path, extra_info: dict[Unknown, Unknown] | None = None, fs: AbstractFileSystem | None = None) -> list[Document]) | (bound method DocxReader.load_data(file: Path, extra_info: dict[Unknown, Unknown] | None = None, fs: AbstractFileSystem | None = None) -> list[Document])`
+
+error[unresolved-attribute]: Unresolved attribute `do_cell_matching` on type `BaseTableStructureOptions`
+  --> app/ingestion/pdf_pipeline/adapters.py:38:9
+   |
+38 |         opts.table_structure_options.do_cell_matching = True
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+
+error[invalid-argument-type]: Argument to constructor `enumerate.__new__` is incorrect
+   --> app/ingestion/pdf_pipeline/adapters.py:254:37
+    |
+254 |     for page_idx, page in enumerate(pdf_doc, start=1):
+    |                                     ^^^^^^^ Expected `Iterable[Unknown]`, found `Document`
+    |
+info: type `Document` is not assignable to protocol `Iterable[Unknown]`
+info: └── protocol member `__iter__` is not defined on type `Document`
+info: Function defined here
+    --> stdlib/builtins.pyi:3250:9
+     |
+3250 |     def __new__(cls, iterable: Iterable[_T], start: int = 0) -> Self: ...
+     |         ^^^^^^^      ---------------------- Parameter declared here
+     |
+
+error[unresolved-attribute]: Object of type `_T@enumerate` has no attribute `get_pixmap`
+   --> app/ingestion/pdf_pipeline/adapters.py:258:19
+    |
+258 |             pix = page.get_pixmap(dpi=120)
+    |                   ^^^^^^^^^^^^^^^
+    |
+
+error[unresolved-attribute]: Object of type `_T@enumerate` has no attribute `get_text`
+   --> app/ingestion/pdf_pipeline/adapters.py:266:17
+    |
+266 |         words = page.get_text("words") or []
+    |                 ^^^^^^^^^^^^^
+    |
+
+error[unresolved-attribute]: Object of type `_T@enumerate` has no attribute `get_text`
+   --> app/ingestion/pdf_pipeline/adapters.py:288:35
+    |
+288 |                 "full_page_text": page.get_text("text") or "",
+    |                                   ^^^^^^^^^^^^^
+    |
+
+error[unresolved-attribute]: Object of type `_T@enumerate` has no attribute `rect`
+   --> app/ingestion/pdf_pipeline/adapters.py:290:37
+    |
+290 |                 "page_width": float(page.rect.width),
+    |                                     ^^^^^^^^^
+    |
+
+error[unresolved-attribute]: Object of type `_T@enumerate` has no attribute `rect`
+   --> app/ingestion/pdf_pipeline/adapters.py:291:38
+    |
+291 |                 "page_height": float(page.rect.height),
+    |                                      ^^^^^^^^^
+    |
+
+error[invalid-argument-type]: Argument to constructor `enumerate.__new__` is incorrect
+   --> app/ingestion/pdf_pipeline/adapters.py:315:37
+    |
+315 |     for page_idx, page in enumerate(pdf_doc, start=1):
+    |                                     ^^^^^^^ Expected `Iterable[Unknown]`, found `Document`
+    |
+info: type `Document` is not assignable to protocol `Iterable[Unknown]`
+info: └── protocol member `__iter__` is not defined on type `Document`
+info: Function defined here
+    --> stdlib/builtins.pyi:3250:9
+     |
+3250 |     def __new__(cls, iterable: Iterable[_T], start: int = 0) -> Self: ...
+     |         ^^^^^^^      ---------------------- Parameter declared here
+     |
+
+error[invalid-argument-type]: Argument to function `_extract_page_components` is incorrect
+   --> app/ingestion/pdf_pipeline/adapters.py:316:64
+    |
+316 |         components, degraded_stages = _extract_page_components(page)
+    |                                                                ^^^^ Expected `Page`, found `_T@enumerate`
+    |
+info: Function defined here
+   --> app/ingestion/pdf_pipeline/adapters.py:350:5
+    |
+350 | def _extract_page_components(page: fitz.Page) -> tuple[dict[str, list[Any]], list[str]]:
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^ --------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_extract_layout_predictions` is incorrect
+   --> app/ingestion/pdf_pipeline/adapters.py:319:58
+    |
+319 |         layout_predictions = _extract_layout_predictions(page) if layout_enabled else []
+    |                                                          ^^^^ Expected `Page`, found `_T@enumerate`
+    |
+info: Function defined here
+   --> app/ingestion/pdf_pipeline/adapters.py:573:5
+    |
+573 | def _extract_layout_predictions(page: fitz.Page) -> list[dict[str, Any]]:
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^ --------------- Parameter declared here
+    |
+
+error[unresolved-attribute]: Object of type `_T@enumerate` has no attribute `rect`
+   --> app/ingestion/pdf_pipeline/adapters.py:326:32
+    |
+326 |                 "width": float(page.rect.width),
+    |                                ^^^^^^^^^
+    |
+
+error[unresolved-attribute]: Object of type `_T@enumerate` has no attribute `rect`
+   --> app/ingestion/pdf_pipeline/adapters.py:327:33
+    |
+327 |                 "height": float(page.rect.height),
+    |                                 ^^^^^^^^^
+    |
+
+error[unresolved-attribute]: Object of type `_T@enumerate` has no attribute `rotation`
+   --> app/ingestion/pdf_pipeline/adapters.py:328:33
+    |
+328 |                 "rotation": int(page.rotation),
+    |                                 ^^^^^^^^^^^^^
+    |
+
+error[invalid-assignment]: Object of type `BaseException | None` is not assignable to `Exception | None`
+   --> app/ingestion/pdf_pipeline/artifact_builders.py:193:9
+    |
+193 |         current = current.__cause__ or current.__context__
+    |         -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Incompatible value of type `BaseException | None`
+    |         |
+    |         Declared type `Exception | None`
+    |
+info: element `BaseException` of union `BaseException | None` is not assignable to `Exception | None`
+
+error[invalid-argument-type]: Argument is incorrect
+   --> app/ingestion/pdf_pipeline/artifact_builders.py:285:36
+    |
+285 |                         ImageBlock(path=image_path, image_mimetype=mime_type),
+    |                                    ^^^^^^^^^^^^^^^ Expected `Path | None`, found `str & ~AlwaysFalsy`
+    |
+
+error[invalid-argument-type]: Argument to constructor `enumerate.__new__` is incorrect
+   --> app/ingestion/pdf_pipeline/artifact_builders.py:439:37
+    |
+439 |         for idx, table in enumerate(doc.tables):
+    |                                     ^^^^^^^^^^ Expected `Iterable[Unknown]`, found `~AlwaysFalsy`
+    |
+info: Function defined here
+    --> stdlib/builtins.pyi:3250:9
+     |
+3250 |     def __new__(cls, iterable: Iterable[_T], start: int = 0) -> Self: ...
+     |         ^^^^^^^      ---------------------- Parameter declared here
+     |
+
+error[invalid-return-type]: Return type does not match returned value
+    --> app/ingestion/pdf_pipeline/artifact_builders.py:1194:12
+     |
+1194 |     return aligned and (same_header or same_caption)
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `bool`, found `bool | (str & ~AlwaysTruthy)`
+     |
+    ::: app/ingestion/pdf_pipeline/artifact_builders.py:1179:72
+     |
+1179 | def _should_merge_tables(left: TableArtifact, right: TableArtifact) -> bool:
+     |                                                                        ---- Expected `bool` because of return type
+     |
+info: element `str & ~AlwaysTruthy` of union `bool | (str & ~AlwaysTruthy)` is not assignable to `bool`
+
+error[invalid-argument-type]: Argument is incorrect
+    --> app/ingestion/pdf_pipeline/artifact_builders.py:1294:36
+     |
+1294 |                         ImageBlock(path=image_path, image_mimetype=mime_type),
+     |                                    ^^^^^^^^^^^^^^^ Expected `Path | None`, found `str & ~AlwaysFalsy`
+     |
+
+error[invalid-argument-type]: Argument to constructor `float.__new__` is incorrect
+   --> app/ingestion/pdf_pipeline/chunk_builder.py:316:19
+    |
+316 |             float(metadata.get("numeric_density", 0.0) or 0.0),
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Expected `str | Buffer | SupportsFloat | SupportsIndex`, found `(Any & ~AlwaysFalsy) | (str & ~AlwaysFalsy) | (int & ~AlwaysFalsy) | ... omitted 3 union elements`
+    |
+info: element `list[int] & ~AlwaysFalsy` of union `(Any & ~AlwaysFalsy) | (str & ~AlwaysFalsy) | (int & ~AlwaysFalsy) | ... omitted 3 union elements` is not assignable to `str | Buffer | SupportsFloat | SupportsIndex`
+info: └── type `list[int] & ~AlwaysFalsy` is not assignable to any element of the union `str | Buffer | SupportsFloat | SupportsIndex`
+info:     ├── no element of intersection `list[int] & ~AlwaysFalsy` is assignable to `Buffer`
+info:     │   └── type `list[int]` is not assignable to protocol `Buffer`
+info:     │       └── protocol member `__buffer__` is not defined on type `list[int]`
+info:     ├── no element of intersection `list[int] & ~AlwaysFalsy` is assignable to `SupportsFloat`
+info:     │   └── type `list[int]` is not assignable to protocol `SupportsFloat`
+info:     │       └── protocol member `__float__` is not defined on type `list[int]`
+info:     ├── no element of intersection `list[int] & ~AlwaysFalsy` is assignable to `SupportsIndex`
+info:     │   └── type `list[int]` is not assignable to protocol `SupportsIndex`
+info:     │       └── protocol member `__index__` is not defined on type `list[int]`
+info:     └── ... omitted 1 union element without additional context
+info: Function defined here
+   --> stdlib/builtins.pyi:664:9
+    |
+664 |     def __new__(cls, x: ConvertibleToFloat = 0, /) -> Self: ...
+    |         ^^^^^^^      ------------------------- Parameter declared here
+    |
+
+error[invalid-assignment]: Invalid subscript assignment with key of type `Literal["pdf_repair_method"]` and value of type `Literal["mutool_clean"]` on object of type `dict[str, bool | None]`
+  --> app/ingestion/pdf_pipeline/repair.py:44:5
+   |
+44 |     status["pdf_repair_method"] = "mutool_clean"
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^--------------
+   |                                   |
+   |                                   Expected value of type `bool | None`, got `Literal["mutool_clean"]`
+   |
+
+error[invalid-assignment]: Invalid subscript assignment with key of type `Literal["pdf_repair_method"]` and value of type `Literal["pymupdf_page_copy"]` on object of type `dict[str, bool | None]`
+  --> app/ingestion/pdf_pipeline/repair.py:49:5
+   |
+49 |     status["pdf_repair_method"] = "pymupdf_page_copy"
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-------------------
+   |                                   |
+   |                                   Expected value of type `bool | None`, got `Literal["pymupdf_page_copy"]`
+   |
+
+error[invalid-assignment]: Invalid subscript assignment with key of type `Literal["pdf_repair_error"]` and value of type `str | None` on object of type `dict[str, bool | None]`
+  --> app/ingestion/pdf_pipeline/repair.py:56:5
+   |
+56 |     status["pdf_repair_error"] = error
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-----
+   |                                  |
+   |                                  Expected value of type `bool | None`, got `str | None`
+   |
+
+error[invalid-argument-type]: Argument to constructor `datetime.__new__` is incorrect
+   --> app/ingestion/version_resolver.py:179:43
+    |
+179 |         result["published_at"] = datetime(*(int(d_match.group(i)) for i in (1, 2, 3)))
+    |                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Expected `tzinfo | None`, found `int`
+    |
+info: Function defined here
+   --> stdlib/datetime.pyi:392:9
+    |
+392 |     def __new__(
+    |         ^^^^^^^
+    |
+   ::: stdlib/datetime.pyi:401:9
+    |
+401 |         tzinfo: _TzInfo | None = None,
+    |         ----------------------------- Parameter declared here
+    |
+
+error[unsupported-operator]: Unsupported `+` operation
+  --> app/retrieval/reranker.py:97:13
+   |
+97 |               semantic_score
+   |  _____________^-------------
+   | |             |
+   | |             Has type `int | float | None`
+98 | |             + temporal_adjustment
+   | |_______________------------------^
+   |                 |
+   |                 Has type `int | float`
+   |
+
+error[invalid-argument-type]: Argument to function `_safe_bool` is incorrect
+   --> app/retrieval/reranker.py:119:57
+    |
+119 |     is_current = _safe_bool(metadata.get("is_current"), None)
+    |                                                         ^^^^ Expected `bool`, found `None`
+    |
+info: Function defined here
+   --> app/retrieval/reranker.py:262:5
+    |
+262 | def _safe_bool(value, default: bool) -> bool:
+    |     ^^^^^^^^^^        ------------- Parameter declared here
+    |
+
+error[no-matching-overload]: No overload of function `max` matches arguments
+   --> app/retrieval/reranker.py:312:36
+    |
+312 |         dominant_version[doc_id] = max(version_scores, key=version_scores.get)
+    |                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+info: First overload defined here
+    --> stdlib/builtins.pyi:3907:1
+     |
+3907 | / @overload
+3908 | | def max(
+3909 | |     arg1: SupportsRichComparisonT, arg2: SupportsRichComparisonT, /, *_args: SupportsRichComparisonT, key: None = None
+3910 | | ) -> SupportsRichComparisonT:
+3911 | |     """max(iterable, *[, default=obj, key=func]) -> value
+3912 | |     max(arg1, arg2, *args, *[, key=func]) -> value
+3913 | |
+3914 | |     With a single iterable argument, return its biggest item. The
+3915 | |     default keyword-only argument specifies an object to return if
+3916 | |     the provided iterable is empty.
+3917 | |     With two or more positional arguments, return the largest argument.
+3918 | |     """
+     | |_______^ First overload defined here
+     |
+info: Possible overloads for function `max`:
+info:   [SupportsRichComparisonT](arg1: SupportsRichComparisonT, arg2: SupportsRichComparisonT, /, *_args: SupportsRichComparisonT, *, key: None = None) -> SupportsRichComparisonT
+info:   [_T](arg1: _T, arg2: _T, /, *_args: _T, *, key: (_T, /) -> SupportsDunderLT[Any] | SupportsDunderGT[Any]) -> _T
+info:   [SupportsRichComparisonT](iterable: Iterable[SupportsRichComparisonT], /, *, key: None = None) -> SupportsRichComparisonT
+info:   [_T](iterable: Iterable[_T], /, *, key: (_T, /) -> SupportsDunderLT[Any] | SupportsDunderGT[Any]) -> _T
+info:   [SupportsRichComparisonT, _T](iterable: Iterable[SupportsRichComparisonT], /, *, key: None = None, default: _T) -> SupportsRichComparisonT | _T
+info:   [_T1, _T2](iterable: Iterable[_T1], /, *, key: (_T1, /) -> SupportsDunderLT[Any] | SupportsDunderGT[Any], default: _T2) -> _T1 | _T2
+
+error[invalid-assignment]: Object of type `BaseException | None` is not assignable to `Exception | None`
+  --> app/retrieval/synthesizer.py:78:9
+   |
+78 |         current = current.__cause__ or current.__context__
+   |         -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Incompatible value of type `BaseException | None`
+   |         |
+   |         Declared type `Exception | None`
+   |
+info: element `BaseException` of union `BaseException | None` is not assignable to `Exception | None`
+
+error[invalid-argument-type]: Argument to function `invoke_llm_chat` is incorrect
+   --> app/retrieval/synthesizer.py:273:21
+    |
+273 |                     **request_kwargs,
+    |                     ^^^^^^^^^^^^^^^^ Expected `int | float | None`, found `str | list[dict[str, Any]] | int`
+    |
+info: element `str` of union `str | list[dict[str, Any]] | int` is not assignable to `int | float | None`
+info: Function defined here
+  --> app/core/ai_provider.py:80:5
+   |
+80 | def invoke_llm_chat(
+   |     ^^^^^^^^^^^^^^^
+   |
+  ::: app/core/ai_provider.py:91:5
+   |
+91 |     timeout_seconds: float | None = None,
+   |     ------------------------------------ Parameter declared here
+   |
+
+error[invalid-argument-type]: Argument is incorrect
+   --> app/retrieval/synthesizer.py:410:17
+    |
+410 |                 path=image_path,
+    |                 ^^^^^^^^^^^^^^^ Expected `Path | None`, found `str`
+    |
+
+error[invalid-return-type]: Return type does not match returned value
+   --> app/services/chat_context_service.py:126:16
+    |
+126 |         return turns[-limit:]
+    |                ^^^^^^^^^^^^^^ expected `list[dict[str, str]]`, found `list[dict[str, Column[Unknown]]]`
+    |
+   ::: app/services/chat_context_service.py:103:10
+    |
+103 |     ) -> list[dict[str, str]]:
+    |          -------------------- Expected `list[dict[str, str]]` because of return type
+    |
+
+error[invalid-argument-type]: Argument to bound method `ChatConversationService._next_turn_index` is incorrect
+  --> app/services/chat_conversation_service.py:39:49
+   |
+39 |         next_turn_index = self._next_turn_index(session.id)
+   |                                                 ^^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+   |
+info: Method defined here
+   --> app/services/chat_conversation_service.py:176:9
+    |
+176 |     def _next_turn_index(self, session_id: str) -> int:
+    |         ^^^^^^^^^^^^^^^^       --------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to bound method `ChatConversationService._create_message` is incorrect
+  --> app/services/chat_conversation_service.py:43:13
+   |
+43 |             session_id=session.id,
+   |             ^^^^^^^^^^^^^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+   |
+info: Method defined here
+   --> app/services/chat_conversation_service.py:184:9
+    |
+184 |     def _create_message(
+    |         ^^^^^^^^^^^^^^^
+185 |         self,
+186 |         *,
+187 |         client_id: str,
+188 |         session_id: str,
+    |         --------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to bound method `ChatContextService.build_context_bundle` is incorrect
+  --> app/services/chat_conversation_service.py:53:13
+   |
+53 |             session_id=session.id,
+   |             ^^^^^^^^^^^^^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+   |
+info: Method defined here
+  --> app/services/chat_context_service.py:32:9
+   |
+32 |     def build_context_bundle(
+   |         ^^^^^^^^^^^^^^^^^^^^
+33 |         self,
+34 |         *,
+35 |         client_id: str,
+36 |         session_id: str,
+   |         --------------- Parameter declared here
+   |
+
+error[invalid-argument-type]: Argument to function `execute_query` is incorrect
+  --> app/services/chat_conversation_service.py:63:17
+   |
+63 |                 session_id=session.id,
+   |                 ^^^^^^^^^^^^^^^^^^^^^ Expected `str | None`, found `Column[Unknown]`
+   |
+info: Function defined here
+   --> app/services/query_service.py:192:5
+    |
+192 | def execute_query(
+    |     ^^^^^^^^^^^^^
+193 |     question: str,
+194 |     client_id: str,
+195 |     db: Session,
+196 |     reasoning_effort: str = "medium",
+197 |     session_id: str | None = None,
+    |     ----------------------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to bound method `ChatConversationService._persist_error_message` is incorrect
+  --> app/services/chat_conversation_service.py:69:52
+   |
+69 |             self._persist_error_message(client_id, session.id, error_msg)
+   |                                                    ^^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+   |
+info: Method defined here
+   --> app/services/chat_conversation_service.py:291:9
+    |
+291 |     def _persist_error_message(
+    |         ^^^^^^^^^^^^^^^^^^^^^^
+292 |         self, client_id: str, session_id: str, error_msg: str
+    |                               --------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to bound method `ChatConversationService._create_message` is incorrect
+  --> app/services/chat_conversation_service.py:74:13
+   |
+74 |             session_id=session.id,
+   |             ^^^^^^^^^^^^^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+   |
+info: Method defined here
+   --> app/services/chat_conversation_service.py:184:9
+    |
+184 |     def _create_message(
+    |         ^^^^^^^^^^^^^^^
+185 |         self,
+186 |         *,
+187 |         client_id: str,
+188 |         session_id: str,
+    |         --------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to bound method `ChatContextService.index_qa_pair` is incorrect
+  --> app/services/chat_conversation_service.py:85:13
+   |
+85 |             session_id=session.id,
+   |             ^^^^^^^^^^^^^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+   |
+info: Method defined here
+  --> app/services/chat_context_service.py:57:9
+   |
+57 |     def index_qa_pair(
+   |         ^^^^^^^^^^^^^
+58 |         self,
+59 |         *,
+60 |         client_id: str,
+61 |         session_id: str,
+   |         --------------- Parameter declared here
+   |
+
+error[invalid-argument-type]: Argument to bound method `ChatContextService.index_qa_pair` is incorrect
+  --> app/services/chat_conversation_service.py:86:13
+   |
+86 |             user_text=user_message.content,
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+   |
+info: Method defined here
+  --> app/services/chat_context_service.py:57:9
+   |
+57 |     def index_qa_pair(
+   |         ^^^^^^^^^^^^^
+58 |         self,
+59 |         *,
+60 |         client_id: str,
+61 |         session_id: str,
+62 |         user_text: str,
+   |         -------------- Parameter declared here
+   |
+
+error[invalid-argument-type]: Argument to bound method `ChatContextService.index_qa_pair` is incorrect
+  --> app/services/chat_conversation_service.py:87:13
+   |
+87 |             assistant_text=assistant_message.content,
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+   |
+info: Method defined here
+  --> app/services/chat_context_service.py:57:9
+   |
+57 |     def index_qa_pair(
+   |         ^^^^^^^^^^^^^
+   |
+  ::: app/services/chat_context_service.py:63:9
+   |
+63 |         assistant_text: str,
+   |         ------------------- Parameter declared here
+   |
+
+error[invalid-argument-type]: Argument to bound method `ChatContextService.index_qa_pair` is incorrect
+  --> app/services/chat_conversation_service.py:88:13
+   |
+88 |             assistant_message_id=assistant_message.id,
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+   |
+info: Method defined here
+  --> app/services/chat_context_service.py:57:9
+   |
+57 |     def index_qa_pair(
+   |         ^^^^^^^^^^^^^
+   |
+  ::: app/services/chat_context_service.py:64:9
+   |
+64 |         assistant_message_id: str,
+   |         ------------------------- Parameter declared here
+   |
+
+error[invalid-assignment]: Object of type `Literal[""]` is not assignable to attribute `summary_text` on type `ChatSession & ~AlwaysFalsy`
+   --> app/services/chat_conversation_service.py:153:9
+    |
+153 |         session.summary_text = ""
+    |         ^^^^^^^^^^^^^^^^^^^^
+    |
+
+error[invalid-assignment]: Object of type `datetime` is not assignable to attribute `updated_at` on type `ChatSession & ~AlwaysFalsy`
+   --> app/services/chat_conversation_service.py:154:9
+    |
+154 |         session.updated_at = datetime.now(timezone.utc)
+    |         ^^^^^^^^^^^^^^^^^^
+    |
+
+error[invalid-assignment]: Object of type `datetime` is not assignable to attribute `last_activity_at` on type `ChatSession & ~AlwaysFalsy`
+   --> app/services/chat_conversation_service.py:155:9
+    |
+155 |         session.last_activity_at = datetime.now(timezone.utc)
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+
+error[invalid-assignment]: Object of type `datetime` is not assignable to attribute `updated_at` of type `Column[Unknown]`
+   --> app/services/chat_conversation_service.py:225:9
+    |
+225 |         session.updated_at = now
+    |         ^^^^^^^^^^^^^^^^^^
+    |
+
+error[invalid-assignment]: Object of type `datetime` is not assignable to attribute `last_activity_at` of type `Column[Unknown]`
+   --> app/services/chat_conversation_service.py:226:9
+    |
+226 |         session.last_activity_at = now
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+
+error[invalid-assignment]: Object of type `str | None` is not assignable to attribute `title` of type `Column[Unknown]`
+   --> app/services/chat_conversation_service.py:229:13
+    |
+229 |             session.title = cleaned[:80].rstrip() if cleaned else None
+    |             ^^^^^^^^^^^^^
+    |
+info: element `str` of union `str | None` is not assignable to `Column[Unknown]`
+
+error[invalid-assignment]: Object of type `Literal[""]` is not assignable to attribute `summary_text` of type `Column[Unknown]`
+   --> app/services/chat_conversation_service.py:241:13
+    |
+241 |             session.summary_text = ""
+    |             ^^^^^^^^^^^^^^^^^^^^
+    |
+
+error[invalid-assignment]: Object of type `str` is not assignable to attribute `summary_text` of type `Column[Unknown]`
+   --> app/services/chat_conversation_service.py:278:17
+    |
+278 |                 session.summary_text = truncate_text_by_tokens(
+    |                 ^^^^^^^^^^^^^^^^^^^^
+    |
+
+error[invalid-assignment]: Object of type `str` is not assignable to attribute `summary_text` of type `Column[Unknown]`
+   --> app/services/chat_conversation_service.py:289:13
+    |
+289 |             session.summary_text = _heuristic_summary(rows)
+    |             ^^^^^^^^^^^^^^^^^^^^
+    |
+
+error[invalid-argument-type]: Argument to bound method `ChatConversationService._create_message` is incorrect
+   --> app/services/chat_conversation_service.py:305:21
+    |
+305 |                     session_id=session.id,
+    |                     ^^^^^^^^^^^^^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Method defined here
+   --> app/services/chat_conversation_service.py:184:9
+    |
+184 |     def _create_message(
+    |         ^^^^^^^^^^^^^^^
+185 |         self,
+186 |         *,
+187 |         client_id: str,
+188 |         session_id: str,
+    |         --------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to bound method `ChatConversationService._next_turn_index` is incorrect
+   --> app/services/chat_conversation_service.py:308:54
+    |
+308 |                     turn_index=self._next_turn_index(session.id),
+    |                                                      ^^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Method defined here
+   --> app/services/chat_conversation_service.py:176:9
+    |
+176 |     def _next_turn_index(self, session_id: str) -> int:
+    |         ^^^^^^^^^^^^^^^^       --------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to constructor `Path.__new__` is incorrect
+   --> app/services/ingest_queue.py:109:42
+    |
+109 |             if not file_path or not Path(file_path).exists():
+    |                                          ^^^^^^^^^ Expected `str | PathLike[str]`, found `Column[Unknown] & ~AlwaysFalsy`
+    |
+info: type `Column[Unknown] & ~AlwaysFalsy` is not assignable to any element of the union `str | PathLike[str]`
+info: ├── no element of intersection `Column[Unknown] & ~AlwaysFalsy` is assignable to `PathLike[str]`
+info: │   └── type `Column[Unknown]` is not assignable to protocol `PathLike[str]`
+info: │       └── protocol member `__fspath__` is not defined on type `Column[Unknown]`
+info: └── ... omitted 1 union element without additional context
+info: Function defined here
+   --> stdlib/pathlib/__init__.pyi:308:13
+    |
+308 |         def __new__(cls, *args: StrPath, **kwargs: Unused) -> Self: ...  # pyright: ignore[reportInconsistentConstructor]
+    |             ^^^^^^^      -------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_handle_ingestion_failure` is incorrect
+   --> app/services/ingest_queue.py:115:21
+    |
+115 |                     db_doc.name,
+    |                     ^^^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Function defined here
+   --> app/services/ingest_service.py:615:5
+    |
+615 | def _handle_ingestion_failure(
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+616 |     e: Exception,
+617 |     filename: str,
+    |     ------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_handle_ingestion_failure` is incorrect
+   --> app/services/ingest_queue.py:116:21
+    |
+116 |                     db_doc.id,
+    |                     ^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Function defined here
+   --> app/services/ingest_service.py:615:5
+    |
+615 | def _handle_ingestion_failure(
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+616 |     e: Exception,
+617 |     filename: str,
+618 |     doc_id: str,
+    |     ----------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_handle_ingestion_failure` is incorrect
+   --> app/services/ingest_queue.py:117:21
+    |
+117 |                     job.id,
+    |                     ^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Function defined here
+   --> app/services/ingest_service.py:615:5
+    |
+615 | def _handle_ingestion_failure(
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+616 |     e: Exception,
+617 |     filename: str,
+618 |     doc_id: str,
+619 |     job_id: str,
+    |     ----------- Parameter declared here
+    |
+
+error[invalid-assignment]: Object of type `Literal["processing"]` is not assignable to attribute `status` on type `Document & ~AlwaysFalsy`
+   --> app/services/ingest_queue.py:124:13
+    |
+124 |             db_doc.status = "processing"
+    |             ^^^^^^^^^^^^^
+    |
+
+error[invalid-assignment]: Object of type `Literal["running"]` is not assignable to attribute `status` on type `IngestionJob & ~AlwaysFalsy`
+   --> app/services/ingest_queue.py:125:13
+    |
+125 |             job.status = "running"
+    |             ^^^^^^^^^^
+    |
+
+error[invalid-assignment]: Object of type `datetime` is not assignable to attribute `started_at` on type `IngestionJob & ~AlwaysFalsy`
+   --> app/services/ingest_queue.py:126:13
+    |
+126 |             job.started_at = datetime.now(timezone.utc)
+    |             ^^^^^^^^^^^^^^
+    |
+
+error[invalid-argument-type]: Argument to function `_execute_pipeline` is incorrect
+   --> app/services/ingest_queue.py:140:21
+    |
+140 |                     file_path,
+    |                     ^^^^^^^^^ Expected `str`, found `Column[Unknown] & ~AlwaysFalsy`
+    |
+info: Function defined here
+   --> app/services/ingest_service.py:584:5
+    |
+584 | def _execute_pipeline(
+    |     ^^^^^^^^^^^^^^^^^
+585 |     db_doc: Document,
+586 |     job: IngestionJob,
+587 |     file_path: str,
+    |     -------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_execute_pipeline` is incorrect
+   --> app/services/ingest_queue.py:141:21
+    |
+141 |                     db_doc.name,
+    |                     ^^^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Function defined here
+   --> app/services/ingest_service.py:584:5
+    |
+584 | def _execute_pipeline(
+    |     ^^^^^^^^^^^^^^^^^
+585 |     db_doc: Document,
+586 |     job: IngestionJob,
+587 |     file_path: str,
+588 |     filename: str,
+    |     ------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_execute_pipeline` is incorrect
+   --> app/services/ingest_queue.py:144:21
+    |
+144 |                     db_doc.id,
+    |                     ^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Function defined here
+   --> app/services/ingest_service.py:584:5
+    |
+584 | def _execute_pipeline(
+    |     ^^^^^^^^^^^^^^^^^
+    |
+   ::: app/services/ingest_service.py:591:5
+    |
+591 |     doc_id: str,
+    |     ----------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_execute_pipeline` is incorrect
+   --> app/services/ingest_queue.py:145:21
+    |
+145 |                     db_doc.file_type,
+    |                     ^^^^^^^^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Function defined here
+   --> app/services/ingest_service.py:584:5
+    |
+584 | def _execute_pipeline(
+    |     ^^^^^^^^^^^^^^^^^
+    |
+   ::: app/services/ingest_service.py:592:5
+    |
+592 |     file_ext: str,
+    |     ------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_handle_ingestion_failure` is incorrect
+   --> app/services/ingest_queue.py:151:21
+    |
+151 |                     db_doc.name,
+    |                     ^^^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Function defined here
+   --> app/services/ingest_service.py:615:5
+    |
+615 | def _handle_ingestion_failure(
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+616 |     e: Exception,
+617 |     filename: str,
+    |     ------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_handle_ingestion_failure` is incorrect
+   --> app/services/ingest_queue.py:152:21
+    |
+152 |                     db_doc.id,
+    |                     ^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Function defined here
+   --> app/services/ingest_service.py:615:5
+    |
+615 | def _handle_ingestion_failure(
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+616 |     e: Exception,
+617 |     filename: str,
+618 |     doc_id: str,
+    |     ----------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_handle_ingestion_failure` is incorrect
+   --> app/services/ingest_queue.py:153:21
+    |
+153 |                     job.id,
+    |                     ^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Function defined here
+   --> app/services/ingest_service.py:615:5
+    |
+615 | def _handle_ingestion_failure(
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+616 |     e: Exception,
+617 |     filename: str,
+618 |     doc_id: str,
+619 |     job_id: str,
+    |     ----------- Parameter declared here
+    |
+
+error[invalid-assignment]: Object of type `str` is not assignable to attribute `storage_path` of type `Column[Unknown]`
+   --> app/services/ingest_service.py:151:9
+    |
+151 |         db_doc.storage_path = file_path
+    |         ^^^^^^^^^^^^^^^^^^^
+    |
+
+error[invalid-assignment]: Object of type `str` is not assignable to attribute `storage_path` of type `Column[Unknown]`
+   --> app/services/ingest_service.py:212:9
+    |
+212 |         db_doc.storage_path = file_path
+    |         ^^^^^^^^^^^^^^^^^^^
+    |
+
+error[invalid-argument-type]: Argument to constructor `Path.__new__` is incorrect
+   --> app/services/ingest_service.py:247:44
+    |
+247 |     if not db_doc.storage_path or not Path(db_doc.storage_path).exists():
+    |                                            ^^^^^^^^^^^^^^^^^^^ Expected `str | PathLike[str]`, found `Column[Unknown] & ~AlwaysFalsy`
+    |
+info: type `Column[Unknown] & ~AlwaysFalsy` is not assignable to any element of the union `str | PathLike[str]`
+info: ├── no element of intersection `Column[Unknown] & ~AlwaysFalsy` is assignable to `PathLike[str]`
+info: │   └── type `Column[Unknown]` is not assignable to protocol `PathLike[str]`
+info: │       └── protocol member `__fspath__` is not defined on type `Column[Unknown]`
+info: └── ... omitted 1 union element without additional context
+info: Function defined here
+   --> stdlib/pathlib/__init__.pyi:308:13
+    |
+308 |         def __new__(cls, *args: StrPath, **kwargs: Unused) -> Self: ...  # pyright: ignore[reportInconsistentConstructor]
+    |             ^^^^^^^      -------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to bound method `VectorStoreManager.delete_document_vectors` is incorrect
+   --> app/services/ingest_service.py:261:54
+    |
+261 |         vector_store_manager.delete_document_vectors(doc_id, client_id)
+    |                                                      ^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Method defined here
+   --> app/indexing/vector_store.py:206:9
+    |
+206 |     def delete_document_vectors(self, document_id: str, client_id: str) -> bool:
+    |         ^^^^^^^^^^^^^^^^^^^^^^^       ---------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to bound method `VectorStoreManager.delete_document_vectors` is incorrect
+   --> app/services/ingest_service.py:261:62
+    |
+261 |         vector_store_manager.delete_document_vectors(doc_id, client_id)
+    |                                                              ^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Method defined here
+   --> app/indexing/vector_store.py:206:9
+    |
+206 |     def delete_document_vectors(self, document_id: str, client_id: str) -> bool:
+    |         ^^^^^^^^^^^^^^^^^^^^^^^                         -------------- Parameter declared here
+    |
+
+error[invalid-assignment]: Object of type `Literal["processing"]` is not assignable to attribute `status` on type `Document & ~AlwaysFalsy`
+   --> app/services/ingest_service.py:272:5
+    |
+272 |     db_doc.status = "processing"
+    |     ^^^^^^^^^^^^^
+    |
+
+error[invalid-argument-type]: Argument to function `_create_ingestion_job_record` is incorrect
+   --> app/services/ingest_service.py:276:9
+    |
+276 |         client_id=client_id,
+    |         ^^^^^^^^^^^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Function defined here
+  --> app/services/ingest_service.py:85:5
+   |
+85 | def _create_ingestion_job_record(
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+86 |     *,
+87 |     job_id: str,
+88 |     client_id: str,
+   |     -------------- Parameter declared here
+   |
+
+error[invalid-argument-type]: Argument to function `_create_ingestion_job_record` is incorrect
+   --> app/services/ingest_service.py:277:9
+    |
+277 |         doc_id=doc_id,
+    |         ^^^^^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Function defined here
+  --> app/services/ingest_service.py:85:5
+   |
+85 | def _create_ingestion_job_record(
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+86 |     *,
+87 |     job_id: str,
+88 |     client_id: str,
+89 |     doc_id: str,
+   |     ----------- Parameter declared here
+   |
+
+error[invalid-argument-type]: Argument to constructor `Path.__new__` is incorrect
+   --> app/services/ingest_service.py:279:24
+    |
+279 |         file_size=Path(file_path).stat().st_size,
+    |                        ^^^^^^^^^ Expected `str | PathLike[str]`, found `Column[Unknown] & ~AlwaysFalsy`
+    |
+info: type `Column[Unknown] & ~AlwaysFalsy` is not assignable to any element of the union `str | PathLike[str]`
+info: ├── no element of intersection `Column[Unknown] & ~AlwaysFalsy` is assignable to `PathLike[str]`
+info: │   └── type `Column[Unknown]` is not assignable to protocol `PathLike[str]`
+info: │       └── protocol member `__fspath__` is not defined on type `Column[Unknown]`
+info: └── ... omitted 1 union element without additional context
+info: Function defined here
+   --> stdlib/pathlib/__init__.pyi:308:13
+    |
+308 |         def __new__(cls, *args: StrPath, **kwargs: Unused) -> Self: ...  # pyright: ignore[reportInconsistentConstructor]
+    |             ^^^^^^^      -------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_execute_pipeline` is incorrect
+   --> app/services/ingest_service.py:289:13
+    |
+289 |             file_path,
+    |             ^^^^^^^^^ Expected `str`, found `Column[Unknown] & ~AlwaysFalsy`
+    |
+info: Function defined here
+   --> app/services/ingest_service.py:584:5
+    |
+584 | def _execute_pipeline(
+    |     ^^^^^^^^^^^^^^^^^
+585 |     db_doc: Document,
+586 |     job: IngestionJob,
+587 |     file_path: str,
+    |     -------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_execute_pipeline` is incorrect
+   --> app/services/ingest_service.py:290:13
+    |
+290 |             filename,
+    |             ^^^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Function defined here
+   --> app/services/ingest_service.py:584:5
+    |
+584 | def _execute_pipeline(
+    |     ^^^^^^^^^^^^^^^^^
+585 |     db_doc: Document,
+586 |     job: IngestionJob,
+587 |     file_path: str,
+588 |     filename: str,
+    |     ------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_execute_pipeline` is incorrect
+   --> app/services/ingest_service.py:291:13
+    |
+291 |             client_id,
+    |             ^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Function defined here
+   --> app/services/ingest_service.py:584:5
+    |
+584 | def _execute_pipeline(
+    |     ^^^^^^^^^^^^^^^^^
+585 |     db_doc: Document,
+586 |     job: IngestionJob,
+587 |     file_path: str,
+588 |     filename: str,
+589 |     client_id: str,
+    |     -------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_execute_pipeline` is incorrect
+   --> app/services/ingest_service.py:292:13
+    |
+292 |             client_name,
+    |             ^^^^^^^^^^^ Expected `str`, found `Column[Unknown] | Literal["Unknown"]`
+    |
+info: element `Column[Unknown]` of union `Column[Unknown] | Literal["Unknown"]` is not assignable to `str`
+info: Function defined here
+   --> app/services/ingest_service.py:584:5
+    |
+584 | def _execute_pipeline(
+    |     ^^^^^^^^^^^^^^^^^
+    |
+   ::: app/services/ingest_service.py:590:5
+    |
+590 |     client_name: str,
+    |     ---------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_execute_pipeline` is incorrect
+   --> app/services/ingest_service.py:293:13
+    |
+293 |             doc_id,
+    |             ^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Function defined here
+   --> app/services/ingest_service.py:584:5
+    |
+584 | def _execute_pipeline(
+    |     ^^^^^^^^^^^^^^^^^
+    |
+   ::: app/services/ingest_service.py:591:5
+    |
+591 |     doc_id: str,
+    |     ----------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_execute_pipeline` is incorrect
+   --> app/services/ingest_service.py:294:13
+    |
+294 |             file_ext,
+    |             ^^^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Function defined here
+   --> app/services/ingest_service.py:584:5
+    |
+584 | def _execute_pipeline(
+    |     ^^^^^^^^^^^^^^^^^
+    |
+   ::: app/services/ingest_service.py:592:5
+    |
+592 |     file_ext: str,
+    |     ------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_handle_ingestion_failure` is incorrect
+   --> app/services/ingest_service.py:299:38
+    |
+299 |         _handle_ingestion_failure(e, filename, doc_id, job_id, db_doc, job, db)
+    |                                      ^^^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Function defined here
+   --> app/services/ingest_service.py:615:5
+    |
+615 | def _handle_ingestion_failure(
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+616 |     e: Exception,
+617 |     filename: str,
+    |     ------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_handle_ingestion_failure` is incorrect
+   --> app/services/ingest_service.py:299:48
+    |
+299 |         _handle_ingestion_failure(e, filename, doc_id, job_id, db_doc, job, db)
+    |                                                ^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Function defined here
+   --> app/services/ingest_service.py:615:5
+    |
+615 | def _handle_ingestion_failure(
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+616 |     e: Exception,
+617 |     filename: str,
+618 |     doc_id: str,
+    |     ----------- Parameter declared here
+    |
+
+error[invalid-assignment]: Object of type `Literal["deleting"]` is not assignable to attribute `status` on type `Document & ~AlwaysFalsy`
+   --> app/services/ingest_service.py:309:5
+    |
+309 |     db_doc.status = "deleting"
+    |     ^^^^^^^^^^^^^
+    |
+
+error[invalid-argument-type]: Argument to bound method `VectorStoreManager.delete_document_vectors` is incorrect
+   --> app/services/ingest_service.py:315:26
+    |
+315 |             document_id, client_id
+    |                          ^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Method defined here
+   --> app/indexing/vector_store.py:206:9
+    |
+206 |     def delete_document_vectors(self, document_id: str, client_id: str) -> bool:
+    |         ^^^^^^^^^^^^^^^^^^^^^^^                         -------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to constructor `Path.__new__` is incorrect
+   --> app/services/ingest_service.py:330:41
+    |
+330 |         if db_doc.storage_path and Path(db_doc.storage_path).exists():
+    |                                         ^^^^^^^^^^^^^^^^^^^ Expected `str | PathLike[str]`, found `Column[Unknown] & ~AlwaysFalsy`
+    |
+info: type `Column[Unknown] & ~AlwaysFalsy` is not assignable to any element of the union `str | PathLike[str]`
+info: ├── no element of intersection `Column[Unknown] & ~AlwaysFalsy` is assignable to `PathLike[str]`
+info: │   └── type `Column[Unknown]` is not assignable to protocol `PathLike[str]`
+info: │       └── protocol member `__fspath__` is not defined on type `Column[Unknown]`
+info: └── ... omitted 1 union element without additional context
+info: Function defined here
+   --> stdlib/pathlib/__init__.pyi:308:13
+    |
+308 |         def __new__(cls, *args: StrPath, **kwargs: Unused) -> Self: ...  # pyright: ignore[reportInconsistentConstructor]
+    |             ^^^^^^^      -------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to constructor `Path.__new__` is incorrect
+   --> app/services/ingest_service.py:332:22
+    |
+332 |                 Path(db_doc.storage_path).unlink()
+    |                      ^^^^^^^^^^^^^^^^^^^ Expected `str | PathLike[str]`, found `Column[Unknown] & ~AlwaysFalsy`
+    |
+info: type `Column[Unknown] & ~AlwaysFalsy` is not assignable to any element of the union `str | PathLike[str]`
+info: ├── no element of intersection `Column[Unknown] & ~AlwaysFalsy` is assignable to `PathLike[str]`
+info: │   └── type `Column[Unknown]` is not assignable to protocol `PathLike[str]`
+info: │       └── protocol member `__fspath__` is not defined on type `Column[Unknown]`
+info: └── ... omitted 1 union element without additional context
+info: Function defined here
+   --> stdlib/pathlib/__init__.pyi:308:13
+    |
+308 |         def __new__(cls, *args: StrPath, **kwargs: Unused) -> Self: ...  # pyright: ignore[reportInconsistentConstructor]
+    |             ^^^^^^^      -------------- Parameter declared here
+    |
+
+error[invalid-assignment]: Object of type `Literal["deleted"]` is not assignable to attribute `status` on type `Document & ~AlwaysFalsy`
+   --> app/services/ingest_service.py:340:13
+    |
+340 |             db_doc.status = "deleted"
+    |             ^^^^^^^^^^^^^
+    |
+
+error[invalid-assignment]: Object of type `Literal[""]` is not assignable to attribute `storage_path` on type `Document & ~AlwaysFalsy`
+   --> app/services/ingest_service.py:341:13
+    |
+341 |             db_doc.storage_path = ""
+    |             ^^^^^^^^^^^^^^^^^^^
+    |
+
+error[invalid-assignment]: Object of type `Literal["deleting_failed"]` is not assignable to attribute `status` on type `Document & ~AlwaysFalsy`
+   --> app/services/ingest_service.py:346:9
+    |
+346 |         db_doc.status = "deleting_failed"
+    |         ^^^^^^^^^^^^^
+    |
+
+error[invalid-return-type]: Return type does not match returned value
+   --> app/services/ingest_service.py:521:10
+    |
+521 |     ) -> list[BaseNode]:
+    |          -------------- Expected `list[BaseNode]` because of return type
+522 |         transformations = self._build_transformations(layout_aware_pdf)
+523 |         pipeline = IngestionPipeline(transformations=transformations)
+524 |         worker_count = 1 if layout_aware_pdf else 3
+525 |         return pipeline.run(documents=llama_docs, num_workers=worker_count)
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `list[BaseNode]`, found `Sequence[BaseNode]`
+    |
+
+error[missing-argument]: No argument provided for required parameter `docstore` of `DocumentContextExtractor.__init__`
+   --> app/services/ingest_service.py:544:21
+    |
+544 |                     DocumentContextExtractor(llm=LlamaSettings.llm, num_workers=3),
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+info: Parameter declared here
+   --> .venv/lib/python3.12/site-packages/llama_index/core/extractors/document_context.py:106:9
+    |
+106 |         docstore: BaseDocumentStore,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+
+error[invalid-assignment]: Object of type `Literal["failed"]` is not assignable to attribute `status` of type `Column[Unknown]`
+   --> app/services/ingest_service.py:644:9
+    |
+644 |         db_doc.status = "failed"
+    |         ^^^^^^^^^^^^^
+    |
+
+error[invalid-assignment]: Object of type `Literal["failed"]` is not assignable to attribute `status` of type `Column[Unknown]`
+   --> app/services/ingest_service.py:645:9
+    |
+645 |         job.status = "failed"
+    |         ^^^^^^^^^^
+    |
+
+error[invalid-assignment]: Object of type `str` is not assignable to attribute `error_message` of type `Column[Unknown]`
+   --> app/services/ingest_service.py:646:9
+    |
+646 |         job.error_message = error_msg
+    |         ^^^^^^^^^^^^^^^^^
+    |
+
+error[invalid-assignment]: Object of type `datetime` is not assignable to attribute `finished_at` of type `Column[Unknown]`
+   --> app/services/ingest_service.py:647:9
+    |
+647 |         job.finished_at = datetime.now(timezone.utc)
+    |         ^^^^^^^^^^^^^^^
+    |
+
+error[invalid-assignment]: Object of type `Literal[False]` is not assignable to attribute `is_current` of type `Column[Unknown]`
+   --> app/services/ingest_service.py:673:9
+    |
+673 |         old_ver.is_current = False
+    |         ^^^^^^^^^^^^^^^^^^
+    |
+
+error[invalid-return-type]: Return type does not match returned value
+  --> app/services/query_service.py:78:16
+   |
+78 |         return {row.vector_node_id: row for row in rows}
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `dict[str, VectorNodeRegistry]`, found `dict[str | VectorNodeRegistry | Column[Unknown], VectorNodeRegistry]`
+   |
+  ::: app/services/query_service.py:60:10
+   |
+60 |     ) -> dict[str, VectorNodeRegistry]:
+   |          ----------------------------- Expected `dict[str, VectorNodeRegistry]` because of return type
+   |
+info: element `Column[Unknown]` of union `str | VectorNodeRegistry | Column[Unknown]` is not assignable to `str`
+
+error[invalid-argument-type]: Argument to bound method `dict.get` is incorrect
+  --> app/services/query_service.py:89:52
+   |
+89 |             registry_row = registry_by_node_id.get(vector_node_id)
+   |                                                    ^^^^^^^^^^^^^^ Expected `str`, found `Any | None`
+   |
+info: element `None` of union `Any | None` is not assignable to `str`
+info: Matching overload defined here
+    --> stdlib/builtins.pyi:3015:9
+     |
+3015 |     def get(self, key: _KT, default: None = None, /) -> _VT | None:
+     |         ^^^       -------- Parameter declared here
+     |
+info: Non-matching overloads for bound method `get`:
+info:   (self, key: _KT@dict, default: _VT@dict, /) -> _VT@dict
+info:   [_T](self, key: _KT@dict, default: _T, /) -> _VT@dict | _T
+
+error[invalid-assignment]: Object of type `str` is not assignable to attribute `answer` of type `Column[Unknown]`
+   --> app/services/query_service.py:118:9
+    |
+118 |         query_log.answer = answer[:5000]
+    |         ^^^^^^^^^^^^^^^^
+    |
+
+error[invalid-assignment]: Object of type `Literal["completed"]` is not assignable to attribute `status` of type `Column[Unknown]`
+   --> app/services/query_service.py:119:9
+    |
+119 |         query_log.status = "completed"
+    |         ^^^^^^^^^^^^^^^^
+    |
+
+error[invalid-assignment]: Object of type `int` is not assignable to attribute `latency_ms` of type `Column[Unknown]`
+   --> app/services/query_service.py:120:9
+    |
+120 |         query_log.latency_ms = latency_ms
+    |         ^^^^^^^^^^^^^^^^^^^^
+    |
+
+error[invalid-assignment]: Object of type `Literal["failed"]` is not assignable to attribute `status` of type `Column[Unknown]`
+   --> app/services/query_service.py:124:9
+    |
+124 |         query_log.status = "failed"
+    |         ^^^^^^^^^^^^^^^^
+    |
+
+error[invalid-assignment]: Object of type `str` is not assignable to attribute `answer` of type `Column[Unknown]`
+   --> app/services/query_service.py:125:9
+    |
+125 |         query_log.answer = f"Error: {str(error)[:500]}"
+    |         ^^^^^^^^^^^^^^^^
+    |
+
+error[invalid-assignment]: Object of type `int` is not assignable to attribute `latency_ms` of type `Column[Unknown]`
+   --> app/services/query_service.py:126:9
+    |
+126 |         query_log.latency_ms = latency_ms
+    |         ^^^^^^^^^^^^^^^^^^^^
+    |
+
+error[invalid-argument-type]: Argument to bound method `QueryLogWriter.persist_retrieval_logs` is incorrect
+   --> app/services/query_service.py:151:17
+    |
+151 |                 query_log_id=query_log.id,
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Method defined here
+  --> app/services/query_service.py:80:9
+   |
+80 |     def persist_retrieval_logs(
+   |         ^^^^^^^^^^^^^^^^^^^^^^
+81 |         self,
+82 |         *,
+83 |         query_log_id: str,
+   |         ----------------- Parameter declared here
+   |
+
+error[invalid-argument-type]: Argument to bound method `QueryLogWriter.persist_conflict_logs` is incorrect
+   --> app/services/query_service.py:156:17
+    |
+156 |                 query_log_id=query_log.id,
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Method defined here
+   --> app/services/query_service.py:101:9
+    |
+101 |     def persist_conflict_logs(
+    |         ^^^^^^^^^^^^^^^^^^^^^
+102 |         self,
+103 |         *,
+104 |         query_log_id: str,
+    |         ----------------- Parameter declared here
+    |
+
+error[not-subscriptable]: Cannot subscript object of type `object` with no `__getitem__` method
+   --> tests/test_ai_provider.py:254:12
+    |
+254 |     assert messages[0].role == MessageRole.DEVELOPER
+    |            ^^^^^^^^^^^
+    |
+
+error[not-subscriptable]: Cannot subscript object of type `object` with no `__getitem__` method
+   --> tests/test_ai_provider.py:256:12
+    |
+256 |     assert chat_kwargs["max_output_tokens"] == 256
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+
+error[not-subscriptable]: Cannot subscript object of type `object` with no `__getitem__` method
+   --> tests/test_ai_provider.py:257:12
+    |
+257 |     assert chat_kwargs["prompt_cache_key"] == "cache-key"
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+
+error[not-subscriptable]: Cannot subscript object of type `object` with no `__getitem__` method
+   --> tests/test_ai_provider.py:258:12
+    |
+258 |     assert chat_kwargs["prompt_cache_retention"] == "24h"
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+
+error[not-subscriptable]: Cannot subscript object of type `object` with no `__getitem__` method
+   --> tests/test_ai_provider.py:259:12
+    |
+259 |     assert chat_kwargs["safety_identifier"] == "safe-id"
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+
+error[not-subscriptable]: Cannot subscript object of type `object` with no `__getitem__` method
+   --> tests/test_ai_provider.py:260:12
+    |
+260 |     assert chat_kwargs["user"] == "user-1"
+    |            ^^^^^^^^^^^^^^^^^^^
+    |
+
+error[not-subscriptable]: Cannot subscript object of type `object` with no `__getitem__` method
+   --> tests/test_ai_provider.py:261:12
+    |
+261 |     assert chat_kwargs["timeout"] == 9.5
+    |            ^^^^^^^^^^^^^^^^^^^^^^
+    |
+
+error[not-subscriptable]: Cannot subscript object of type `object` with no `__getitem__` method
+   --> tests/test_ai_provider.py:262:12
+    |
+262 |     assert chat_kwargs["truncation"] == "disabled"
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+
+error[not-subscriptable]: Cannot subscript object of type `object` with no `__getitem__` method
+   --> tests/test_ai_provider.py:303:12
+    |
+303 |     assert messages[0].role == MessageRole.SYSTEM
+    |            ^^^^^^^^^^^
+    |
+
+error[not-subscriptable]: Cannot subscript object of type `object` with no `__getitem__` method
+   --> tests/test_ai_provider.py:305:12
+    |
+305 |     assert chat_kwargs["generation_config"]["max_output_tokens"] == 128
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+
+error[not-subscriptable]: Cannot subscript object of type `object` with no `__getitem__` method
+   --> tests/test_ai_provider.py:307:9
+    |
+307 |         chat_kwargs["generation_config"]["cached_content"]
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+
+error[unsupported-operator]: Unsupported `not in` operation
+   --> tests/test_ai_provider.py:310:12
+    |
+310 |     assert "timeout" not in chat_kwargs
+    |            ---------^^^^^^^^-----------
+    |            |                |
+    |            |                Has type `object`
+    |            Has type `Literal["timeout"]`
+    |
+
+error[unsupported-operator]: Unsupported `not in` operation
+   --> tests/test_ai_provider.py:311:12
+    |
+311 |     assert "user" not in chat_kwargs
+    |            ------^^^^^^^^-----------
+    |            |             |
+    |            |             Has type `object`
+    |            Has type `Literal["user"]`
+    |
+
+error[unsupported-operator]: Unsupported `not in` operation
+   --> tests/test_ai_provider.py:312:12
+    |
+312 |     assert "prompt_cache_key" not in chat_kwargs
+    |            ------------------^^^^^^^^-----------
+    |            |                         |
+    |            |                         Has type `object`
+    |            Has type `Literal["prompt_cache_key"]`
+    |
+
+error[invalid-argument-type]: Argument to bound method `ChatContextService.build_context_bundle` is incorrect
+  --> tests/test_chat_context_service.py:72:9
+   |
+72 |         session_id=session.id,
+   |         ^^^^^^^^^^^^^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+   |
+info: Method defined here
+  --> app/services/chat_context_service.py:32:9
+   |
+32 |     def build_context_bundle(
+   |         ^^^^^^^^^^^^^^^^^^^^
+33 |         self,
+34 |         *,
+35 |         client_id: str,
+36 |         session_id: str,
+   |         --------------- Parameter declared here
+   |
+
+error[invalid-argument-type]: Argument to bound method `ChatConversationService.clear_session` is incorrect
+   --> tests/test_chat_conversation_service.py:166:27
+    |
+166 |     service.clear_session(session_id=session.id)
+    |                           ^^^^^^^^^^^^^^^^^^^^^ Expected `str`, found `Column[Unknown]`
+    |
+info: Method defined here
+   --> app/services/chat_conversation_service.py:144:9
+    |
+144 |     def clear_session(self, *, session_id: str) -> None:
+    |         ^^^^^^^^^^^^^          --------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to constructor `Path.__new__` is incorrect
+  --> tests/test_ingest_queue_service.py:43:17
+   |
+43 |     assert Path(doc.storage_path).exists()
+   |                 ^^^^^^^^^^^^^^^^ Expected `str | PathLike[str]`, found `Column[Unknown]`
+   |
+info: type `Column[Unknown]` is not assignable to any element of the union `str | PathLike[str]`
+info: ├── type `Column[Unknown]` is not assignable to protocol `PathLike[str]`
+info: │   └── protocol member `__fspath__` is not defined on type `Column[Unknown]`
+info: └── ... omitted 1 union element without additional context
+info: Function defined here
+   --> stdlib/pathlib/__init__.pyi:308:13
+    |
+308 |         def __new__(cls, *args: StrPath, **kwargs: Unused) -> Self: ...  # pyright: ignore[reportInconsistentConstructor]
+    |             ^^^^^^^      -------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_apply_retrieval_metadata` is incorrect
+  --> tests/test_ingest_service_metadata.py:35:9
+   |
+35 |         [node], filename="handbook.pdf", version_info=version_info
+   |         ^^^^^^ Expected `list[BaseNode]`, found `list[BaseNode | DummyNode]`
+   |
+info: element `DummyNode` of union `BaseNode | DummyNode` is not assignable to `BaseNode`
+info: Function defined here
+   --> app/services/ingest_metadata.py:195:5
+    |
+195 | def _apply_retrieval_metadata(
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+196 |     nodes: list[BaseNode],
+    |     --------------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_apply_retrieval_metadata` is incorrect
+  --> tests/test_ingest_service_metadata.py:49:31
+   |
+49 |     _apply_retrieval_metadata([node], filename="deck.pptx", version_info={})
+   |                               ^^^^^^ Expected `list[BaseNode]`, found `list[BaseNode | DummyNode]`
+   |
+info: element `DummyNode` of union `BaseNode | DummyNode` is not assignable to `BaseNode`
+info: Function defined here
+   --> app/services/ingest_metadata.py:195:5
+    |
+195 | def _apply_retrieval_metadata(
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+196 |     nodes: list[BaseNode],
+    |     --------------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_apply_metadata_exclusions` is incorrect
+  --> tests/test_ingest_service_metadata.py:63:32
+   |
+63 |     _apply_metadata_exclusions([node])
+   |                                ^^^^^^ Expected `list[BaseNode]`, found `list[BaseNode | DummyNode]`
+   |
+info: element `DummyNode` of union `BaseNode | DummyNode` is not assignable to `BaseNode`
+info: Function defined here
+   --> app/services/ingest_metadata.py:137:5
+    |
+137 | def _apply_metadata_exclusions(nodes: list[BaseNode]) -> None:
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^ --------------------- Parameter declared here
+    |
+
+error[unsupported-operator]: Unsupported `in` operation
+  --> tests/test_ingest_service_metadata.py:65:12
+   |
+65 |     assert "already_here" in node.excluded_embed_metadata_keys
+   |            --------------^^^^---------------------------------
+   |            |                 |
+   |            |                 Has type `list[str] | None`
+   |            Has type `Literal["already_here"]`
+   |
+info: Operation fails because operator `in` is not supported between objects of type `Literal["already_here"]` and `None`
+
+error[unsupported-operator]: Unsupported `in` operation
+  --> tests/test_ingest_service_metadata.py:66:12
+   |
+66 |     assert "citation_label" in node.excluded_embed_metadata_keys
+   |            ----------------^^^^---------------------------------
+   |            |                   |
+   |            |                   Has type `list[str] | None`
+   |            Has type `Literal["citation_label"]`
+   |
+info: Operation fails because operator `in` is not supported between objects of type `Literal["citation_label"]` and `None`
+
+error[unsupported-operator]: Unsupported `in` operation
+  --> tests/test_ingest_service_metadata.py:67:12
+   |
+67 |     assert "chunk_type" in node.excluded_embed_metadata_keys
+   |            ------------^^^^---------------------------------
+   |            |               |
+   |            |               Has type `list[str] | None`
+   |            Has type `Literal["chunk_type"]`
+   |
+info: Operation fails because operator `in` is not supported between objects of type `Literal["chunk_type"]` and `None`
+
+error[unsupported-operator]: Unsupported `in` operation
+  --> tests/test_ingest_service_metadata.py:68:12
+   |
+68 |     assert "source_artifact_type" in node.excluded_embed_metadata_keys
+   |            ----------------------^^^^---------------------------------
+   |            |                         |
+   |            |                         Has type `list[str] | None`
+   |            Has type `Literal["source_artifact_type"]`
+   |
+info: Operation fails because operator `in` is not supported between objects of type `Literal["source_artifact_type"]` and `None`
+
+error[unsupported-operator]: Unsupported `in` operation
+  --> tests/test_ingest_service_metadata.py:69:12
+   |
+69 |     assert "document_id" in node.excluded_embed_metadata_keys
+   |            -------------^^^^---------------------------------
+   |            |                |
+   |            |                Has type `list[str] | None`
+   |            Has type `Literal["document_id"]`
+   |
+info: Operation fails because operator `in` is not supported between objects of type `Literal["document_id"]` and `None`
+
+error[unsupported-operator]: Unsupported `in` operation
+  --> tests/test_ingest_service_metadata.py:70:12
+   |
+70 |     assert "version_rank" in node.excluded_llm_metadata_keys
+   |            --------------^^^^-------------------------------
+   |            |                 |
+   |            |                 Has type `list[str] | None`
+   |            Has type `Literal["version_rank"]`
+   |
+info: Operation fails because operator `in` is not supported between objects of type `Literal["version_rank"]` and `None`
+
+error[invalid-argument-type]: Argument to function `sorted` is incorrect
+  --> tests/test_ingest_service_metadata.py:72:9
+   |
+72 |         node.excluded_embed_metadata_keys
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Expected `Iterable[str]`, found `list[str] | None`
+   |
+info: element `None` of union `list[str] | None` is not assignable to `Iterable[str]`
+info: └── type `None` is not assignable to protocol `Iterable[str]`
+info:     └── protocol member `__iter__` is not defined on type `None`
+info: Matching overload defined here
+    --> stdlib/builtins.pyi:4332:5
+     |
+4332 | def sorted(
+     |     ^^^^^^
+4333 |     iterable: Iterable[SupportsRichComparisonT], /, *, key: None = None, reverse: bool = False
+     |     ------------------------------------------- Parameter declared here
+     |
+info: Non-matching overloads for function `sorted`:
+info:   [_T](iterable: Iterable[_T], /, *, key: (_T, /) -> SupportsDunderLT[Any] | SupportsDunderGT[Any], reverse: bool = False) -> list[_T]
+
+error[invalid-argument-type]: Argument to function `sorted` is incorrect
+  --> tests/test_ingest_service_metadata.py:74:54
+   |
+74 |     assert node.excluded_llm_metadata_keys == sorted(node.excluded_llm_metadata_keys)
+   |                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Expected `Iterable[str]`, found `list[str] | None`
+   |
+info: element `None` of union `list[str] | None` is not assignable to `Iterable[str]`
+info: └── type `None` is not assignable to protocol `Iterable[str]`
+info:     └── protocol member `__iter__` is not defined on type `None`
+info: Matching overload defined here
+    --> stdlib/builtins.pyi:4332:5
+     |
+4332 | def sorted(
+     |     ^^^^^^
+4333 |     iterable: Iterable[SupportsRichComparisonT], /, *, key: None = None, reverse: bool = False
+     |     ------------------------------------------- Parameter declared here
+     |
+info: Non-matching overloads for function `sorted`:
+info:   [_T](iterable: Iterable[_T], /, *, key: (_T, /) -> SupportsDunderLT[Any] | SupportsDunderGT[Any], reverse: bool = False) -> list[_T]
+
+error[invalid-argument-type]: Argument to function `len` is incorrect
+  --> tests/test_ingest_service_metadata.py:75:16
+   |
+75 |     assert len(node.excluded_embed_metadata_keys) == len(
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Expected `Sized`, found `list[str] | None`
+   |
+info: element `None` of union `list[str] | None` is not assignable to `Sized`
+info: └── type `None` is not assignable to protocol `Sized`
+info:     └── protocol member `__len__` is not defined on type `None`
+info: Function defined here
+    --> stdlib/builtins.pyi:3777:5
+     |
+3777 | def len(obj: Sized, /) -> int:
+     |     ^^^ ---------- Parameter declared here
+     |
+
+error[invalid-argument-type]: Argument to `set.__init__` is incorrect
+  --> tests/test_ingest_service_metadata.py:76:13
+   |
+76 |         set(node.excluded_embed_metadata_keys)
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Expected `Iterable[str]`, found `list[str] | None`
+   |
+info: element `None` of union `list[str] | None` is not assignable to `Iterable[str]`
+info: └── type `None` is not assignable to protocol `Iterable[str]`
+info:     └── protocol member `__iter__` is not defined on type `None`
+info: Matching overload defined here
+    --> stdlib/builtins.pyi:3076:9
+     |
+3076 |     def __init__(self, iterable: Iterable[_T], /) -> None: ...
+     |         ^^^^^^^^       ---------------------- Parameter declared here
+     |
+info: Non-matching overloads for bound method `__init__`:
+info:   (self) -> None
+
+error[unresolved-attribute]: Module `app.services.ingest_service` has no member `SemanticSplitterNodeParser`
+  --> tests/test_ingest_service_metadata.py:91:9
+   |
+91 |         ingest_service.SemanticSplitterNodeParser,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+
+error[unresolved-attribute]: Attribute `node_id` is not defined on `list[RelatedNodeInfo]` in union `RelatedNodeInfo | list[RelatedNodeInfo]`
+   --> tests/test_ingest_service_metadata.py:115:12
+    |
+115 |     assert first.relationships[NodeRelationship.SOURCE].node_id == "doc-1"
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+
+error[unresolved-attribute]: Module `app.ingestion.pdf_pipeline.adapters` has no member `extract_liteparse_pages`
+  --> tests/test_pdf_pipeline.py:67:19
+   |
+67 |     pages, meta = adapters.extract_liteparse_pages(
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+
+error[unresolved-attribute]: Module `app.ingestion.pdf_pipeline.adapters` has no member `extract_liteparse_pages`
+  --> tests/test_pdf_pipeline.py:97:20
+   |
+97 |     pages, _meta = adapters.extract_liteparse_pages(
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+
+error[invalid-argument-type]: Argument to function `_extract_table_candidates` is incorrect
+   --> tests/test_pdf_pipeline.py:133:53
+    |
+133 |     candidates = adapters._extract_table_candidates(page)
+    |                                                     ^^^^ Expected `Page`, found `_FakePage`
+    |
+info: Function defined here
+   --> app/ingestion/pdf_pipeline/adapters.py:460:5
+    |
+460 | def _extract_table_candidates(page: fitz.Page) -> list[dict[str, Any]] | None:
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^ --------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_extract_table_candidates` is incorrect
+   --> tests/test_pdf_pipeline.py:149:47
+    |
+149 |     assert adapters._extract_table_candidates(_FakePage()) is None
+    |                                               ^^^^^^^^^^^ Expected `Page`, found `_FakePage`
+    |
+info: Function defined here
+   --> app/ingestion/pdf_pipeline/adapters.py:460:5
+    |
+460 | def _extract_table_candidates(page: fitz.Page) -> list[dict[str, Any]] | None:
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^ --------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_extract_table_candidates` is incorrect
+   --> tests/test_pdf_pipeline.py:178:53
+    |
+178 |     candidates = adapters._extract_table_candidates(page)
+    |                                                     ^^^^ Expected `Page`, found `_FakePage`
+    |
+info: Function defined here
+   --> app/ingestion/pdf_pipeline/adapters.py:460:5
+    |
+460 | def _extract_table_candidates(page: fitz.Page) -> list[dict[str, Any]] | None:
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^ --------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_extract_table_candidates` is incorrect
+   --> tests/test_pdf_pipeline.py:245:53
+    |
+245 |     candidates = adapters._extract_table_candidates(page)
+    |                                                     ^^^^ Expected `Page`, found `_FakePage`
+    |
+info: Function defined here
+   --> app/ingestion/pdf_pipeline/adapters.py:460:5
+    |
+460 | def _extract_table_candidates(page: fitz.Page) -> list[dict[str, Any]] | None:
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^ --------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `len` is incorrect
+   --> tests/test_pdf_pipeline.py:247:16
+    |
+247 |     assert len(candidates) == 1
+    |                ^^^^^^^^^^ Expected `Sized`, found `list[dict[str, Any]] | None`
+    |
+info: element `None` of union `list[dict[str, Any]] | None` is not assignable to `Sized`
+info: └── type `None` is not assignable to protocol `Sized`
+info:     └── protocol member `__len__` is not defined on type `None`
+info: Function defined here
+    --> stdlib/builtins.pyi:3777:5
+     |
+3777 | def len(obj: Sized, /) -> int:
+     |     ^^^ ---------- Parameter declared here
+     |
+
+error[not-subscriptable]: Cannot subscript object of type `None` with no `__getitem__` method
+   --> tests/test_pdf_pipeline.py:248:12
+    |
+248 |     assert candidates[0]["candidate_id"] == "text_table_candidate_1"
+    |            ^^^^^^^^^^^^^
+    |
+
+error[not-subscriptable]: Cannot subscript object of type `None` with no `__getitem__` method
+   --> tests/test_pdf_pipeline.py:249:12
+    |
+249 |     assert candidates[0]["rows"][1] == ["Q3", "30"]
+    |            ^^^^^^^^^^^^^
+    |
+
+error[not-subscriptable]: Cannot subscript object of type `object` with no `__getitem__` method
+   --> tests/test_pdf_pipeline.py:540:12
+    |
+540 |     assert messages[1]["role"] == "user"
+    |            ^^^^^^^^^^^^^^^^^^^
+    |
+
+error[not-subscriptable]: Cannot subscript object of type `object` with no `__getitem__` method
+   --> tests/test_pdf_pipeline.py:541:12
+    |
+541 |     assert messages[1]["content"] == "analyze this"
+    |            ^^^^^^^^^^^^^^^^^^^^^^
+    |
+
+error[invalid-argument-type]: Argument to function `_group_points_by_document` is incorrect
+  --> tests/test_qdrant_inspector.py:79:41
+   |
+79 |     grouped = _group_points_by_document([p1, p2])  # type: ignore[list-item]
+   |                                         ^^^^^^^^ Expected `list[dict[str, Any]]`, found `list[dict[str, Any] | None]`
+   |
+info: element `None` of union `dict[str, Any] | None` is not assignable to `dict[str, Any]`
+info: Function defined here
+   --> ui/components/qdrant_inspector.py:339:5
+    |
+339 | def _group_points_by_document(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^ ---------------------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_group_points_by_document` is incorrect
+  --> tests/test_qdrant_inspector.py:98:41
+   |
+98 |     grouped = _group_points_by_document([name_only, unknown])  # type: ignore[list-item]
+   |                                         ^^^^^^^^^^^^^^^^^^^^ Expected `list[dict[str, Any]]`, found `list[dict[str, Any] | None]`
+   |
+info: element `None` of union `dict[str, Any] | None` is not assignable to `dict[str, Any]`
+info: Function defined here
+   --> ui/components/qdrant_inspector.py:339:5
+    |
+339 | def _group_points_by_document(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^ ---------------------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `_heuristic_summary` is incorrect
+  --> tests/test_token_limits.py:42:34
+   |
+42 |     summary = _heuristic_summary(rows)
+   |                                  ^^^^ Expected `list[ChatMessage]`, found `list[SimpleNamespace]`
+   |
+info: Function defined here
+   --> app/services/chat_conversation_service.py:351:5
+    |
+351 | def _heuristic_summary(rows: list[ChatMessage]) -> str:
+    |     ^^^^^^^^^^^^^^^^^^ ----------------------- Parameter declared here
+    |
+
+error[unresolved-attribute]: Attribute `startswith` is not defined on `int` in union `str | int`
+  --> ui/components/clients.py:59:24
+   |
+59 |                     if key.startswith("query_active_session_"):
+   |                        ^^^^^^^^^^^^^^
+   |
+
+error[invalid-argument-type]: Argument to bound method `MarkdownMixin.badge` is incorrect
+  --> ui/components/query.py:37:41
+   |
+37 |             col.badge(label, icon=icon, color=color)
+   |                                         ^^^^^^^^^^^ Expected `Literal["red", "orange", "yellow", "blue", "green", ... omitted 4 literals]`, found `str`
+   |
+info: Method defined here
+   --> .venv/lib/python3.12/site-packages/streamlit/elements/markdown.py:435:9
+    |
+435 |       def badge(
+    |           ^^^^^
+436 |           self,
+437 |           label: str,
+438 |           *,  # keyword-only arguments:
+439 |           icon: str | None = None,
+440 | /         color: Literal[
+441 | |             "red",
+442 | |             "orange",
+443 | |             "yellow",
+444 | |             "blue",
+445 | |             "green",
+446 | |             "violet",
+447 | |             "gray",
+448 | |             "grey",
+449 | |             "primary",
+450 | |         ] = "blue",
+    | |__________________- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to bound method `RAGCore.clear_chat_session` is incorrect
+   --> ui/components/query.py:428:36
+    |
+428 |             api.clear_chat_session(active_session_id)
+    |                                    ^^^^^^^^^^^^^^^^^ Expected `str`, found `str | None | Unknown`
+    |
+info: element `None` of union `str | None | Unknown` is not assignable to `str`
+info: Method defined here
+   --> ui/lib/api.py:310:9
+    |
+310 |     def clear_chat_session(self, session_id: str) -> Dict[str, Any]:
+    |         ^^^^^^^^^^^^^^^^^^       --------------- Parameter declared here
+    |
+
+error[invalid-parameter-default]: Default value of type `None` is not assignable to annotated parameter type `str`
+  --> ui/lib/api.py:86:30
+   |
+86 |     def list_documents(self, client_id: str = None) -> List[Dict[str, Any]]:
+   |                              ^^^^^^^^^^^^^^^^^^^^^
+   |
+
+error[invalid-argument-type]: Argument to function `enqueue_document_ingestion` is incorrect
+   --> ui/lib/api.py:124:17
+    |
+124 |                 client_name=client_name,
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^ Expected `str`, found `Column[Unknown] | Literal["Unknown"]`
+    |
+info: element `Column[Unknown]` of union `Column[Unknown] | Literal["Unknown"]` is not assignable to `str`
+info: Function defined here
+   --> app/services/ingest_service.py:170:5
+    |
+170 | def enqueue_document_ingestion(
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+171 |     file_content: bytes,
+172 |     filename: str,
+173 |     client_id: str,
+174 |     client_name: str,
+    |     ---------------- Parameter declared here
+    |
+
+error[invalid-argument-type]: Argument to function `loads` is incorrect
+   --> ui/lib/api.py:291:50
+    |
+291 | …                     decoded = json.loads(message.citations_json)
+    |                                            ^^^^^^^^^^^^^^^^^^^^^^ Expected `str | bytes | bytearray`, found `Column[Unknown] & ~AlwaysFalsy`
+    |
+info: Function defined here
+   --> stdlib/json/__init__.pyi:224:5
+    |
+224 | def loads(
+    |     ^^^^^
+225 |     s: str | bytes | bytearray,
+    |     -------------------------- Parameter declared here
+    |
+
+Found 168 diagnostics

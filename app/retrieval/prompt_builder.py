@@ -39,6 +39,7 @@ def _build_grounded_prompt(
     conflicts: list[dict[str, Any]],
     image_attachment_count: int = 0,
     conversation_context: dict[str, Any] | None = None,
+    citation_image_map: dict[int, list[int]] | None = None,
 ) -> str:
     evidence_lines = []
     for index, citation in enumerate(citations, start=1):
@@ -46,11 +47,11 @@ def _build_grounded_prompt(
         version = citation.get("version_label") or "unknown"
         chunk_type = citation.get("chunk_type") or "text"
         location = _citation_location(citation)
-        image_assets = citation.get("asset_refs") or []
         excerpt = _prompt_excerpt(citation)
+        image_tag = _build_image_tag(index, citation, citation_image_map)
         evidence_lines.append(
             f"[{index}] {label} | version={version} | chunk_type={chunk_type}"
-            f"{location} | image_assets={len(image_assets)}\n"
+            f"{location} | {image_tag}\n"
             f"Excerpt:\n{excerpt}"
         )
 
@@ -88,11 +89,12 @@ def _build_labeled_context_sections(
 ) -> dict[str, Any]:
     summary = str(conversation_context.get("session_summary") or "").strip()
     cross_session_pairs = conversation_context.get("cross_session_pairs") or []
+    _, citation_image_map = _collect_image_evidence_paths(citations)
 
     return {
         "session_summary": summary,
         "cross_session_lines": _build_context_cross_session_lines(cross_session_pairs),
-        "evidence_lines": _build_context_evidence_lines(citations),
+        "evidence_lines": _build_context_evidence_lines(citations, citation_image_map),
         "conflict_lines": _build_context_conflict_lines(conflicts),
     }
 
@@ -126,7 +128,10 @@ def _build_conversation_context_block(conversation_context: dict[str, Any]) -> s
 # ---------------------------------------------------------------------------
 
 
-def _build_context_evidence_lines(citations: list[dict[str, Any]]) -> list[str]:
+def _build_context_evidence_lines(
+    citations: list[dict[str, Any]],
+    citation_image_map: dict[int, list[int]] | None = None,
+) -> list[str]:
     lines: list[str] = []
     for index, citation in enumerate(citations, start=1):
         label = _citation_label(citation, index)
@@ -134,8 +139,9 @@ def _build_context_evidence_lines(citations: list[dict[str, Any]]) -> list[str]:
         chunk_type = citation.get("chunk_type") or "text"
         location = _citation_location(citation)
         excerpt = _prompt_excerpt(citation)
+        image_tag = _build_image_tag(index, citation, citation_image_map)
         lines.append(
-            f"[{index}] {label} | version={version} | chunk_type={chunk_type}{location}\n"
+            f"[{index}] {label} | version={version} | chunk_type={chunk_type}{location} | {image_tag}\n"
             f"Excerpt: {excerpt}"
         )
     return lines
@@ -178,6 +184,23 @@ def _build_context_cross_session_lines(
 
 def _normalize_inline_text(value: Any) -> str:
     return " ".join(str(value or "").split())
+
+
+def _build_image_tag(
+    citation_index: int,
+    citation: dict[str, Any],
+    citation_image_map: dict[int, list[int]] | None,
+) -> str:
+    if citation_image_map is not None:
+        image_indices = citation_image_map.get(citation_index, [])
+        if image_indices:
+            image_scope = str(citation.get("image_scope") or "unknown")
+            indices_str = ",".join(str(i) for i in image_indices)
+            return f"attached_image_indices={indices_str} | image_scope={image_scope}"
+        return "no_attached_image"
+    # Fallback for callers that don't pass a map: show count from asset_refs
+    refs = citation.get("asset_refs") or []
+    return f"image_assets={len(refs) if isinstance(refs, list) else (1 if refs else 0)}"
 
 
 def _citation_label(citation: dict[str, Any], index: int) -> str:
@@ -261,43 +284,76 @@ def _prompt_excerpt(citation: dict[str, Any]) -> str:
 
 def _collect_image_evidence_paths(
     citations: list[dict[str, Any]], max_images: int = MAX_MULTIMODAL_IMAGES
-) -> list[str]:
-    seen_paths: set[str] = set()
-    seen_hashes: set[str] = set()
-    image_paths: list[str] = []
+) -> tuple[list[str], dict[int, list[int]]]:
+    """Collect image paths from citations, prioritizing figure crops over page screenshots.
 
-    for citation in citations:
+    Returns:
+        image_paths: ordered list of resolved image file paths
+        citation_image_map: {citation_1based_index: [image_1based_indices]}
+    """
+    # Build a candidate list: (citation_1based_idx, ref, artifact_bundle_path, is_crop)
+    # Crops come first so they win budget slots over full-page screenshots.
+    crop_candidates: list[tuple[int, str, Any]] = []
+    screenshot_candidates: list[tuple[int, str, Any]] = []
+
+    for citation_idx, citation in enumerate(citations, start=1):
         refs = citation.get("asset_refs") or []
         if isinstance(refs, str):
             refs = [refs]
         if not isinstance(refs, list):
             continue
-
         artifact_bundle_path = citation.get("artifact_bundle_path")
+        image_scope = str(citation.get("image_scope") or "")
         for ref in refs:
-            resolved = _resolve_asset_path(ref, artifact_bundle_path)
-            if resolved is None:
-                continue
-            if resolved.suffix.lower() not in SUPPORTED_IMAGE_SUFFIXES:
-                continue
+            if image_scope == "figure_crop" or _is_likely_crop_path(ref):
+                crop_candidates.append((citation_idx, ref, artifact_bundle_path))
+            else:
+                screenshot_candidates.append((citation_idx, ref, artifact_bundle_path))
 
-            path_str = str(resolved)
-            if path_str in seen_paths:
-                continue
-            try:
-                content_hash = hashlib.sha256(resolved.read_bytes()).hexdigest()
-            except OSError:
-                continue
-            if content_hash in seen_hashes:
-                continue
+    seen_paths: set[str] = set()
+    seen_hashes: set[str] = set()
+    image_paths: list[str] = []
+    citation_image_map: dict[int, list[int]] = {}
 
-            seen_paths.add(path_str)
-            seen_hashes.add(content_hash)
-            image_paths.append(path_str)
-            if len(image_paths) >= max_images:
-                return image_paths
+    def _try_add(citation_idx: int, ref: str, artifact_bundle_path: Any) -> None:
+        if len(image_paths) >= max_images:
+            return
+        resolved = _resolve_asset_path(ref, artifact_bundle_path)
+        if resolved is None:
+            return
+        if resolved.suffix.lower() not in SUPPORTED_IMAGE_SUFFIXES:
+            return
+        path_str = str(resolved)
+        if path_str in seen_paths:
+            # Already added — record the existing index for this citation too
+            existing_idx = image_paths.index(path_str) + 1
+            citation_image_map.setdefault(citation_idx, [])
+            if existing_idx not in citation_image_map[citation_idx]:
+                citation_image_map[citation_idx].append(existing_idx)
+            return
+        try:
+            content_hash = hashlib.sha256(resolved.read_bytes()).hexdigest()
+        except OSError:
+            return
+        if content_hash in seen_hashes:
+            return
+        seen_paths.add(path_str)
+        seen_hashes.add(content_hash)
+        image_paths.append(path_str)
+        image_1based = len(image_paths)
+        citation_image_map.setdefault(citation_idx, []).append(image_1based)
 
-    return image_paths
+    for citation_idx, ref, bundle in crop_candidates:
+        _try_add(citation_idx, ref, bundle)
+    for citation_idx, ref, bundle in screenshot_candidates:
+        _try_add(citation_idx, ref, bundle)
+
+    return image_paths, citation_image_map
+
+
+def _is_likely_crop_path(ref: str) -> bool:
+    name = Path(ref).name.lower()
+    return any(token in name for token in ("figure", "crop", "fig_", "chart_"))
 
 
 def _resolve_asset_path(raw_ref: Any, artifact_bundle_path: Any) -> Path | None:

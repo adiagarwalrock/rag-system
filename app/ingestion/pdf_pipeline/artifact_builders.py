@@ -610,11 +610,18 @@ def build_figure_artifacts(
         manifest = manifests.get(page_num)
 
         candidates: list[dict[str, Any]] = []
+
+        # Docling picture candidates first — DocLayNet bboxes win deduplication
+        for fig_cand in page.get("docling_figure_candidates") or []:
+            candidates.append(fig_cand)
+
+        # PyMuPDF image refs
         for image in page.get("image_refs") or []:
             bbox = image.get("bbox")
             if bbox:
                 candidates.append({"bbox": to_float_bbox(bbox), "kind": "image"})
 
+        # PyMuPDF vector-dense regions
         vector_count = int(page.get("vector_count") or 0)
         vector_union = union_bbox(page.get("vector_bboxes") or [])
         if vector_count >= 20 and vector_union:
@@ -667,6 +674,7 @@ def build_figure_artifacts(
                     if image_hash:
                         seen_image_hashes.add(image_hash)
 
+            is_docling = candidate.get("kind") == "docling_picture"
             artifacts.append(
                 FigureArtifact(
                     figure_id=str(uuid.uuid4()),
@@ -686,7 +694,7 @@ def build_figure_artifacts(
                         nearby_text=nearby,
                     ),
                     footnotes=footnotes,
-                    confidence=0.83 if caption else 0.72,
+                    confidence=0.90 if is_docling else (0.83 if caption else 0.72),
                 )
             )
 
@@ -1080,6 +1088,8 @@ def _classify_figure(caption: str, nearby_text: str, candidate_type: str) -> str
         return "diagram"
     if any(token in haystack for token in ("chart", "graph", "plot", "trend")):
         return "chart"
+    if candidate_type == "docling_picture":
+        return "figure"
     if candidate_type == "vector_dense":
         return "diagram"
     if candidate_type == "image":
@@ -1121,7 +1131,7 @@ def _save_figure_crop(
 
     out_path = figure_dir / f"page_{page_num}_figure_{index}.png"
     try:
-        page.get_pixmap(clip=clip, dpi=140).save(str(out_path))
+        page.get_pixmap(clip=clip, dpi=220).save(str(out_path))
     except Exception:
         logger.exception("Failed to save figure crop for page %s", page_num)
         return ""

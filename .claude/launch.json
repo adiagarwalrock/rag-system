@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Streamlit UI",
+      "runtimeExecutable": "wsl",
+      "runtimeArgs": ["-d", "ubuntu", "-e", "bash", "-c", "cd /home/adiagarwal/vectera && uv run streamlit run streamlit_app.py --server.port 8502 --server.address 0.0.0.0"],
+      "port": 8502
+    },
+    {
+      "name": "FastAPI Backend",
+      "runtimeExecutable": "wsl",
+      "runtimeArgs": ["-d", "ubuntu", "-e", "bash", "-c", "cd /home/adiagarwal/vectera && uv run uvicorn api:app --reload --port 8000 --host 0.0.0.0"],
+      "port": 8000
+    },
+    {
+      "name": "Qdrant (Docker)",
+      "runtimeExecutable": "wsl",
+      "runtimeArgs": ["-d", "ubuntu", "-e", "bash", "-c", "cd /home/adiagarwal/vectera && docker compose up -d qdrant"],
+      "port": 6333
+    }
+  ]
+}

@@ -85,6 +85,9 @@ def build_citations(source_nodes: list) -> List[Dict[str, Any]]:
             "figure_type": metadata.get("figure_type"),
             "chart_type": metadata.get("chart_type"),
             "table_id": metadata.get("table_id"),
+            "slide_purpose": metadata.get("slide_purpose"),
+            "image_scope": metadata.get("image_scope"),
+            "chart_parse_status": metadata.get("chart_parse_status"),
         }
         citations.append(citation)
 

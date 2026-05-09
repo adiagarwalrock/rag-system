@@ -19,31 +19,10 @@ if ! command -v uv &> /dev/null; then
 fi
 echo "✅ 'uv' is installed."
 
-# Check if npm is installed
-if ! command -v npm &> /dev/null; then
-    echo "❌ Error: 'npm' is not installed."
-    echo "Please install Node.js and npm."
-    echo "Or visit: https://nodejs.org/"
-    exit 1
-fi
-echo "✅ 'npm' is installed."
-
 echo ""
 echo "Installing Python dependencies..."
 # Use uv sync to install the dependencies in the virtual environment
 uv sync
-
-echo ""
-echo "Installing Node dependencies (LiteParse)..."
-# Install liteparse globally as required by the pipeline
-if npm install -g @llamaindex/liteparse; then
-    echo "✅ @llamaindex/liteparse installed successfully."
-else
-    echo "⚠️  Warning: Failed to install @llamaindex/liteparse globally."
-    echo "This might require elevated privileges. Try running:"
-    echo "sudo npm install -g @llamaindex/liteparse"
-    exit 1
-fi
 
 echo ""
 echo "======================================"

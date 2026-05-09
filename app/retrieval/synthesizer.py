@@ -5,10 +5,10 @@ Extracted from retriever.py to isolate the LLM-backed answer generation
 domain from retrieval orchestration.
 """
 
+import json
 import logging
 import mimetypes
 import re
-from dataclasses import dataclass
 from typing import Any
 
 from llama_index.core.base.llms.types import (
@@ -18,12 +18,17 @@ from llama_index.core.base.llms.types import (
     TextBlock,
     ThinkingBlock,
 )
+from pydantic import BaseModel, ValidationError
 
 from app.core.ai_provider import get_llm
 from app.core.config import settings
 from app.core.prompts import GROUNDED_ANSWER_DEVELOPER_PROMPT
+from app.schemas.retrieval import (
+    GroundedAnswerResult,
+    GroundedAnswerStructuredResponse,
+    format_reasoning_bullets,
+)
 from app.retrieval.prompt_builder import (
-    _build_conversation_context_block,
     _build_grounded_prompt,
     _build_labeled_context_sections,
     _collect_image_evidence_paths,
@@ -45,6 +50,9 @@ _COMPLEX_QUERY_SIGNALS = (
     "headline stats",
 )
 _COMPLEX_QUERY_SIGNAL_THRESHOLD = 2
+_JSON_BLOCK_PATTERN = re.compile(
+    r"^```(?:json)?\s*(.*?)\s*```$", re.IGNORECASE | re.DOTALL
+)
 
 
 def _effective_max_output_tokens(question: str) -> int:
@@ -56,25 +64,78 @@ def _effective_max_output_tokens(question: str) -> int:
     return settings.RESPONSE_MAX_OUTPUT_TOKENS
 
 
-# ---------------------------------------------------------------------------
-# Result dataclass
-# ---------------------------------------------------------------------------
+def _is_incomplete_structured_output_error(exc: Exception) -> bool:
+    markers = (
+        "invalid json: eof while parsing",
+        "json_invalid",
+        "failed to produce a structured response",
+    )
+    current: Exception | None = exc
+    while current is not None:
+        message = str(current).lower()
+        if any(marker in message for marker in markers):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
-@dataclass(frozen=True, slots=True)
-class GroundedAnswerResult:
-    answer: str
-    reasoning: str | None
-    images_used: list[str]
-    reasoning_effort_applied: bool
+def _to_grounded_answer_result(
+    payload: GroundedAnswerStructuredResponse,
+    *,
+    image_paths: list[str],
+    effort_applied: bool,
+) -> "GroundedAnswerResult":
+    return GroundedAnswerResult(
+        answer=payload.answer,
+        reasoning=format_reasoning_bullets(payload.reasoning),
+        images_used=image_paths,
+        reasoning_effort_applied=effort_applied,
+    )
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "answer": self.answer,
-            "reasoning": self.reasoning,
-            "images_used": self.images_used,
-            "reasoning_effort_applied": self.reasoning_effort_applied,
-        }
+
+def _coerce_grounded_answer_structured_output(
+    output: Any,
+) -> GroundedAnswerStructuredResponse | None:
+    if isinstance(output, GroundedAnswerStructuredResponse):
+        return output
+
+    raw = getattr(output, "raw", None)
+    if isinstance(raw, GroundedAnswerStructuredResponse):
+        return raw
+
+    dict_candidates: list[dict[str, Any]] = []
+    json_candidates: list[str] = []
+
+    if isinstance(raw, BaseModel):
+        dict_candidates.append(raw.model_dump())
+    if isinstance(output, BaseModel):
+        dict_candidates.append(output.model_dump())
+    if isinstance(raw, dict):
+        dict_candidates.append(raw)
+    if isinstance(output, dict):
+        dict_candidates.append(output)
+
+    message = getattr(output, "message", None)
+    message_content = getattr(message, "content", None) if message is not None else None
+    if isinstance(message_content, str) and message_content.strip():
+        json_candidates.append(message_content)
+    if isinstance(raw, str) and raw.strip():
+        json_candidates.append(raw)
+    if isinstance(output, str) and output.strip():
+        json_candidates.append(output)
+
+    for payload in dict_candidates:
+        try:
+            return GroundedAnswerStructuredResponse.model_validate(payload)
+        except ValidationError:
+            continue
+
+    for payload in json_candidates:
+        parsed = _parse_grounded_answer_from_text(payload)
+        if parsed is not None:
+            return parsed
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -111,12 +172,12 @@ class GroundedAnswerSynthesizer:
                     "I could not find enough relevant evidence in the uploaded "
                     "documents to answer this question confidently."
                 ),
-                reasoning=None,
+                reasoning="",
                 images_used=[],
                 reasoning_effort_applied=effort_applied,
             ).to_dict()
 
-        image_paths = _collect_image_evidence_paths(citations)
+        image_paths, citation_image_map = _collect_image_evidence_paths(citations)
 
         if settings.OPENAI_USE_RESPONSES:
             responses_result = self._try_responses_synthesis(
@@ -124,6 +185,7 @@ class GroundedAnswerSynthesizer:
                 citations=citations,
                 conflicts=conflicts,
                 image_paths=image_paths,
+                citation_image_map=citation_image_map,
                 effort_applied=effort_applied,
             )
             if responses_result is not None:
@@ -134,6 +196,7 @@ class GroundedAnswerSynthesizer:
             citations=citations,
             conflicts=conflicts,
             image_paths=image_paths,
+            citation_image_map=citation_image_map,
             effort_applied=effort_applied,
         )
         if chat_result is not None:
@@ -142,7 +205,7 @@ class GroundedAnswerSynthesizer:
         logger.error("Answer synthesis failed; returning source-grounded fallback")
         return GroundedAnswerResult(
             answer=_build_source_grounded_fallback(citations),
-            reasoning=None,
+            reasoning="",
             images_used=image_paths,
             reasoning_effort_applied=effort_applied,
         ).to_dict()
@@ -154,6 +217,7 @@ class GroundedAnswerSynthesizer:
         citations: list[dict[str, Any]],
         conflicts: list[dict[str, Any]],
         image_paths: list[str],
+        citation_image_map: dict[int, list[int]],
         effort_applied: bool,
     ) -> GroundedAnswerResult | None:
         try:
@@ -185,7 +249,65 @@ class GroundedAnswerSynthesizer:
                 metrics.evidence_tokens,
                 metrics.conflict_tokens,
             )
-            response = _retriever_mod.invoke_llm_chat(
+
+            if image_paths:
+                input_messages = _append_image_inputs(
+                    input_messages=input_messages,
+                    image_paths=image_paths,
+                )
+
+            request_kwargs = {
+                "model": settings.LLM_MODEL,
+                "input_messages": input_messages,
+                "reasoning_effort": self.reasoning_effort,
+                "max_output_tokens": _effective_max_output_tokens(question),
+                "prompt_cache_key": settings.RESPONSE_PROMPT_CACHE_KEY,
+                "prompt_cache_retention": settings.RESPONSE_PROMPT_CACHE_RETENTION,
+                "safety_identifier": f"{settings.RESPONSE_SAFETY_IDENTIFIER_PREFIX}:{self.client_id}",
+                "user_tag": settings.RESPONSE_USER_TAG,
+            }
+
+            structured_response = None
+            try:
+                structured_response = _retriever_mod.invoke_llm_chat(
+                    **request_kwargs,
+                    structured_output_cls=GroundedAnswerStructuredResponse,
+                )
+            except Exception as exc:
+                if _is_incomplete_structured_output_error(exc):
+                    logger.warning(
+                        "Structured grounded answer output incomplete; retrying with parser fallback"
+                    )
+                else:
+                    logger.exception(
+                        "Structured grounded answer synthesis failed; retrying with parser fallback"
+                    )
+
+            if structured_response is not None:
+                structured_payload = _coerce_grounded_answer_structured_output(
+                    structured_response
+                )
+                if structured_payload is not None:
+                    return _to_grounded_answer_result(
+                        structured_payload,
+                        image_paths=image_paths,
+                        effort_applied=effort_applied,
+                    )
+
+                logger.warning(
+                    "Structured grounded answer payload invalid; using parser fallback on response text"
+                )
+                structured_fallback = _coerce_grounded_answer_structured_output(
+                    _retriever_mod.extract_chat_response_text(structured_response)
+                )
+                if structured_fallback is not None:
+                    return _to_grounded_answer_result(
+                        structured_fallback,
+                        image_paths=image_paths,
+                        effort_applied=effort_applied,
+                    )
+
+            fallback_response = _retriever_mod.invoke_llm_chat(
                 model=settings.LLM_MODEL,
                 input_messages=input_messages,
                 reasoning_effort=self.reasoning_effort,
@@ -195,15 +317,15 @@ class GroundedAnswerSynthesizer:
                 safety_identifier=f"{settings.RESPONSE_SAFETY_IDENTIFIER_PREFIX}:{self.client_id}",
                 user_tag=settings.RESPONSE_USER_TAG,
             )
-            text = _retriever_mod.extract_chat_response_text(response)
-            answer, reasoning = _split_reasoning_from_text(text)
-            if not answer:
+            parsed_fallback = _parse_grounded_answer_from_text(
+                _retriever_mod.extract_chat_response_text(fallback_response)
+            )
+            if parsed_fallback is None:
                 raise ValueError("LLM returned empty answer")
-            return GroundedAnswerResult(
-                answer=answer,
-                reasoning=reasoning,
-                images_used=image_paths,
-                reasoning_effort_applied=effort_applied,
+            return _to_grounded_answer_result(
+                parsed_fallback,
+                image_paths=image_paths,
+                effort_applied=effort_applied,
             )
         except Exception:
             logger.exception(
@@ -218,6 +340,7 @@ class GroundedAnswerSynthesizer:
         citations: list[dict[str, Any]],
         conflicts: list[dict[str, Any]],
         image_paths: list[str],
+        citation_image_map: dict[int, list[int]],
         effort_applied: bool,
     ) -> GroundedAnswerResult | None:
         llm = get_llm(reasoning_effort=self.reasoning_effort)
@@ -227,6 +350,7 @@ class GroundedAnswerSynthesizer:
             conflicts,
             image_attachment_count=len(image_paths),
             conversation_context=self.conversation_context,
+            citation_image_map=citation_image_map,
         )
 
         for attempt_name, message, used_images in self._chat_attempts(
@@ -235,13 +359,19 @@ class GroundedAnswerSynthesizer:
             try:
                 response = llm.chat([message])
                 answer, reasoning = _extract_answer_and_reasoning_from_chat(response)
-                if not answer:
-                    raise ValueError("LLM returned empty answer")
-                return GroundedAnswerResult(
-                    answer=answer,
-                    reasoning=reasoning,
-                    images_used=used_images,
-                    reasoning_effort_applied=effort_applied,
+                try:
+                    parsed_chat = GroundedAnswerStructuredResponse.model_validate(
+                        {
+                            "answer": answer,
+                            "reasoning": [reasoning] if reasoning else [],
+                        }
+                    )
+                except ValidationError as exc:
+                    raise ValueError("LLM returned empty answer") from exc
+                return _to_grounded_answer_result(
+                    parsed_chat,
+                    image_paths=used_images,
+                    effort_applied=effort_applied,
                 )
             except Exception:
                 logger.exception("%s answer synthesis failed", attempt_name)
@@ -321,10 +451,10 @@ def _append_image_inputs(
 # ---------------------------------------------------------------------------
 
 
-def _extract_answer_and_reasoning_from_chat(response: Any) -> tuple[str, str | None]:
+def _extract_answer_and_reasoning_from_chat(response: Any) -> tuple[str, str]:
     message = getattr(response, "message", None)
     if message is None:
-        return _split_reasoning_from_text(str(response).strip())
+        return _extract_answer_and_reasoning_from_text(str(response).strip())
 
     answer_parts: list[str] = []
     reasoning_parts: list[str] = []
@@ -340,26 +470,107 @@ def _extract_answer_and_reasoning_from_chat(response: Any) -> tuple[str, str | N
                 answer_parts.append(content)
 
     answer_text = "\n".join(answer_parts).strip()
-    reasoning_text = "\n\n".join(reasoning_parts).strip() or None
-    parsed_answer, parsed_reasoning = _split_reasoning_from_text(
-        answer_text or str(getattr(message, "content", "") or "").strip()
+    reasoning_text = "\n\n".join(reasoning_parts).strip()
+    fallback_text = answer_text or str(getattr(message, "content", "") or "").strip()
+    parsed_answer, parsed_reasoning = _extract_answer_and_reasoning_from_text(
+        fallback_text
     )
-    if not reasoning_text and parsed_reasoning:
-        reasoning_text = parsed_reasoning
 
-    return parsed_answer, reasoning_text
+    if reasoning_text:
+        return parsed_answer, reasoning_text
+    return parsed_answer, parsed_reasoning
 
 
-def _split_reasoning_from_text(text: str) -> tuple[str, str | None]:
+def _extract_answer_and_reasoning_from_text(text: str) -> tuple[str, str]:
+    parsed = _parse_grounded_answer_from_text(text)
+    if parsed is not None:
+        return parsed.answer, format_reasoning_bullets(parsed.reasoning)
+    return _split_reasoning_from_text(text)
+
+
+def _parse_grounded_answer_from_text(
+    text: str,
+) -> GroundedAnswerStructuredResponse | None:
+    cleaned = text.strip()
+    if not cleaned:
+        return None
+
+    payload = _parse_grounded_answer_json(cleaned)
+    if payload is not None:
+        try:
+            return GroundedAnswerStructuredResponse.model_validate(payload)
+        except ValidationError:
+            pass
+
+        filtered_payload: dict[str, Any] = {}
+        answer_value = payload.get("answer")
+        if isinstance(answer_value, str):
+            filtered_payload["answer"] = answer_value
+        if "reasoning" in payload:
+            filtered_payload["reasoning"] = payload.get("reasoning")
+        if filtered_payload:
+            try:
+                return GroundedAnswerStructuredResponse.model_validate(filtered_payload)
+            except ValidationError:
+                return None
+        return None
+
+    answer, reasoning = _split_reasoning_from_text(cleaned)
+    if not answer.strip():
+        return None
+    fallback_payload: dict[str, Any] = {"answer": answer}
+    if reasoning and reasoning.strip():
+        fallback_payload["reasoning"] = [reasoning.strip()]
+    try:
+        return GroundedAnswerStructuredResponse.model_validate(fallback_payload)
+    except ValidationError:
+        return None
+
+
+def _parse_grounded_answer_json(text: str) -> dict[str, Any] | None:
+    cleaned = text.strip()
+    if not cleaned:
+        return None
+
+    candidate_blocks: list[str] = [cleaned]
+    code_block_match = _JSON_BLOCK_PATTERN.match(cleaned)
+    if code_block_match:
+        candidate_blocks.append(code_block_match.group(1).strip())
+
+    json_match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+    if json_match:
+        candidate_blocks.append(json_match.group(0))
+
+    seen: set[str] = set()
+    for block in candidate_blocks:
+        candidate = block.strip()
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            parsed = json.loads(candidate)
+        except Exception:
+            continue
+        if isinstance(parsed, dict) and (
+            isinstance(parsed.get("answer"), str)
+            or isinstance(parsed.get("reasoning"), str)
+            or isinstance(parsed.get("reasoning"), list)
+        ):
+            return parsed
+
+    return None
+
+
+def _split_reasoning_from_text(text: str) -> tuple[str, str]:
     if not text:
-        return "", None
+        return "", ""
 
     thinking_match = re.search(
         r"<thinking>(.*?)</thinking>", text, re.IGNORECASE | re.DOTALL
     )
     answer_match = re.search(r"<answer>(.*?)</answer>", text, re.IGNORECASE | re.DOTALL)
 
-    reasoning = thinking_match.group(1).strip() if thinking_match else None
+    reasoning = thinking_match.group(1).strip() if thinking_match else ""
 
     if answer_match:
         answer = answer_match.group(1).strip()

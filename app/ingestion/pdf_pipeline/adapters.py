@@ -6,7 +6,9 @@ from pathlib import Path
 from typing import Any
 
 import pymupdf as fitz
-from liteparse import LiteParse
+from docling.datamodel.base_models import InputFormat
+from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.document_converter import DocumentConverter, PdfFormatOption
 
 from app.core.config import settings
 from app.ingestion.pdf_pipeline.contracts import ExtractionResult, PDFExtractionStage
@@ -18,6 +20,173 @@ from app.ingestion.pdf_pipeline.helpers import (
 from app.ingestion.pdf_pipeline.registry import PDFPipelineRegistry
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Docling singleton — loaded lazily on first use, reused across all documents
+# ---------------------------------------------------------------------------
+
+_DOCLING_CONVERTER: Any | None = None
+
+
+def _get_docling_converter() -> DocumentConverter:
+    """Return a lazily initialised Docling DocumentConverter singleton."""
+    global _DOCLING_CONVERTER
+    if _DOCLING_CONVERTER is None:
+        opts = PdfPipelineOptions()
+        opts.do_ocr = False
+        opts.do_table_structure = True
+        opts.table_structure_options.do_cell_matching = True
+
+        _DOCLING_CONVERTER = DocumentConverter(
+            format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
+        )
+        logger.info("Docling DocumentConverter initialised (DocLayNet layout model)")
+    return _DOCLING_CONVERTER
+
+
+def _docling_table_to_rows(table_item: Any) -> list[list[str]]:
+    """Convert a Docling TableItem data grid to the list[list[str]] candidate format."""
+    try:
+        grid = getattr(getattr(table_item, "data", None), "grid", None)
+        if not grid:
+            return []
+        return [
+            [normalize_whitespace(getattr(cell, "text", "") or "") for cell in row]
+            for row in grid
+            if row
+        ]
+    except Exception:
+        return []
+
+
+def _bbox_bottomleft_to_topleft(
+    bbox: Any,
+    page_height: float,
+) -> list[float]:
+    """
+    Convert a Docling BOTTOMLEFT BoundingBox to PyMuPDF TOPLEFT [x0, y0, x1, y1].
+
+    Docling ProvenanceItem bboxes use CoordOrigin.BOTTOMLEFT (PDF spec).
+    PyMuPDF uses CoordOrigin.TOPLEFT (y increases downward from top of page).
+    """
+    tl = bbox.to_top_left_origin(page_height=page_height)
+    return [float(tl.l), float(tl.t), float(tl.r), float(tl.b)]
+
+
+def extract_docling_pages(
+    file_path: str,
+    pdf_doc: fitz.Document,
+    screenshot_dir: Path,
+) -> tuple[list[dict[str, Any]], dict[str, Any], dict[int, dict[str, Any]]]:
+    """
+    Docling-based document understanding for table and figure extraction.
+
+    Text content and screenshots are sourced from the PyMuPDF-based text extraction
+    (build_pymupdf_text_pages) since Docling's strength is structural layout,
+    not raw text extraction. The returned text_pages carry parser_source="docling"
+    to signal the active engine downstream.
+
+    Returns:
+        text_pages: per-page dicts in the 8-field contract expected by page_structure.py
+        meta: layout engine metadata dict
+        docling_by_page: {page_num: {table_candidates, figure_candidates}} — injected into
+                         pymupdf_pages by DefaultPDFExtractionStage before the artifact stage
+    """
+    # Build the page payload using PyMuPDF text extraction (screenshots + word items)
+    text_pages = build_pymupdf_text_pages(pdf_doc, screenshot_dir)
+    for page in text_pages:
+        page["parser_source"] = "docling"
+
+    meta: dict[str, Any] = {
+        "layout_engine": "docling",
+        "page_parse_degraded": False,
+        "layout_engine_fallback_reason": None,
+    }
+    docling_by_page: dict[int, dict[str, Any]] = {}
+
+    # Pre-compute page heights (points) for BOTTOMLEFT → TOPLEFT conversion
+    page_heights: dict[int, float] = {
+        i + 1: float(pdf_doc[i].rect.height) for i in range(len(pdf_doc))
+    }
+
+    try:
+        converter = _get_docling_converter()
+        result = converter.convert(file_path)
+        doc = result.document
+
+        # --- Table candidates ---
+        for table in getattr(doc, "tables", []) or []:
+            prov_list = getattr(table, "prov", None)
+            if not prov_list:
+                continue
+            prov = prov_list[0]
+            page_no = int(getattr(prov, "page_no", 0))
+            if page_no < 1:
+                continue
+            raw_bbox = getattr(prov, "bbox", None)
+            if raw_bbox is None:
+                continue
+            rows = _docling_table_to_rows(table)
+            if len(rows) < 2:
+                continue
+            page_h = page_heights.get(page_no, 792.0)
+            entry = docling_by_page.setdefault(
+                page_no, {"table_candidates": [], "figure_candidates": []}
+            )
+            entry["table_candidates"].append(
+                {
+                    "candidate_id": (
+                        f"docling_table_{page_no}_{len(entry['table_candidates'])}"
+                    ),
+                    "bbox": _bbox_bottomleft_to_topleft(raw_bbox, page_h),
+                    "rows": rows,
+                    "source": "docling",
+                }
+            )
+
+        # --- Figure / picture candidates ---
+        for picture in getattr(doc, "pictures", []) or []:
+            prov_list = getattr(picture, "prov", None)
+            if not prov_list:
+                continue
+            prov = prov_list[0]
+            page_no = int(getattr(prov, "page_no", 0))
+            if page_no < 1:
+                continue
+            raw_bbox = getattr(prov, "bbox", None)
+            if raw_bbox is None:
+                continue
+            page_h = page_heights.get(page_no, 792.0)
+            entry = docling_by_page.setdefault(
+                page_no, {"table_candidates": [], "figure_candidates": []}
+            )
+            entry["figure_candidates"].append(
+                {
+                    "bbox": _bbox_bottomleft_to_topleft(raw_bbox, page_h),
+                    "kind": "docling_picture",
+                }
+            )
+
+    except Exception as exc:
+        logger.warning(
+            "Docling extraction failed for %s (%s: %s) — using PyMuPDF only",
+            Path(file_path).name,
+            type(exc).__name__,
+            exc,
+        )
+        meta["page_parse_degraded"] = True
+        meta["layout_engine_fallback_reason"] = f"docling_failed:{type(exc).__name__}"
+        return text_pages, meta, {}
+
+    n_tables = sum(len(v["table_candidates"]) for v in docling_by_page.values())
+    n_figures = sum(len(v["figure_candidates"]) for v in docling_by_page.values())
+    logger.info(
+        "Docling: %d table candidates, %d figure candidates from %s",
+        n_tables,
+        n_figures,
+        Path(file_path).name,
+    )
+    return text_pages, meta, docling_by_page
 
 _TABLE_DETECTION_STRATEGIES: tuple[tuple[str, dict[str, Any]], ...] = (
     ("default", {}),
@@ -35,112 +204,50 @@ class DefaultPDFExtractionStage(PDFExtractionStage):
         parse_input_path: str,
         screenshot_dir: Path,
     ) -> ExtractionResult:
-        liteparse_pages, liteparse_meta = extract_liteparse_pages(
-            parse_input_path,
-            screenshot_dir=screenshot_dir,
+        docling_by_page: dict[int, dict[str, Any]] = {}
+
+        text_pages, text_meta, docling_by_page = extract_docling_pages(
+            parse_input_path, pdf_doc, screenshot_dir
         )
-        if not liteparse_pages:
-            liteparse_pages = build_liteparse_fallback_pages(pdf_doc, screenshot_dir)
 
         pymupdf_pages, pymupdf_meta = extract_pymupdf_pages(pdf_doc, parse_input_path)
+
+        # Merge Docling structural candidates into the pymupdf_pages payload.
+        # Table candidates replace PyMuPDF's when Docling found any (higher structural fidelity).
+        # Figure candidates are stored under a new key consumed by build_figure_artifacts().
+        if docling_by_page:
+            for page in pymupdf_pages:
+                page_num = int(page.get("page_num", 1))
+                docling_data = docling_by_page.get(page_num)
+                if not docling_data:
+                    continue
+                if docling_data["table_candidates"]:
+                    page["table_candidates"] = docling_data["table_candidates"]
+                if docling_data["figure_candidates"]:
+                    page["docling_figure_candidates"] = docling_data["figure_candidates"]
+
         parse_meta = {
-            "layout_engine": (
-                liteparse_meta.get("layout_engine")
-                if liteparse_pages
-                and liteparse_meta.get("layout_engine") == "liteparse"
-                else pymupdf_meta.get("layout_engine", "pymupdf_native")
-            ),
-            "layout_engine_fallback_reason": liteparse_meta.get(
+            "layout_engine": text_meta.get("layout_engine", "docling"),
+            "layout_engine_fallback_reason": text_meta.get(
                 "layout_engine_fallback_reason"
             ),
             "page_parse_degraded": bool(
-                liteparse_meta.get("page_parse_degraded")
+                text_meta.get("page_parse_degraded")
                 or pymupdf_meta.get("page_parse_degraded")
             ),
         }
         return ExtractionResult(
-            liteparse_pages=liteparse_pages,
+            liteparse_pages=text_pages,
             pymupdf_pages=pymupdf_pages,
             parse_meta=parse_meta,
         )
 
 
-def extract_liteparse_pages(
-    file_path: str,
-    screenshot_dir: Path,
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Primary layout/text extraction using LiteParse Python API."""
-    pages: list[dict[str, Any]] = []
-    meta = {
-        "layout_engine": "liteparse",
-        "page_parse_degraded": False,
-        "layout_engine_fallback_reason": None,
-    }
-
-    parser = LiteParse(install_if_not_available=False)
-    try:
-        result = parser.parse(
-            file_path,
-            ocr_enabled=settings.ENABLE_OCR_FALLBACK,
-            dpi=150,
-            precise_bounding_box=True,
-        )
-    except Exception as exc:
-        meta["layout_engine"] = "pymupdf_native"
-        meta["page_parse_degraded"] = True
-        meta["layout_engine_fallback_reason"] = f"liteparse_parse_failed:{exc}"
-        logger.warning("LiteParse parse failed for %s: %s", file_path, exc)
-        return pages, meta
-
-    screenshot_map: dict[int, str] = {}
-    try:
-        screenshot_dir.mkdir(parents=True, exist_ok=True)
-        screenshots = parser.screenshot(file_path, output_dir=screenshot_dir, dpi=120)
-        for shot in screenshots.screenshots:
-            screenshot_map[int(shot.page_num)] = shot.image_path
-    except Exception as exc:
-        meta["page_parse_degraded"] = True
-        logger.warning("LiteParse screenshot failed for %s: %s", file_path, exc)
-
-    for page in result.pages:
-        page_ocr_used = _resolve_page_ocr_used(page)
-        text_items = []
-        for item in page.textItems or []:
-            text = str(item.text or "").strip()
-            if not text:
-                continue
-            text_items.append(
-                {
-                    "x": float(item.x),
-                    "y": float(item.y),
-                    "width": float(item.width),
-                    "height": float(item.height),
-                    "text": text,
-                }
-            )
-
-        page_num = int(page.pageNum)
-        pages.append(
-            {
-                "page_num": page_num,
-                "full_page_text": str(page.text or ""),
-                "text_items": text_items,
-                "page_width": float(page.width),
-                "page_height": float(page.height),
-                "screenshot_path": screenshot_map.get(page_num, ""),
-                "ocr_used": page_ocr_used,
-                "parser_source": "liteparse",
-            }
-        )
-
-    return pages, meta
-
-
-def build_liteparse_fallback_pages(
+def build_pymupdf_text_pages(
     pdf_doc: fitz.Document,
     screenshot_dir: Path,
 ) -> list[dict[str, Any]]:
-    """Fallback page payload when LiteParse is unavailable."""
+    """Extract page text and screenshots using PyMuPDF."""
     screenshot_dir.mkdir(parents=True, exist_ok=True)
     pages: list[dict[str, Any]] = []
 
@@ -184,7 +291,7 @@ def build_liteparse_fallback_pages(
                 "page_height": float(page.rect.height),
                 "screenshot_path": screenshot,
                 "ocr_used": False,
-                "parser_source": "liteparse_fallback",
+                "parser_source": "pymupdf",
             }
         )
 

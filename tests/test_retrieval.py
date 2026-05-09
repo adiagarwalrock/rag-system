@@ -1,9 +1,11 @@
+import json
 from types import SimpleNamespace
 
 from llama_index.core.base.llms.types import TextBlock, ThinkingBlock
 from llama_index.core.schema import NodeWithScore, TextNode
 
 import app.retrieval.retriever as retriever_module
+import app.retrieval.synthesizer as synthesizer_module
 from app.retrieval.citation_builder import build_citations
 from app.retrieval.query_expansion import should_expand_query
 from app.retrieval.retriever import (
@@ -15,6 +17,7 @@ from app.retrieval.retriever import (
     _fuse_node_batches,
     _split_reasoning_from_text,
 )
+from app.schemas.retrieval import GroundedAnswerStructuredResponse
 
 
 def _node(node_id: str, score: float, metadata: dict | None = None) -> NodeWithScore:
@@ -649,7 +652,7 @@ def test_build_conversation_context_block_formats_and_truncates_sections():
     assert "..." in context_block
 
 
-def test_synthesize_answer_prefers_responses_path(monkeypatch):
+def test_synthesize_answer_prefers_responses_structured_output(monkeypatch):
     class _FakeBudgeter:
         def __init__(self, model: str):
             self.model = model
@@ -678,7 +681,13 @@ def test_synthesize_answer_prefers_responses_path(monkeypatch):
 
     def _fake_invoke_llm_chat(**kwargs):
         captured["input_messages"] = kwargs.get("input_messages")
-        return {"id": "resp-1"}
+        captured["structured_output_cls"] = kwargs.get("structured_output_cls")
+        return SimpleNamespace(
+            raw=GroundedAnswerStructuredResponse(
+                answer="Grounded response [1].",
+                reasoning=["Evidence in source [1] supports this."],
+            )
+        )
 
     monkeypatch.setattr(retriever_module, "ResponsesInputBudgeter", _FakeBudgeter)
     monkeypatch.setattr(
@@ -689,7 +698,7 @@ def test_synthesize_answer_prefers_responses_path(monkeypatch):
     monkeypatch.setattr(
         retriever_module,
         "extract_chat_response_text",
-        lambda _response: "<answer>Grounded response.</answer>",
+        lambda _response: "",
     )
 
     retriever = RAGRetriever("client-1", top_k=5)
@@ -708,9 +717,236 @@ def test_synthesize_answer_prefers_responses_path(monkeypatch):
     )
 
     assert captured["input_messages"] is not None
-    assert result["answer"] == "Grounded response."
-    assert result["reasoning"] is None
+    assert captured["structured_output_cls"] is GroundedAnswerStructuredResponse
+    assert result["answer"] == "Grounded response [1]."
+    assert result["reasoning"] == "Evidence in source [1] supports this."
+    assert result["reasoning_effort_applied"] is True
     assert result["images_used"] == []
+
+
+def test_grounded_answer_structured_response_sanitizes_reasoning_items():
+    payload = GroundedAnswerStructuredResponse(
+        answer="Final answer [1].",
+        reasoning=[
+            "x" * 300,
+            "Step 1: gather hidden chain-of-thought",
+            "Short public evidence bullet [1].",
+        ],
+    )
+
+    assert len(payload.reasoning) == 2
+    assert len(payload.reasoning[0]) == 300
+    assert payload.reasoning[1] == "Short public evidence bullet [1]."
+
+
+def test_synthesize_answer_falls_back_when_structured_has_extra_keys(monkeypatch):
+    class _FakeBudgeter:
+        def __init__(self, model: str):
+            self.model = model
+
+        def build_budgeted_sections(self, **_kwargs):
+            class _Metrics:
+                model = "gpt-test"
+                total_input_tokens = 100
+                input_budget_tokens = 200
+                history_tokens = 10
+                summary_tokens = 5
+                cross_session_tokens = 15
+                evidence_tokens = 60
+                conflict_tokens = 10
+
+            return (
+                [
+                    {"role": "developer", "content": "dev"},
+                    {"role": "user", "content": "ctx"},
+                ],
+                "ctx",
+                _Metrics(),
+            )
+
+    call_order: list[object] = []
+
+    def _fake_invoke_llm_chat(**kwargs):
+        call_order.append(kwargs.get("structured_output_cls"))
+        return {
+            "answer": "Grounded from fallback [1].",
+            "reasoning": "Short evidence note [1].",
+            "extra": "unexpected",
+        }
+
+    monkeypatch.setattr(retriever_module, "ResponsesInputBudgeter", _FakeBudgeter)
+    monkeypatch.setattr(retriever_module, "invoke_llm_chat", _fake_invoke_llm_chat)
+    monkeypatch.setattr(
+        retriever_module,
+        "extract_chat_response_text",
+        lambda response: (
+            json.dumps(response)
+            if isinstance(response, dict)
+            and ("answer" in response or "reasoning" in response)
+            else ""
+        ),
+    )
+
+    retriever = RAGRetriever("client-1", top_k=5)
+    result = retriever._synthesize_answer(
+        question="What changed?",
+        citations=[
+            {
+                "citation_label": "Doc 1",
+                "document_name": "Doc 1",
+                "version_label": "v2",
+                "chunk_type": "body_text",
+                "text": "Policy changed on section 2.",
+            }
+        ],
+        conflicts=[],
+    )
+
+    assert call_order == [GroundedAnswerStructuredResponse]
+    assert result["answer"] == "Grounded from fallback [1]."
+    assert result["reasoning"] == "Short evidence note [1]."
+
+
+def test_synthesize_answer_falls_back_when_structured_has_cot_artifacts(monkeypatch):
+    class _FakeBudgeter:
+        def __init__(self, model: str):
+            self.model = model
+
+        def build_budgeted_sections(self, **_kwargs):
+            class _Metrics:
+                model = "gpt-test"
+                total_input_tokens = 100
+                input_budget_tokens = 200
+                history_tokens = 10
+                summary_tokens = 5
+                cross_session_tokens = 15
+                evidence_tokens = 60
+                conflict_tokens = 10
+
+            return (
+                [
+                    {"role": "developer", "content": "dev"},
+                    {"role": "user", "content": "ctx"},
+                ],
+                "ctx",
+                _Metrics(),
+            )
+
+    calls: list[object] = []
+
+    def _fake_invoke_llm_chat(**kwargs):
+        calls.append(kwargs.get("structured_output_cls"))
+        if kwargs.get("structured_output_cls") is GroundedAnswerStructuredResponse:
+            return {
+                "answer": "Step 1: analyze evidence from source [1].",
+                "reasoning": "1) Compare all prior statements.",
+            }
+        return {"id": "fallback-response"}
+
+    def _fake_extract_chat_response_text(response):
+        if isinstance(response, dict) and response.get("id") == "fallback-response":
+            return "<answer>Recovered grounded answer [1].</answer>"
+        if isinstance(response, dict):
+            return json.dumps(response)
+        return ""
+
+    monkeypatch.setattr(retriever_module, "ResponsesInputBudgeter", _FakeBudgeter)
+    monkeypatch.setattr(retriever_module, "invoke_llm_chat", _fake_invoke_llm_chat)
+    monkeypatch.setattr(
+        retriever_module,
+        "extract_chat_response_text",
+        _fake_extract_chat_response_text,
+    )
+
+    retriever = RAGRetriever("client-1", top_k=5)
+    result = retriever._synthesize_answer(
+        question="What changed?",
+        citations=[
+            {
+                "citation_label": "Doc 1",
+                "document_name": "Doc 1",
+                "version_label": "v2",
+                "chunk_type": "body_text",
+                "text": "Policy changed on section 2.",
+            }
+        ],
+        conflicts=[],
+    )
+
+    assert calls == [GroundedAnswerStructuredResponse, None]
+    assert result["answer"] == "Recovered grounded answer [1]."
+    assert result["reasoning"] == ""
+
+
+def test_synthesize_answer_uses_source_grounded_fallback_when_all_paths_fail(monkeypatch):
+    class _FakeBudgeter:
+        def __init__(self, model: str):
+            self.model = model
+
+        def build_budgeted_sections(self, **_kwargs):
+            class _Metrics:
+                model = "gpt-test"
+                total_input_tokens = 100
+                input_budget_tokens = 200
+                history_tokens = 10
+                summary_tokens = 5
+                cross_session_tokens = 15
+                evidence_tokens = 60
+                conflict_tokens = 10
+
+            return (
+                [
+                    {"role": "developer", "content": "dev"},
+                    {"role": "user", "content": "ctx"},
+                ],
+                "ctx",
+                _Metrics(),
+            )
+
+    def _fake_invoke_llm_chat(**kwargs):
+        if kwargs.get("structured_output_cls") is GroundedAnswerStructuredResponse:
+            return {
+                "answer": "Step 1: think it through.",
+                "reasoning": "1) Gather all details.",
+            }
+        return {"id": "empty-fallback"}
+
+    class _EmptyLLM:
+        def chat(self, _messages):
+            return SimpleNamespace(message=SimpleNamespace(blocks=[TextBlock(text="")]))
+
+    monkeypatch.setattr(retriever_module, "ResponsesInputBudgeter", _FakeBudgeter)
+    monkeypatch.setattr(retriever_module, "invoke_llm_chat", _fake_invoke_llm_chat)
+    monkeypatch.setattr(
+        retriever_module,
+        "extract_chat_response_text",
+        lambda response: (
+            json.dumps(response)
+            if isinstance(response, dict)
+            and ("answer" in response or "reasoning" in response)
+            else ""
+        ),
+    )
+    monkeypatch.setattr(synthesizer_module, "get_llm", lambda **_kwargs: _EmptyLLM())
+
+    retriever = RAGRetriever("client-1", top_k=5)
+    result = retriever._synthesize_answer(
+        question="What changed?",
+        citations=[
+            {
+                "citation_label": "Doc 1",
+                "document_name": "Doc 1",
+                "version_label": "v2",
+                "chunk_type": "body_text",
+                "text": "Policy changed on section 2.",
+            }
+        ],
+        conflicts=[],
+    )
+
+    assert "could not synthesize a final answer" in result["answer"].lower()
+    assert "Doc 1" in result["answer"]
+    assert result["reasoning"] == ""
 
 
 def test_extract_answer_and_reasoning_from_chat_uses_blocks():

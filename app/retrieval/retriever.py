@@ -44,7 +44,6 @@ from app.retrieval.prompt_builder import (
 )
 from app.retrieval.query_expansion import build_query_variants, should_expand_query
 from app.retrieval.synthesizer import (
-    GroundedAnswerResult,
     GroundedAnswerSynthesizer,
     _extract_answer_and_reasoning_from_chat,
     _split_reasoning_from_text,
@@ -59,6 +58,18 @@ logger = logging.getLogger(__name__)
 DEFAULT_EVIDENCE_LIMIT = 7
 COMPARATIVE_EVIDENCE_LIMIT = 10
 CONFLICT_EVIDENCE_LIMIT = 8
+
+# Max chunks from the same (document_id, page_num) allowed in evidence.
+# Prevents a single semantically-dominant page from flooding all evidence slots.
+MAX_CHUNKS_PER_PAGE = 2
+
+
+def _page_diversity_key(node: Any) -> str:
+    """Return a key that groups chunks by their source document + page."""
+    metadata = node.node.metadata or {}
+    doc_id = metadata.get("document_id") or metadata.get("source_file") or "unknown_doc"
+    page = metadata.get("page_num") or metadata.get("slide_num") or "unknown_page"
+    return f"{doc_id}:{page}"
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +122,7 @@ class RAGRetriever:
         if not source_nodes:
             return {
                 "answer": "I could not find relevant information in the uploaded documents to answer this question.",
-                "reasoning": None,
+                "reasoning": "",
                 "citations": [],
                 "conflicts": [],
                 "source_count": 0,
@@ -398,7 +409,15 @@ class RAGRetriever:
         selected: list[Any],
         selected_keys: set[str],
         evidence_cap: int,
+        max_per_page: int = MAX_CHUNKS_PER_PAGE,
     ) -> None:
+        # Track how many chunks are already selected per (document_id, page_num) pair
+        page_counts: dict[str, int] = {}
+        for node in selected:
+            page_key = _page_diversity_key(node)
+            page_counts[page_key] = page_counts.get(page_key, 0) + 1
+
+        # First pass: enforce per-page cap for diversity
         for batch in candidate_batches:
             for node in batch:
                 if len(selected) >= evidence_cap:
@@ -406,8 +425,24 @@ class RAGRetriever:
                 key = _node_unique_key(node)
                 if key in selected_keys:
                     continue
+                page_key = _page_diversity_key(node)
+                if page_counts.get(page_key, 0) >= max_per_page:
+                    continue
                 selected.append(node)
                 selected_keys.add(key)
+                page_counts[page_key] = page_counts.get(page_key, 0) + 1
+
+        # Second pass without cap: fill remaining slots if diversity pass left gaps
+        if len(selected) < evidence_cap:
+            for batch in candidate_batches:
+                for node in batch:
+                    if len(selected) >= evidence_cap:
+                        return
+                    key = _node_unique_key(node)
+                    if key in selected_keys:
+                        continue
+                    selected.append(node)
+                    selected_keys.add(key)
 
     def _synthesize_answer(
         self,

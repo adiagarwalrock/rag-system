@@ -14,7 +14,6 @@ from llama_index.core.extractors import (
     TitleExtractor,
 )
 from llama_index.core.ingestion import IngestionPipeline
-from llama_index.core.node_parser import SemanticSplitterNodeParser
 from llama_index.core.schema import BaseNode
 from sqlalchemy import true
 from sqlalchemy.orm import Session
@@ -27,7 +26,6 @@ from app.db.models.document import (
     IngestionJob,
     VectorNodeRegistry,
 )
-from app.db.snowflake import SessionLocal
 from app.indexing.vector_store import COLLECTION_NAME, vector_store_manager
 from app.ingestion.parser import parse_document, save_upload_file
 from app.ingestion.validator import (

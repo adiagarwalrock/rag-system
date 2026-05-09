@@ -57,7 +57,11 @@ def build_chart_caption_prompt(
             "  Capture EVERY labeled statistic visible, including those in small tiles.",
             "",
             "General rules:",
-            "- Use approximate values when exact values are not readable; mark approximate=True.",
+            "- Use approximate values when exact values are not printed; mark approximate=True.",
+            "- IMPORTANT: For bar and line charts where numeric values are NOT printed as labels,",
+            "  estimate values from bar heights or line positions relative to the visible axis range.",
+            "  Do NOT leave approx_datapoints empty just because numbers aren't printed —",
+            "  read the axis scale and estimate each bar/point value. Mark approximate=True.",
             "- Do not speculate beyond visible chart evidence.",
             "- Do not summarize — list all data points individually.",
             f"Page: {page_num}",
@@ -202,20 +206,28 @@ GROUNDED_ANSWER_DEVELOPER_PROMPT = (
     "3) Do not cite sources that are not in RETRIEVAL_EVIDENCE.\n"
     "4) Prefer the most current/effective version unless asked to compare.\n"
     "5) If conflict hints are empty, avoid absolute claims about no conflicts.\n"
-    "6) When images are attached, use them for chart/table/map interpretation.\n"
+    "6) Evidence items show attached_image_indices=N,M meaning those 1-based numbered "
+    "images (among all attached images) correspond to that evidence block. "
+    "image_scope=figure_crop is a tight crop of the artifact; "
+    "image_scope=page_screenshot is a full page view. "
+    "Use these visuals to interpret the cited chart, table, or map; "
+    "reference them via the evidence citation [N] not by image position. "
+    "For bar or line charts where numeric values are NOT printed as labels, "
+    "estimate values from bar heights or line positions relative to the axis scale — "
+    "provide a best-effort visual read and mark it as approximate. "
+    "Do NOT refuse to answer a chart question solely because exact printed numbers are absent.\n"
     "7) When evidence contains tables or structured data, extract and cite exact "
     "values (numbers, percentages, dates) rather than paraphrasing. "
     "Preserve original units and precision.\n"
     "8) If multiple evidence chunks discuss the same metric with different values, "
     "note the discrepancy and prefer the source with the most specific context "
     "(e.g., table data over narrative text).\n"
-    "9) Return this exact format:\n"
-    "<thinking>\n"
-    "step-by-step grounded reasoning with source indices\n"
-    "</thinking>\n"
-    "<answer>\n"
-    "final answer with inline citations like [1], [2]\n"
-    "</answer>"
+    "9) Return ONLY a valid JSON object with this exact shape:\n"
+    '{"answer": "final answer with inline citations like [1], [2]", '
+    '"reasoning": ["optional concise evidence bullet", "optional concise evidence bullet"]}\n'
+    '10) "reasoning" is optional. If included, provide up to 5 short bullets '
+    "(one sentence each), with no private chain-of-thought.\n"
+    '11) Do not include any keys other than "answer" and optional "reasoning".'
 )
 
 SESSION_SUMMARY_DEVELOPER_PROMPT = (

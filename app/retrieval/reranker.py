@@ -209,14 +209,20 @@ def _structural_adjustment(metadata: dict, query: str | None) -> float:
     if wants_structured and (is_table_chunk or is_chart_chunk):
         adjustment += 0.06
 
-    # Boost overview/summary slides for factual lookup queries
+    # Boost overview/summary slides for factual lookup or numeric queries
     slide_purpose = str(metadata.get("slide_purpose") or "")
     if slide_purpose == "overview_stats":
         is_factual_lookup = any(
             term in normalized_query for term in _FACTUAL_LOOKUP_TERMS
         )
-        if is_factual_lookup:
+        is_numeric_query = any(term in normalized_query for term in NUMERIC_QUERY_TERMS)
+        if is_factual_lookup or is_numeric_query:
             adjustment += 0.06
+
+    # Penalize chart chunks where the parse quality is unconfirmed
+    chart_parse_status = str(metadata.get("chart_parse_status") or "not_applicable")
+    if is_chart_chunk and chart_parse_status not in {"partial", "success"}:
+        adjustment -= 0.05
 
     return min(adjustment, 0.26)
 
@@ -275,7 +281,7 @@ _COMPARISON_TERMS = (
     "changed",
     "changes",
 )
-_VERSION_PENALTY = 0.03
+_VERSION_PENALTY = 0.08
 
 
 def _apply_version_consistency_adjustment(
