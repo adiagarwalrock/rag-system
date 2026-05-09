@@ -1,0 +1,22 @@
+{
+  "run_id": "370eb009-5f2b-4700-a632-e9817556da53",
+  "started_at": "2026-05-07T09:02:21.006791+00:00",
+  "finished_at": "2026-05-07T09:14:15.537345+00:00",
+  "duration_seconds": 714.531,
+  "input_path": "/home/adiagarwal/vectera/enterprise_rag_eval_questions.jsonl",
+  "input_non_blank_count": 92,
+  "client_name": "test_oai",
+  "client_id": "571d670f-e234-41a9-95eb-ebce45358384",
+  "reasoning_effort": "high",
+  "workers": 4,
+  "max_retries": 5,
+  "initial_backoff_seconds": 10.0,
+  "timestamped_output": false,
+  "output_path": "/home/adiagarwal/vectera/enterprise_rag_eval_answers_test4_oai.jsonl",
+  "debug_output_path": "/home/adiagarwal/vectera/enterprise_rag_eval_answers_test4_oai.jsonl.debug.jsonl",
+  "processed_rows": 92,
+  "succeeded": 92,
+  "failed": 0,
+  "skipped_malformed": 0,
+  "blank_rows": 0
+}
