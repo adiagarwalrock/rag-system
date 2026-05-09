@@ -19,7 +19,7 @@ def _has_file_handler(logger: logging.Logger, file_path: Path) -> bool:
 
 def _get_file_handler(
     logger: logging.Logger, file_path: Path
-) -> logging.FileHandler | None:
+) -> logging.Handler | None:
     target = str(file_path.resolve())
     for handler in logger.handlers:
         handler_path = getattr(handler, "baseFilename", None)

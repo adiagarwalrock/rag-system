@@ -520,7 +520,7 @@ def test_collect_image_evidence_paths_resolves_relative_and_dedupes(tmp_path):
         },
     ]
 
-    paths = _collect_image_evidence_paths(citations, max_images=10)
+    paths, _ = _collect_image_evidence_paths(citations, max_images=10)
 
     # Same image bytes should be de-duplicated even when paths differ.
     assert paths == [str(absolute_image.resolve())]
@@ -537,7 +537,7 @@ def test_collect_image_evidence_paths_includes_unique_image_content(tmp_path):
         {"asset_refs": [str(second_image)], "artifact_bundle_path": None},
     ]
 
-    paths = _collect_image_evidence_paths(citations, max_images=10)
+    paths, _ = _collect_image_evidence_paths(citations, max_images=10)
 
     assert paths == [str(first_image.resolve()), str(second_image.resolve())]
 
@@ -556,7 +556,7 @@ def test_collect_image_evidence_paths_respects_max_images(tmp_path):
         {"asset_refs": [str(third_image)], "artifact_bundle_path": None},
     ]
 
-    paths = _collect_image_evidence_paths(citations, max_images=2)
+    paths, _ = _collect_image_evidence_paths(citations, max_images=2)
 
     assert paths == [str(first_image.resolve()), str(second_image.resolve())]
 
@@ -878,7 +878,9 @@ def test_synthesize_answer_falls_back_when_structured_has_cot_artifacts(monkeypa
     assert result["reasoning"] == ""
 
 
-def test_synthesize_answer_uses_source_grounded_fallback_when_all_paths_fail(monkeypatch):
+def test_synthesize_answer_uses_source_grounded_fallback_when_all_paths_fail(
+    monkeypatch,
+):
     class _FakeBudgeter:
         def __init__(self, model: str):
             self.model = model

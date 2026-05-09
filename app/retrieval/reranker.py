@@ -5,6 +5,7 @@ Reranker: deterministic metadata-aware ranking for retrieved nodes.
 import logging
 from collections import defaultdict
 from datetime import datetime, timezone
+from typing import overload
 
 logger = logging.getLogger(__name__)
 
@@ -245,6 +246,14 @@ def _parse_date(val) -> datetime | None:
     return None
 
 
+@overload
+def _safe_float(value, default: float) -> float: ...
+
+
+@overload
+def _safe_float(value, default: None) -> float | None: ...
+
+
 def _safe_float(value, default: float | None) -> float | None:
     try:
         return float(value)
@@ -259,7 +268,15 @@ def _safe_int(value, default: int) -> int:
         return default
 
 
-def _safe_bool(value, default: bool) -> bool:
+@overload
+def _safe_bool(value, default: bool) -> bool: ...
+
+
+@overload
+def _safe_bool(value, default: None) -> bool | None: ...
+
+
+def _safe_bool(value, default: bool | None) -> bool | None:
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -309,7 +326,7 @@ def _apply_version_consistency_adjustment(
     for doc_id, version_scores in doc_version_scores.items():
         if len(version_scores) < 2:
             continue
-        dominant_version[doc_id] = max(version_scores, key=version_scores.get)
+        dominant_version[doc_id] = max(version_scores, key=lambda k: version_scores[k])
 
     if not dominant_version:
         return

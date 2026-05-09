@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes_clients import router as clients_router
@@ -16,15 +17,19 @@ from app.db.snowflake import engine
 
 configure_logging()
 
-app = FastAPI(
-    title=settings.PROJECT_NAME, openapi_url=f"{settings.API_V1_STR}/openapi.json"
-)
 
-
-@app.on_event("startup")
-def _validate_runtime_config() -> None:
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     validate_runtime_settings()
     initialize_ai_provider()
+    yield
+
+
+app = FastAPI(
+    title=settings.PROJECT_NAME,
+    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    lifespan=lifespan,
+)
 
 
 # Auto-create all tables on startup

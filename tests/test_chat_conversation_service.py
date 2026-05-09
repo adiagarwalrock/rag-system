@@ -163,7 +163,7 @@ def test_clear_session_removes_messages_and_resets_summary(
         lambda session_id: deleted.__setitem__("called", True),
     )
 
-    service.clear_session(session_id=session.id)
+    service.clear_session(session_id=str(session.id))
 
     remaining = (
         db_session.query(ChatMessage)

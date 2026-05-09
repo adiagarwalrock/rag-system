@@ -40,7 +40,7 @@ def test_enqueue_document_ingestion_creates_queued_records(
 
     assert doc.status == "queued"
     assert job.status == "queued"
-    assert Path(doc.storage_path).exists()
+    assert Path(str(doc.storage_path)).exists()
     assert len(captured_tasks) == 1
     assert captured_tasks[0].document_id == doc.id
     assert captured_tasks[0].job_id == job.id

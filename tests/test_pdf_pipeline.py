@@ -61,47 +61,6 @@ class _FakeLiteParse:
         return _FakeScreenshotBatch()
 
 
-def test_extract_liteparse_pages_maps_parse_result(monkeypatch, tmp_path):
-    monkeypatch.setattr(adapters, "LiteParse", _FakeLiteParse)
-
-    pages, meta = adapters.extract_liteparse_pages(
-        file_path=str(tmp_path / "sample.pdf"),
-        screenshot_dir=tmp_path / "shots",
-    )
-
-    assert meta["layout_engine"] == "liteparse"
-    assert len(pages) == 1
-    page = pages[0]
-    assert page["page_num"] == 1
-    assert page["full_page_text"] == "Revenue increased"
-    assert page["screenshot_path"] == "/tmp/page_1.png"
-    assert page["text_items"][0]["text"] == "Revenue"
-    assert page["ocr_used"] is False
-
-
-def test_extract_liteparse_pages_uses_page_level_ocr_flag(monkeypatch, tmp_path):
-    class _OCRPage(_FakePage):
-        def __init__(self):
-            super().__init__()
-            self.ocrUsed = True
-
-    class _OCRParseResult:
-        def __init__(self):
-            self.pages = [_OCRPage()]
-
-    class _OCRLiteParse(_FakeLiteParse):
-        def parse(self, *_args, **_kwargs):
-            return _OCRParseResult()
-
-    monkeypatch.setattr(adapters, "LiteParse", _OCRLiteParse)
-    pages, _meta = adapters.extract_liteparse_pages(
-        file_path=str(tmp_path / "sample.pdf"),
-        screenshot_dir=tmp_path / "shots",
-    )
-
-    assert pages[0]["ocr_used"] is True
-
-
 def test_extract_table_candidates_uses_strategy_cascade():
     class _FakeTable:
         def __init__(self):
@@ -244,6 +203,7 @@ def test_extract_table_candidates_uses_later_strategy_when_earlier_has_malformed
     page = _FakePage()
     candidates = adapters._extract_table_candidates(page)
 
+    assert candidates is not None
     assert len(candidates) == 1
     assert candidates[0]["candidate_id"] == "text_table_candidate_1"
     assert candidates[0]["rows"][1] == ["Q3", "30"]

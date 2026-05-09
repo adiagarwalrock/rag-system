@@ -191,7 +191,9 @@ class ChunkArtifactAssembler:
     def _append_reasoning_chunks(self, chunks: list[ChunkArtifact]) -> None:
         figures_by_id = {fig.figure_id: fig for fig in self._inputs.figures}
         for reasoning in self._inputs.reasoning_artifacts:
-            chunks.extend(_reasoning_to_chunks(reasoning, self._manifests, figures_by_id))
+            chunks.extend(
+                _reasoning_to_chunks(reasoning, self._manifests, figures_by_id)
+            )
 
 
 class DefaultChunkStage(ChunkStage):
@@ -312,8 +314,15 @@ def artifact_chunks_to_llama_docs(
             },
             "contains_numeric_data": has_numeric_data(text),
         }
+        existing_density = metadata.get("numeric_density", 0.0)
+        if isinstance(existing_density, list):
+            existing_density = existing_density[0] if existing_density else 0.0
+        try:
+            safe_density = float(existing_density)
+        except (ValueError, TypeError):
+            safe_density = 0.0
         metadata["numeric_density"] = max(
-            float(metadata.get("numeric_density", 0.0) or 0.0),
+            safe_density,
             numeric_density(text),
         )
 
@@ -395,7 +404,7 @@ def _body_text_chunk_size(page_class: str) -> tuple[int, int]:
     base_max = max(1, int(settings.BODY_TEXT_CHUNK_MAX_TOKENS))
     base_overlap = max(0, int(settings.BODY_TEXT_CHUNK_OVERLAP_TOKENS))
     if page_class in {"visual_heavy_page", "mixed_page"}:
-        max_tokens = int(base_max * 1.5)   # e.g. 900 → 1350
+        max_tokens = int(base_max * 1.5)  # e.g. 900 → 1350
         overlap_tokens = int(base_overlap * 1.5)  # e.g. 80 → 120
     elif page_class == "table_heavy_page":
         max_tokens = int(base_max * 1.25)  # e.g. 900 → 1125
@@ -610,13 +619,19 @@ def _reasoning_to_chunks(
                     asset_refs.append(ref)
     # For page_reasoning, also add the manifest screenshot
     if reasoning.reasoning_type == "page_reasoning":
-        if manifest and manifest.screenshot_path and manifest.screenshot_path not in asset_refs:
+        if (
+            manifest
+            and manifest.screenshot_path
+            and manifest.screenshot_path not in asset_refs
+        ):
             asset_refs.append(manifest.screenshot_path)
 
     if asset_refs:
-        metadata["image_scope"] = "figure_crop" if any(
-            "crop" in r or "figure" in r for r in asset_refs
-        ) else "page_screenshot"
+        metadata["image_scope"] = (
+            "figure_crop"
+            if any("crop" in r or "figure" in r for r in asset_refs)
+            else "page_screenshot"
+        )
 
     return [
         ChunkArtifact(

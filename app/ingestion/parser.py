@@ -139,7 +139,7 @@ def _parse_legacy(
 
     if ext in reader_map:
         reader_cls, unit_type = reader_map[ext]
-        for i, doc in enumerate(reader_cls().load_data(file_path)):
+        for i, doc in enumerate(reader_cls().load_data(Path(file_path))):
             add_item(doc.text, i, unit_type)
     else:
         add_item(path.read_text(encoding="utf-8"), 0, "section")

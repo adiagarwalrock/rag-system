@@ -83,7 +83,7 @@ class RAGCore:
             }
 
     # --- Documents ---
-    def list_documents(self, client_id: str = None) -> List[Dict[str, Any]]:
+    def list_documents(self, client_id: str | None = None) -> List[Dict[str, Any]]:
         with SessionLocal() as db:
             query = db.query(Document)
             if client_id:
@@ -121,7 +121,7 @@ class RAGCore:
                 file_content=file_content,
                 filename=file_name,
                 client_id=client_id,
-                client_name=client_name,
+                client_name=str(client_name),
                 db=db,
             )
             return {
@@ -288,7 +288,7 @@ class RAGCore:
                     citations: List[Dict[str, Any]] = []
                     if message.citations_json:
                         try:
-                            decoded = json.loads(message.citations_json)
+                            decoded = json.loads(str(message.citations_json))
                             if isinstance(decoded, list):
                                 citations = [
                                     item for item in decoded if isinstance(item, dict)

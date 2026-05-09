@@ -114,9 +114,9 @@ async def ingest_doc(
 
     result, job = enqueue_document_ingestion(
         file_content=file_content,
-        filename=file.filename,
+        filename=file.filename or "",
         client_id=client_id,
-        client_name=client.name,
+        client_name=str(client.name),
         db=db,
     )
     return {

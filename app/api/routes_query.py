@@ -32,7 +32,7 @@ def query_documents(
     )
     return QueryResponse(
         answer=result["answer"],
-        reasoning=result.get("reasoning"),
+        reasoning=str(result.get("reasoning") or ""),
         citations=result.get("citations", []),
         conflicts=result.get("conflicts", []),
         query_id=result.get("query_id"),

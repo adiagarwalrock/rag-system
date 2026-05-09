@@ -36,11 +36,12 @@ class ChatConversationService:
         session_id: str | None = None,
     ) -> dict:
         session = self._resolve_session(client_id=client_id, session_id=session_id)
-        next_turn_index = self._next_turn_index(session.id)
+        session_id_str = str(session.id)
+        next_turn_index = self._next_turn_index(session_id_str)
 
         user_message = self._create_message(
             client_id=client_id,
-            session_id=session.id,
+            session_id=session_id_str,
             role="user",
             content=question,
             turn_index=next_turn_index,
@@ -50,7 +51,7 @@ class ChatConversationService:
 
         context_bundle = self.context_service.build_context_bundle(
             client_id=client_id,
-            session_id=session.id,
+            session_id=session_id_str,
             current_question=question,
         )
 
@@ -60,32 +61,36 @@ class ChatConversationService:
                 client_id=client_id,
                 db=self.db,
                 reasoning_effort=reasoning_effort,
-                session_id=session.id,
+                session_id=session_id_str,
                 conversation_context=context_bundle.to_dict(),
             )
         except Exception as exc:
             self.db.rollback()
             error_msg = f"I could not complete that search: {exc}"
-            self._persist_error_message(client_id, session.id, error_msg)
+            self._persist_error_message(client_id, session_id_str, error_msg)
             raise ValueError(error_msg) from exc
 
         assistant_message = self._create_message(
             client_id=client_id,
-            session_id=session.id,
+            session_id=session_id_str,
             role="assistant",
-            content=result.get("answer", "No answer generated."),
-            reasoning=result.get("reasoning"),
+            content=str(result.get("answer", "No answer generated.")),
+            reasoning=(
+                str(result.get("reasoning", "")) if result.get("reasoning") else None
+            ),
             citations=result.get("citations", []),
             turn_index=next_turn_index + 1,
-            query_log_id=result.get("query_id"),
+            query_log_id=(
+                str(result.get("query_id", "")) if result.get("query_id") else None
+            ),
         )
         self._touch_session(session)
         self.context_service.index_qa_pair(
             client_id=client_id,
-            session_id=session.id,
-            user_text=user_message.content,
-            assistant_text=assistant_message.content,
-            assistant_message_id=assistant_message.id,
+            session_id=session_id_str,
+            user_text=str(user_message.content),
+            assistant_text=str(assistant_message.content),
+            assistant_message_id=str(assistant_message.id),
             created_at=assistant_message.created_at,
         )
         self._refresh_session_summary(session)
@@ -241,7 +246,7 @@ class ChatConversationService:
             session.summary_text = ""
             return
 
-        prior_summary = (session.summary_text or "").strip()
+        prior_summary = str(session.summary_text or "").strip()
         try:
             prompt = _build_summary_prompt(prior_summary, rows)
             model = settings.SESSION_SUMMARY_MODEL or settings.QUERY_EXPANSION_MODEL
@@ -302,10 +307,10 @@ class ChatConversationService:
             if session is not None:
                 self._create_message(
                     client_id=client_id,
-                    session_id=session.id,
+                    session_id=str(session.id),
                     role="assistant",
                     content=error_msg,
-                    turn_index=self._next_turn_index(session.id),
+                    turn_index=self._next_turn_index(str(session.id)),
                 )
                 self._touch_session(session)
                 self._refresh_session_summary(session)

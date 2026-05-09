@@ -4,6 +4,7 @@ Vector store integration with Qdrant via LlamaIndex.
 
 import logging
 from typing import List
+import typing
 
 import qdrant_client
 from llama_index.core import StorageContext, VectorStoreIndex
@@ -167,7 +168,7 @@ class VectorStoreManager:
         index = VectorStoreIndex.from_vector_store(
             vector_store=self._get_vector_store()
         )
-        kwargs = {
+        kwargs: dict[str, typing.Any] = {
             "filters": filters,
             "similarity_top_k": similarity_top_k,
         }

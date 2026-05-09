@@ -182,7 +182,7 @@ class ChatHistoryVectorStore:
         )
         return qdrant_models.Filter(
             must=[self._field_condition("client_id", client_id)],
-            must_not=must_not_conditions,
+            must_not=must_not_conditions or None,
         )
 
     def _delete_by_field(self, *, field_name: str, value: str) -> None:

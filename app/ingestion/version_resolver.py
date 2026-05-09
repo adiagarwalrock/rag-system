@@ -5,7 +5,7 @@ and content to support version-aware retrieval and conflict detection.
 
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +176,8 @@ def _apply_filename_date(filename: str, result: dict) -> None:
         return
 
     try:
-        result["published_at"] = datetime(*(int(d_match.group(i)) for i in (1, 2, 3)))
+        year, month, day = (int(d_match.group(i)) for i in (1, 2, 3))
+        result["published_at"] = datetime(year, month, day, tzinfo=timezone.utc)
         result["confidence_score"] = max(result["confidence_score"], 0.6)
     except ValueError:
         pass

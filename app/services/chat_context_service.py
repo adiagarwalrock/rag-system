@@ -111,8 +111,8 @@ class ChatContextService:
         rows = list(reversed(rows))
         turns = [
             {
-                "role": row.role,
-                "content": row.content,
+                "role": str(row.role),
+                "content": str(row.content),
             }
             for row in rows
             if row.content

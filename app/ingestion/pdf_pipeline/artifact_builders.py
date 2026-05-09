@@ -185,7 +185,7 @@ def _is_incomplete_structured_output_error(exc: Exception) -> bool:
         "json_invalid",
         "failed to produce a structured response",
     )
-    current: Exception | None = exc
+    current: BaseException | None = exc
     while current is not None:
         message = str(current).lower()
         if any(marker in message for marker in markers):
@@ -282,7 +282,7 @@ def _run_structured_multimodal_inference(
                     role=MessageRole.USER,
                     blocks=[
                         TextBlock(text=prompt),
-                        ImageBlock(path=image_path, image_mimetype=mime_type),
+                        ImageBlock(path=Path(image_path), image_mimetype=mime_type),
                     ],
                 )
             ]
@@ -436,7 +436,7 @@ def _tablechef_extract(
             return []
 
         candidates: list[dict[str, Any]] = []
-        for idx, table in enumerate(doc.tables):
+        for idx, table in enumerate(getattr(doc, "tables", []) or []):
             content = getattr(table, "content", "") or ""
             rows = parse_table_like_text(content)
             if len(rows) >= 2:
@@ -465,8 +465,8 @@ def _img2table_extract(
     if not screenshot_path or not Path(screenshot_path).exists():
         return []
     try:
-        from img2table.document import Image as Img2TableImage  # type: ignore[import]
-        from img2table.ocr import EasyOCR  # type: ignore[import]
+        from img2table.document import Image as Img2TableImage
+        from img2table.ocr import EasyOCR
     except ImportError:
         logger.debug("img2table not installed; skipping Tier 4 for page %s", page_num)
         return []
@@ -474,7 +474,9 @@ def _img2table_extract(
     try:
         doc = Img2TableImage(src=screenshot_path)
         ocr = EasyOCR(lang=["en"])
-        extracted = doc.extract_tables(ocr=ocr, borderless_tables=True, min_confidence=50)
+        extracted = doc.extract_tables(
+            ocr=ocr, borderless_tables=True, min_confidence=50
+        )
         candidates: list[dict[str, Any]] = []
         for idx, table_obj in enumerate(extracted or []):
             df = getattr(table_obj, "df", None)
@@ -1191,7 +1193,7 @@ def _should_merge_tables(left: TableArtifact, right: TableArtifact) -> bool:
         == normalize_whitespace(right.caption_text).lower()
     )
     aligned = _rough_x_alignment(left.bbox_list[-1], right.bbox_list[0])
-    return aligned and (same_header or same_caption)
+    return bool(aligned and (same_header or same_caption))
 
 
 def _rough_x_alignment(left_bbox: list[float], right_bbox: list[float]) -> bool:
@@ -1291,7 +1293,7 @@ def _run_multimodal_inference(prompt: str, image_path: str) -> str | None:
                     role=MessageRole.USER,
                     blocks=[
                         TextBlock(text=prompt),
-                        ImageBlock(path=image_path, image_mimetype=mime_type),
+                        ImageBlock(path=Path(image_path), image_mimetype=mime_type),
                     ],
                 )
             ]

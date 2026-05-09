@@ -331,7 +331,7 @@ class GeminiProviderFactory(BaseAIProviderFactory):
             )
 
         return genai_types.GenerateContentConfig(
-            thinking_config=genai_types.ThinkingConfig(thinking_level=effort)
+            thinking_config=genai_types.ThinkingConfig(thinking_level=effort.value)
         )
 
     @staticmethod

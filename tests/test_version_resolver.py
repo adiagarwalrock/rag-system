@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.ingestion.version_resolver import resolve_version
 
@@ -43,7 +43,7 @@ def test_resolve_version_detects_month_name_year_patterns():
 def test_resolve_version_extracts_published_date_from_filename():
     result = resolve_version("policy_2024-01-15.pdf")
 
-    assert result["published_at"] == datetime(2024, 1, 15)
+    assert result["published_at"] == datetime(2024, 1, 15, tzinfo=timezone.utc)
     assert result["confidence_score"] >= 0.6
 
 

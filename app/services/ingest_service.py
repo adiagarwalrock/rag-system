@@ -244,17 +244,17 @@ def retry_ingestion(document_id: str, db: Session) -> Document:
     if db_doc.status not in ["failed", "indexed", "completed"]:
         raise ValueError(f"Cannot retry document in '{db_doc.status}' state.")
 
-    if not db_doc.storage_path or not Path(db_doc.storage_path).exists():
+    if not db_doc.storage_path or not Path(str(db_doc.storage_path)).exists():
         raise ValueError("Raw file is missing. Please re-upload the document.")
 
     client_record = db.query(Client).filter(Client.id == db_doc.client_id).first()
-    client_name = client_record.name if client_record else "Unknown"
+    client_name = str(client_record.name) if client_record else "Unknown"
 
-    file_path = db_doc.storage_path
-    filename = db_doc.name
-    client_id = db_doc.client_id
-    doc_id = db_doc.id
-    file_ext = db_doc.file_type
+    file_path = str(db_doc.storage_path)
+    filename = str(db_doc.name)
+    client_id = str(db_doc.client_id)
+    doc_id = str(db_doc.id)
+    file_ext = str(db_doc.file_type)
 
     # 3. Pre-clean prior partial data
     try:
@@ -305,7 +305,7 @@ def delete_document(document_id: str, db: Session, hard: bool = False) -> None:
     if not db_doc:
         raise ValueError(f"Document {document_id} not found.")
 
-    client_id = db_doc.client_id
+    client_id = str(db_doc.client_id)
     db_doc.status = "deleting"
     db.commit()
 
@@ -327,9 +327,9 @@ def delete_document(document_id: str, db: Session, hard: bool = False) -> None:
         db.query(IngestionJob).filter(IngestionJob.document_id == document_id).delete()
 
         # 4. remove raw file
-        if db_doc.storage_path and Path(db_doc.storage_path).exists():
+        if db_doc.storage_path and Path(str(db_doc.storage_path)).exists():
             try:
-                Path(db_doc.storage_path).unlink()
+                Path(str(db_doc.storage_path)).unlink()
             except OSError as e:
                 logger.warning(f"Failed to remove file {db_doc.storage_path}: {e}")
 
@@ -522,7 +522,7 @@ class IngestionPipelineExecutor:
         transformations = self._build_transformations(layout_aware_pdf)
         pipeline = IngestionPipeline(transformations=transformations)
         worker_count = 1 if layout_aware_pdf else 3
-        return pipeline.run(documents=llama_docs, num_workers=worker_count)
+        return list(pipeline.run(documents=llama_docs, num_workers=worker_count))
 
     def _build_transformations(self, layout_aware_pdf: bool) -> list[Any]:
         if layout_aware_pdf:

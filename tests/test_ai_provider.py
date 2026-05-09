@@ -1,3 +1,4 @@
+import typing
 from types import SimpleNamespace
 
 import pytest
@@ -215,7 +216,7 @@ def test_initialize_ai_provider_rejects_placeholder_key(monkeypatch):
 def test_invoke_llm_chat_forwards_openai_responses_runtime_kwargs(monkeypatch):
     monkeypatch.setattr(ai_provider, "settings", _settings(OPENAI_USE_RESPONSES=True))
 
-    captured: dict[str, object] = {}
+    captured: dict[str, typing.Any] = {}
 
     class FakeLLM:
         def chat(self, messages, **kwargs):
@@ -274,7 +275,7 @@ def test_invoke_llm_chat_maps_runtime_and_roles_for_gemini(monkeypatch):
         ),
     )
 
-    captured: dict[str, object] = {}
+    captured: dict[str, typing.Any] = {}
 
     class FakeLLM:
         def chat(self, messages, **kwargs):

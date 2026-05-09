@@ -79,7 +79,7 @@ def test_apply_metadata_exclusions_merges_existing_keys_without_duplicates():
 
 def test_build_non_layout_node_parser_semantic_uses_config(monkeypatch):
     from app.core.config import settings
-    from app.services import ingest_service
+    from app.services import ingest_metadata
 
     calls: dict = {}
 
@@ -88,7 +88,7 @@ def test_build_non_layout_node_parser_semantic_uses_config(monkeypatch):
         return "semantic-parser"
 
     monkeypatch.setattr(
-        ingest_service.SemanticSplitterNodeParser,
+        ingest_metadata.SemanticSplitterNodeParser,
         "from_defaults",
         staticmethod(_fake_from_defaults),
     )

@@ -75,7 +75,7 @@ class QueryLogWriter:
             )
             .all()
         )
-        return {row.vector_node_id: row for row in rows}
+        return {str(row.vector_node_id): row for row in rows}
 
     def persist_retrieval_logs(
         self,
@@ -86,7 +86,7 @@ class QueryLogWriter:
     ) -> None:
         for index, citation in enumerate(citations, start=1):
             vector_node_id = citation.get("vector_node_id")
-            registry_row = registry_by_node_id.get(vector_node_id)
+            registry_row = registry_by_node_id.get(str(vector_node_id))
             values = {
                 "id": str(uuid.uuid4()),
                 "query_log_id": query_log_id,
@@ -148,12 +148,12 @@ class QueryExecutionService:
                 citations=citations,
             )
             self.log_writer.persist_retrieval_logs(
-                query_log_id=query_log.id,
+                query_log_id=str(query_log.id),
                 citations=citations,
                 registry_by_node_id=registry_by_node_id,
             )
             self.log_writer.persist_conflict_logs(
-                query_log_id=query_log.id,
+                query_log_id=str(query_log.id),
                 conflicts=result.get("conflicts", []),
             )
 

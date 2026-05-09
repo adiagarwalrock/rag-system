@@ -3,6 +3,8 @@ from pathlib import Path
 
 import streamlit as st
 
+from typing import Literal
+
 from ui.components.api_client import get_api
 from ui.components.layout import render_page_shell
 from ui.components.utils import (
@@ -10,6 +12,10 @@ from ui.components.utils import (
     bump_cache_revision,
     get_client_options,
 )
+
+BadgeColor = Literal[
+    "red", "orange", "yellow", "blue", "green", "violet", "gray", "grey", "primary"
+]
 
 REASONING_EFFORT_OPTIONS = ("low", "medium", "high")
 
@@ -26,7 +32,7 @@ def _truncate_text(text: str, limit: int = 120) -> str:
     return f"{cleaned[: limit - 3].rstrip()}..."
 
 
-def _badge_rows(items: list[tuple[str, str, str]], per_row: int = 4):
+def _badge_rows(items: list[tuple[str, str, BadgeColor]], per_row: int = 4):
     if not items:
         return
 
@@ -37,7 +43,7 @@ def _badge_rows(items: list[tuple[str, str, str]], per_row: int = 4):
             col.badge(label, icon=icon, color=color)
 
 
-def _latency_color(latency_ms: int | None) -> str:
+def _latency_color(latency_ms: int | None) -> BadgeColor:
     if latency_ms is None:
         return "gray"
     if latency_ms < 2500:
@@ -49,7 +55,7 @@ def _latency_color(latency_ms: int | None) -> str:
     return "red"
 
 
-def _conflict_color(conflict_count: int) -> str:
+def _conflict_color(conflict_count: int) -> BadgeColor:
     if conflict_count == 0:
         return "green"
     if conflict_count < 3:
@@ -95,7 +101,7 @@ def _render_result_details(result: dict):
     image_evidence_count = result.get("image_evidence_count", 0)
     latency_ms = result.get("latency_ms")
 
-    summary_badges = [
+    summary_badges: list[tuple[str, str, BadgeColor]] = [
         (
             f"Sources {source_count}",
             ":material/source:",
@@ -183,7 +189,7 @@ def _render_result_details(result: dict):
                         ]
                         st.image(image_refs, caption=captions, width="content")
 
-                    detail_badges: list[tuple[str, str, str]] = []
+                    detail_badges: list[tuple[str, str, BadgeColor]] = []
                     score = citation.get("score")
                     score_label = (
                         f"Score {score:.3f}"
@@ -425,7 +431,8 @@ def render_query():
             width="stretch",
             disabled=not bool(active_session_id),
         ):
-            api.clear_chat_session(active_session_id)
+            if active_session_id:
+                api.clear_chat_session(active_session_id)
             st.rerun()
 
         if st.button(

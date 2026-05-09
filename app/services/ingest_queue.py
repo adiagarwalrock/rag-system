@@ -106,15 +106,15 @@ class IngestionQueueManager:
                 return
 
             file_path = db_doc.storage_path
-            if not file_path or not Path(file_path).exists():
+            if not file_path or not Path(str(file_path)).exists():
                 missing_error = ValueError(
                     "Raw file is missing before queued ingestion started."
                 )
                 _handle_ingestion_failure(
                     missing_error,
-                    db_doc.name,
-                    db_doc.id,
-                    job.id,
+                    str(db_doc.name),
+                    str(db_doc.id),
+                    str(job.id),
                     db_doc,
                     job,
                     db,
@@ -137,20 +137,20 @@ class IngestionQueueManager:
                 _execute_pipeline(
                     db_doc,
                     job,
-                    file_path,
-                    db_doc.name,
+                    str(file_path),
+                    str(db_doc.name),
                     task.client_id,
                     task.client_name,
-                    db_doc.id,
-                    db_doc.file_type,
+                    str(db_doc.id),
+                    str(db_doc.file_type),
                     db,
                 )
             except Exception as exc:
                 _handle_ingestion_failure(
                     exc,
-                    db_doc.name,
-                    db_doc.id,
-                    job.id,
+                    str(db_doc.name),
+                    str(db_doc.id),
+                    str(job.id),
                     db_doc,
                     job,
                     db,

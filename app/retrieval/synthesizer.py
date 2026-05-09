@@ -10,6 +10,7 @@ import logging
 import mimetypes
 import re
 from typing import Any
+from pathlib import Path
 
 from llama_index.core.base.llms.types import (
     ChatMessage,
@@ -70,7 +71,7 @@ def _is_incomplete_structured_output_error(exc: Exception) -> bool:
         "json_invalid",
         "failed to produce a structured response",
     )
-    current: Exception | None = exc
+    current: BaseException | None = exc
     while current is not None:
         message = str(current).lower()
         if any(marker in message for marker in markers):
@@ -267,10 +268,16 @@ class GroundedAnswerSynthesizer:
                 "user_tag": settings.RESPONSE_USER_TAG,
             }
 
-            structured_response = None
             try:
                 structured_response = _retriever_mod.invoke_llm_chat(
-                    **request_kwargs,
+                    model=settings.LLM_MODEL,
+                    input_messages=input_messages,
+                    reasoning_effort=self.reasoning_effort,
+                    max_output_tokens=_effective_max_output_tokens(question),
+                    prompt_cache_key=settings.RESPONSE_PROMPT_CACHE_KEY,
+                    prompt_cache_retention=settings.RESPONSE_PROMPT_CACHE_RETENTION,
+                    safety_identifier=f"{settings.RESPONSE_SAFETY_IDENTIFIER_PREFIX}:{self.client_id}",
+                    user_tag=settings.RESPONSE_USER_TAG,
                     structured_output_cls=GroundedAnswerStructuredResponse,
                 )
             except Exception as exc:
@@ -407,7 +414,7 @@ def _build_grounded_message(prompt: str, image_paths: list[str]) -> ChatMessage:
         mime_type = mimetypes.guess_type(image_path)[0]
         blocks.append(
             ImageBlock(
-                path=image_path,
+                path=Path(image_path),
                 image_mimetype=mime_type or "image/png",
             )
         )

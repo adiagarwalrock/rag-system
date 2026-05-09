@@ -31,7 +31,7 @@ def repair_pdf_path(file_path: str) -> tuple[str, dict]:
         A tuple of (repaired filepath or original, repair metadata dict).
     """
     source = Path(file_path)
-    status = {
+    status: dict[str, bool | str | None] = {
         "pdf_repair_attempted": False,
         "pdf_repair_method": None,
         "pdf_repair_success": False,

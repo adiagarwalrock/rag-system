@@ -69,7 +69,7 @@ def test_build_context_bundle_includes_recent_and_cross_session_pairs(
 
     bundle = ChatContextService(db_session).build_context_bundle(
         client_id=client.id,
-        session_id=session.id,
+        session_id=str(session.id),
         current_question="Current question",
     )
 

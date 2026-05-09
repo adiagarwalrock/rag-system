@@ -7,7 +7,7 @@ from typing import Any
 
 import pymupdf as fitz
 from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.datamodel.pipeline_options import PdfPipelineOptions, TableStructureOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
 
 from app.core.config import settings
@@ -35,7 +35,8 @@ def _get_docling_converter() -> DocumentConverter:
         opts = PdfPipelineOptions()
         opts.do_ocr = False
         opts.do_table_structure = True
-        opts.table_structure_options.do_cell_matching = True
+        if isinstance(opts.table_structure_options, TableStructureOptions):
+            opts.table_structure_options.do_cell_matching = True
 
         _DOCLING_CONVERTER = DocumentConverter(
             format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
@@ -188,6 +189,7 @@ def extract_docling_pages(
     )
     return text_pages, meta, docling_by_page
 
+
 _TABLE_DETECTION_STRATEGIES: tuple[tuple[str, dict[str, Any]], ...] = (
     ("default", {}),
     ("lines", {"strategy": "lines"}),
@@ -224,7 +226,9 @@ class DefaultPDFExtractionStage(PDFExtractionStage):
                 if docling_data["table_candidates"]:
                     page["table_candidates"] = docling_data["table_candidates"]
                 if docling_data["figure_candidates"]:
-                    page["docling_figure_candidates"] = docling_data["figure_candidates"]
+                    page["docling_figure_candidates"] = docling_data[
+                        "figure_candidates"
+                    ]
 
         parse_meta = {
             "layout_engine": text_meta.get("layout_engine", "docling"),
@@ -251,7 +255,8 @@ def build_pymupdf_text_pages(
     screenshot_dir.mkdir(parents=True, exist_ok=True)
     pages: list[dict[str, Any]] = []
 
-    for page_idx, page in enumerate(pdf_doc, start=1):
+    for page_idx in range(1, len(pdf_doc) + 1):
+        page: fitz.Page = pdf_doc[page_idx - 1]
         screenshot_path = screenshot_dir / f"page_{page_idx}.png"
         screenshot = ""
         try:
@@ -312,7 +317,8 @@ def extract_pymupdf_pages(
         )
     layout_used = False
 
-    for page_idx, page in enumerate(pdf_doc, start=1):
+    for page_idx in range(1, len(pdf_doc) + 1):
+        page: fitz.Page = pdf_doc[page_idx - 1]
         components, degraded_stages = _extract_page_components(page)
         page_degraded = bool(degraded_stages)
 
