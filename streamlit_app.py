@@ -19,24 +19,24 @@ st.set_page_config(
 pg = st.navigation(
     [
         st.Page(
-            "ui/pages/1_Chat.py", title="Chat", icon=":material/chat:", default=True
+            "frontend/pages/1_Chat.py", title="Chat", icon=":material/chat:", default=True
         ),
         st.Page(
-            "ui/pages/6_Query_History.py",
+            "frontend/pages/6_Query_History.py",
             title="Query History",
             icon=":material/history:",
         ),
         st.Page(
-            "ui/pages/2_Documents.py", title="Documents", icon=":material/upload_file:"
+            "frontend/pages/2_Documents.py", title="Documents", icon=":material/upload_file:"
         ),
-        st.Page("ui/pages/3_Clients.py", title="Clients", icon=":material/domain:"),
+        st.Page("frontend/pages/3_Clients.py", title="Clients", icon=":material/domain:"),
         st.Page(
-            "ui/pages/4_Quality.py",
+            "frontend/pages/4_Quality.py",
             title="Quality (pre-alpha)",
             icon=":material/monitoring:",
         ),
         st.Page(
-            "ui/pages/5_Qdrant_Inspector.py",
+            "frontend/pages/5_Qdrant_Inspector.py",
             title="Qdrant Inspector",
             icon=":material/dataset:",
         ),
