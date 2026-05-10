@@ -8,13 +8,13 @@ from evaluation.factuality import (
     FactualityScoreSummary,
     evaluate_factuality,
 )
-from evaluation.ingestion import (
+from evaluation.ingestion_eval import (
     IngestionEvalCase,
     IngestionEvalSummary,
     evaluate_ingestion_cases,
 )
 from evaluation.reporting import build_quality_payload
-from evaluation.retrieval import (
+from evaluation.retrieval_eval import (
     RetrievalEvalCase,
     RetrievalEvalSummary,
     evaluate_retrieval_cases,

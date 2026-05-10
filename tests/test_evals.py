@@ -1,4 +1,4 @@
-from app.evals import (
+from evaluation import (
     IngestionEvalCase,
     RetrievalEvalCase,
     build_quality_payload,

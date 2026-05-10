@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.evals import evaluate_factuality
+from evaluation import evaluate_factuality
 
 DEFAULT_QUESTIONS_PATH = Path("enterprise_rag_eval_questions.jsonl")
 DEFAULT_ANSWERS_PATH = Path("enterprise_rag_eval_answers_test4_oai.jsonl")

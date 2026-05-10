@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from app.retrieval import query_expansion
+from app.services import query_rewriter as query_expansion
 
 
 def _test_settings() -> SimpleNamespace:

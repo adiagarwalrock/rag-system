@@ -4,7 +4,8 @@ from types import SimpleNamespace
 import pytest
 from llama_index.core.base.llms.types import MessageRole, TextBlock
 
-from app.core import ai_factory, ai_provider
+from app.agents import agent_base as ai_provider
+from app.agents.tools import provider_factory as ai_factory
 
 
 def _settings(**overrides):

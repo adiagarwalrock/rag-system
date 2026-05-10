@@ -2,7 +2,7 @@ import json
 from datetime import datetime, timezone
 
 from app.db.models import ChatMessage, ChatSession
-from ui.lib import api as ui_api
+from frontend.lib import api as ui_api
 
 
 def test_list_chat_messages_hydrates_assistant_result(

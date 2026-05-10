@@ -18,7 +18,7 @@ from app.db.models.document import (
     VectorNodeRegistry,
 )
 from app.db.snowflake import SessionLocal
-from app.evals import (
+from evaluation import (
     IngestionEvalCase,
     RetrievalEvalCase,
     build_quality_payload,
