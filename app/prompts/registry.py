@@ -12,8 +12,8 @@ import mimetypes
 from pathlib import Path
 from typing import Any
 
-from app.core.prompts import build_grounded_answer_prompt
-from app.retrieval.evidence_selector import REASONING_CHUNK_TYPES
+from app.prompts.templates import build_grounded_answer_prompt
+from app.services.evidence_selector import REASONING_CHUNK_TYPES
 
 logger = logging.getLogger(__name__)
 

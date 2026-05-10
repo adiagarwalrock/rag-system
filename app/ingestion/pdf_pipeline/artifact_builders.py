@@ -25,9 +25,9 @@ from llama_index.core.base.llms.types import (
 from PIL import Image, ImageStat
 from pydantic import BaseModel
 
-from app.core.ai_provider import invoke_llm_chat
+from app.agents.agent_base import invoke_llm_chat
 from app.core.config import settings
-from app.core.prompts import (
+from app.prompts.templates import (
     _GENERIC_STRUCTURED_PROMPT,
     CHART_REASONING_PROMPT,
     PAGE_REASONING_PROMPT,
@@ -37,7 +37,7 @@ from app.core.prompts import (
     build_artifact_enrichment_prompt,
     build_chart_caption_prompt,
 )
-from app.core.token_budget import truncate_text_by_tokens
+from observability.cost_tracker import truncate_text_by_tokens
 from app.indexing.vector_store import vector_store_manager
 from app.ingestion.pdf_pipeline.contracts import ArtifactResult, ArtifactStage
 from app.ingestion.pdf_pipeline.helpers import (

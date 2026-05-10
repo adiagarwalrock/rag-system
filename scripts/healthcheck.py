@@ -19,7 +19,7 @@ if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from app.core.config import settings
-from app.core.logging_config import configure_logging
+from observability.logging_config import configure_logging
 
 SPARSE_VECTOR_NAME = "text-sparse-new"
 

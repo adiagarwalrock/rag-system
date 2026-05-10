@@ -21,15 +21,15 @@ from llama_index.core.base.llms.types import (
 )
 from pydantic import BaseModel, ValidationError
 
-from app.core.ai_provider import get_llm
+from app.agents.agent_base import get_llm
 from app.core.config import settings
-from app.core.prompts import GROUNDED_ANSWER_DEVELOPER_PROMPT
+from app.prompts.templates import GROUNDED_ANSWER_DEVELOPER_PROMPT
 from app.schemas.retrieval import (
     GroundedAnswerResult,
     GroundedAnswerStructuredResponse,
     format_reasoning_bullets,
 )
-from app.retrieval.prompt_builder import (
+from app.prompts.registry import (
     _build_grounded_prompt,
     _build_labeled_context_sections,
     _collect_image_evidence_paths,
@@ -222,7 +222,7 @@ class GroundedAnswerSynthesizer:
         effort_applied: bool,
     ) -> GroundedAnswerResult | None:
         try:
-            import app.retrieval.retriever as _retriever_mod
+            import app.components.hybrid_retriever as _retriever_mod
 
             budgeter = _retriever_mod.ResponsesInputBudgeter(model=settings.LLM_MODEL)
             sections = _build_labeled_context_sections(
@@ -442,7 +442,7 @@ def _append_image_inputs(
         {"type": "input_text", "text": user_text}
     ]
     for path in image_paths:
-        from app.retrieval.prompt_builder import _image_path_to_data_url
+        from app.prompts.registry import _image_path_to_data_url
 
         data_url = _image_path_to_data_url(path)
         if not data_url:

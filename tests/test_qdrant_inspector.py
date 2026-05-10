@@ -1,6 +1,6 @@
 import json
 
-from ui.components.qdrant_inspector import (
+from frontend.components.qdrant_inspector import (
     _group_points_by_document,
     _normalize_point_item,
     _parse_pasted_points,

@@ -1,4 +1,4 @@
-from app.evals.factuality import (
+from evaluation.factuality import (
     VERDICT_CORRECT,
     VERDICT_INCORRECT,
     VERDICT_PARTIAL,

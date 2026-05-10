@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from statistics import mean
 from typing import Any
 
-from app.evals.common import mean_or_zero, safe_lower
+from evaluation.common import mean_or_zero, safe_lower
 
 
 @dataclass(slots=True)

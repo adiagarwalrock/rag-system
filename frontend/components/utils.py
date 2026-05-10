@@ -1,6 +1,6 @@
 import streamlit as st
 
-from ui.components.api_client import get_api
+from frontend.components.api_client import get_api
 
 CLIENTS_CACHE_KEY = "clients_cache_revision"
 DOCUMENTS_CACHE_KEY = "documents_cache_revision"

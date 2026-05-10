@@ -13,18 +13,18 @@ from typing import Any, Dict, List
 from llama_index.core.vector_stores import ExactMatchFilter, MetadataFilters
 
 # Backward-compatible re-exports: tests monkeypatch these on retriever_module
-from app.core.ai_provider import (  # noqa: F401
+from app.agents.agent_base import (  # noqa: F401
     extract_chat_response_text,
     invoke_llm_chat,
     normalize_reasoning_effort,
 )
-from app.core.token_budget import ResponsesInputBudgeter  # noqa: F401
+from observability.cost_tracker import ResponsesInputBudgeter  # noqa: F401
 from app.indexing.vector_store import vector_store_manager
-from app.retrieval.citation_builder import build_citations
-from app.retrieval.conflict_detector import detect_conflicts
+from app.services.citation_builder import build_citations
+from app.services.conflict_detector import detect_conflicts
 
 # Sub-module imports — used by RAGRetriever and its callers
-from app.retrieval.evidence_selector import (
+from app.services.evidence_selector import (
     _build_retrieval_diagnostics,
     _ensure_image_evidence,
     _ensure_structured_evidence,
@@ -38,12 +38,12 @@ from app.retrieval.evidence_selector import (
     _node_has_image_assets,
     _node_unique_key,
 )
-from app.retrieval.prompt_builder import (
+from app.prompts.registry import (
     _build_conversation_context_block,
     _collect_image_evidence_paths,
 )
-from app.retrieval.query_expansion import build_query_variants, should_expand_query
-from app.retrieval.synthesizer import (
+from app.services.query_rewriter import build_query_variants, should_expand_query
+from app.services.synthesizer import (
     GroundedAnswerSynthesizer,
     _extract_answer_and_reasoning_from_chat,
     _split_reasoning_from_text,
@@ -177,7 +177,7 @@ class RAGRetriever:
         return self._rank_nodes(question, source_nodes)
 
     def _rank_nodes(self, question: str, source_nodes: list) -> list:
-        from app.retrieval.reranker import rerank_nodes
+        from app.components.reranker import rerank_nodes
 
         prefer_latest = not (
             _is_comparison_or_conflict_query(question)

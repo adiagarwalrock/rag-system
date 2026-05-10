@@ -1,6 +1,6 @@
 from llama_index.core.schema import NodeWithScore, TextNode
 
-from app.retrieval.conflict_detector import detect_conflicts
+from app.services.conflict_detector import detect_conflicts
 
 
 def _node(node_id: str, text: str, metadata: dict, score: float = 0.8) -> NodeWithScore:

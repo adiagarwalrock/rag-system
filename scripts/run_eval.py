@@ -23,8 +23,8 @@ from typing import Any
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from app.core.ai_provider import initialize_ai_provider
-from app.core.logging_config import configure_logging
+from app.agents.agent_base import initialize_ai_provider
+from observability.logging_config import configure_logging
 from app.db.schema import ensure_runtime_schema
 from app.db.snowflake import SessionLocal, engine
 from app.services.chat_conversation_service import ChatConversationService

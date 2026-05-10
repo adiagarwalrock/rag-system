@@ -6,9 +6,9 @@ from app.api.routes_clients import router as clients_router
 from app.api.routes_documents import router as documents_router
 from app.api.routes_health import router as health_router
 from app.api.routes_query import router as query_router
-from app.core.ai_provider import initialize_ai_provider
+from app.agents.agent_base import initialize_ai_provider
 from app.core.config import settings, validate_runtime_settings
-from app.core.logging_config import configure_logging
+from observability.logging_config import configure_logging
 
 # Import all models so Base.metadata knows about every table
 from app.db.models import *  # noqa: F401, F403

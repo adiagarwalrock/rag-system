@@ -5,9 +5,9 @@ from datetime import datetime
 import streamlit as st
 
 from app.core.config import settings
-from ui.components.api_client import get_api
-from ui.components.layout import render_page_shell
-from ui.components.utils import (
+from frontend.components.api_client import get_api
+from frontend.components.layout import render_page_shell
+from frontend.components.utils import (
     DOCUMENTS_CACHE_KEY,
     QUERY_HISTORY_CACHE_KEY,
     bump_cache_revision,

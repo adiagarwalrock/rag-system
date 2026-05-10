@@ -9,9 +9,9 @@ from typing import Any, List
 
 from pydantic import BaseModel, Field
 
-from app.core.ai_provider import extract_chat_response_text, invoke_llm_chat
+from app.agents.agent_base import extract_chat_response_text, invoke_llm_chat
 from app.core.config import settings
-from app.core.prompts import QUERY_EXPANSION_DEVELOPER_PROMPT
+from app.prompts.templates import QUERY_EXPANSION_DEVELOPER_PROMPT
 
 logger = logging.getLogger(__name__)
 

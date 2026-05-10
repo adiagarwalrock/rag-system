@@ -2,19 +2,19 @@
 Evaluation helpers for retrieval and ingestion quality.
 """
 
-from app.evals.factuality import (
+from evaluation.factuality import (
     FactualityScoreResult,
     FactualityScoreRow,
     FactualityScoreSummary,
     evaluate_factuality,
 )
-from app.evals.ingestion import (
+from evaluation.ingestion import (
     IngestionEvalCase,
     IngestionEvalSummary,
     evaluate_ingestion_cases,
 )
-from app.evals.reporting import build_quality_payload
-from app.evals.retrieval import (
+from evaluation.reporting import build_quality_payload
+from evaluation.retrieval import (
     RetrievalEvalCase,
     RetrievalEvalSummary,
     evaluate_retrieval_cases,

@@ -3,13 +3,13 @@ from typing import TYPE_CHECKING
 import streamlit as st
 
 if TYPE_CHECKING:
-    from ui.lib.api import RAGCore
+    from frontend.lib.api import RAGCore
 
 
 @st.cache_resource
 def _create_api() -> "RAGCore":
     # Lazy import to avoid eager DB/network module import at module load.
-    from ui.lib.api import RAGCore
+    from frontend.lib.api import RAGCore
 
     return RAGCore()
 

@@ -4,8 +4,8 @@ from datetime import datetime
 
 import streamlit as st
 
-from ui.components.layout import render_page_shell
-from ui.components.utils import (
+from frontend.components.layout import render_page_shell
+from frontend.components.utils import (
     QUERY_HISTORY_CACHE_KEY,
     bump_cache_revision,
     get_client_options,

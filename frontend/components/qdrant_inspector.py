@@ -8,8 +8,8 @@ import streamlit as st
 from qdrant_client.http import models as qdrant_models
 
 from app.indexing.vector_store import COLLECTION_NAME, vector_store_manager
-from ui.components.layout import render_page_shell
-from ui.components.utils import get_client_options
+from frontend.components.layout import render_page_shell
+from frontend.components.utils import get_client_options
 
 _MISSING_SENTINELS = {"", "none", "null", "n/a", "na", "undefined"}
 

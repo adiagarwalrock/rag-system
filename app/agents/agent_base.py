@@ -11,8 +11,8 @@ from llama_index.core.base.llms.types import (
 )
 from pydantic import BaseModel
 
-from app.core.ai_factory import AIProvider
-from app.core.ai_factory import (
+from app.agents.tools.provider_factory import AIProvider
+from app.agents.tools.provider_factory import (
     AIProviderFactoryResolver,
     is_placeholder_api_key,
     normalize_reasoning_effort,

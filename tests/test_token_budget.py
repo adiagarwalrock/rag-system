@@ -1,4 +1,4 @@
-from app.core.token_budget import ResponsesInputBudgeter
+from observability.cost_tracker import ResponsesInputBudgeter
 
 
 def test_budgeted_sections_fit_within_input_budget():

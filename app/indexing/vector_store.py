@@ -13,7 +13,7 @@ from llama_index.core.vector_stores import MetadataFilters
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from qdrant_client.http import models as qdrant_models
 
-from app.core.ai_provider import initialize_ai_provider
+from app.agents.agent_base import initialize_ai_provider
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)

@@ -12,7 +12,7 @@ from typing import Any
 from llama_index.core import Document as LlamaDocument
 
 from app.core.config import settings
-from app.core.token_budget import count_tokens, get_token_encoding
+from observability.cost_tracker import count_tokens, get_token_encoding
 from app.ingestion.pdf_pipeline.contracts import ChunkStage
 from app.ingestion.pdf_pipeline.helpers import (
     dump_json,

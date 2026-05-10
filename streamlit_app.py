@@ -1,9 +1,9 @@
 import streamlit as st
 
-from app.core.ai_provider import initialize_ai_provider
+from app.agents.agent_base import initialize_ai_provider
 from app.core.config import validate_runtime_settings
-from app.core.logging_config import configure_logging
-from ui.components.layout import render_runtime_sidebar
+from observability.logging_config import configure_logging
+from frontend.components.layout import render_runtime_sidebar
 
 configure_logging()
 

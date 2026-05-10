@@ -1,6 +1,6 @@
 import logging
 
-from app.core.logging_config import configure_logging
+from observability.logging_config import configure_logging
 from app.db.base import Base
 from app.db.models.client import Client
 from app.db.models.document import (

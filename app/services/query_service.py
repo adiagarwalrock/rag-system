@@ -19,7 +19,7 @@ from app.db.models.document import (
     RetrievalLog,
     VectorNodeRegistry,
 )
-from app.retrieval.retriever import RAGRetriever
+from app.components.hybrid_retriever import RAGRetriever
 
 logger = logging.getLogger(__name__)
 

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from statistics import mean
 from typing import Any
 
-from app.evals.common import safe_lower
+from evaluation.common import safe_lower
 
 VERDICT_CORRECT = "correct"
 VERDICT_PARTIAL = "partially_correct"

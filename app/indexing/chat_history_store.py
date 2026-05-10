@@ -7,7 +7,7 @@ from typing import Any
 
 from qdrant_client.http import models as qdrant_models
 
-from app.core.ai_provider import get_embeddings
+from app.agents.agent_base import get_embeddings
 from app.core.config import settings
 from app.indexing.vector_store import vector_store_manager
 

@@ -5,7 +5,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from app.core.config import settings
-from app.core.logging_config import configure_logging
+from observability.logging_config import configure_logging
 
 configure_logging()
 

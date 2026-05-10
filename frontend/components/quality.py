@@ -25,8 +25,8 @@ from app.evals import (
     evaluate_ingestion_cases,
     evaluate_retrieval_cases,
 )
-from ui.components.layout import render_page_shell
-from ui.components.utils import get_client_options
+from frontend.components.layout import render_page_shell
+from frontend.components.utils import get_client_options
 
 DEFAULT_RETRIEVAL_CASES = [
     {

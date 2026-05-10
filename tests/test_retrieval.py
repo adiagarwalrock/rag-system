@@ -4,11 +4,11 @@ from types import SimpleNamespace
 from llama_index.core.base.llms.types import TextBlock, ThinkingBlock
 from llama_index.core.schema import NodeWithScore, TextNode
 
-import app.retrieval.retriever as retriever_module
-import app.retrieval.synthesizer as synthesizer_module
-from app.retrieval.citation_builder import build_citations
-from app.retrieval.query_expansion import should_expand_query
-from app.retrieval.retriever import (
+import app.components.hybrid_retriever as retriever_module
+import app.services.synthesizer as synthesizer_module
+from app.services.citation_builder import build_citations
+from app.services.query_rewriter import should_expand_query
+from app.components.hybrid_retriever import (
     RAGRetriever,
     _build_conversation_context_block,
     _build_retrieval_diagnostics,
@@ -1016,7 +1016,7 @@ def test_numeric_intent_triggers_structured_evidence_without_table_keyword():
 
 def test_version_consistency_penalty_applied_for_single_version_query():
     """Phase 4: non-comparison queries should penalize non-dominant versions."""
-    from app.retrieval.reranker import rerank_nodes
+    from app.components.reranker import rerank_nodes
 
     nodes = [
         _node(
@@ -1059,7 +1059,7 @@ def test_version_consistency_penalty_applied_for_single_version_query():
 
 def test_version_consistency_penalty_skipped_for_comparison_query():
     """Phase 4: comparison queries should NOT apply version penalty."""
-    from app.retrieval.reranker import rerank_nodes
+    from app.components.reranker import rerank_nodes
 
     nodes = [
         _node(

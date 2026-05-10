@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.evals.common import mean_or_zero, safe_lower, unique_nonempty
+from evaluation.common import mean_or_zero, safe_lower, unique_nonempty
 
 
 @dataclass(slots=True)
