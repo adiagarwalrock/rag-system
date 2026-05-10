@@ -51,16 +51,27 @@ _COMPLEX_QUERY_SIGNALS = (
     "headline stats",
 )
 _COMPLEX_QUERY_SIGNAL_THRESHOLD = 2
+_VISUAL_SIGNALS = ("map", "chart", "graph", "figure", "diagram", "pie", "bar", "trend")
 _JSON_BLOCK_PATTERN = re.compile(
     r"^```(?:json)?\s*(.*?)\s*```$", re.IGNORECASE | re.DOTALL
+)
+_THINKING_OPEN = re.compile(r"<thinking>", re.IGNORECASE)
+_THINKING_CLOSE = re.compile(r"</thinking>", re.IGNORECASE)
+_ANSWER_OPEN = re.compile(r"<answer>", re.IGNORECASE)
+_ANSWER_CLOSE = re.compile(r"</answer>", re.IGNORECASE)
+_COT_ARTIFACT_PATTERN = re.compile(
+    r"^(let me (think|analyze|break|consider)|step \d+[:.]|"
+    r"first[,:]|to answer this|thinking:|analysis:)",
+    re.IGNORECASE | re.MULTILINE,
 )
 
 
 def _effective_max_output_tokens(question: str) -> int:
-    """Return a larger token budget for multi-part enumeration questions."""
+    """Return a larger token budget for multi-part enumeration or visual questions."""
     normalized = question.lower()
+    visual_hit = any(t in normalized for t in _VISUAL_SIGNALS)
     signal_count = sum(1 for sig in _COMPLEX_QUERY_SIGNALS if sig in normalized)
-    if signal_count >= _COMPLEX_QUERY_SIGNAL_THRESHOLD:
+    if visual_hit or signal_count >= _COMPLEX_QUERY_SIGNAL_THRESHOLD:
         return max(settings.RESPONSE_MAX_OUTPUT_TOKENS, 2000)
     return settings.RESPONSE_MAX_OUTPUT_TOKENS
 

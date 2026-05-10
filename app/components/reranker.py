@@ -7,6 +7,8 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import overload
 
+from app.ingestion.metadata_extractor import METRIC_PATTERNS
+
 logger = logging.getLogger(__name__)
 
 TABLE_QUERY_TERMS = (
@@ -164,7 +166,16 @@ def _authority_adjustment(metadata: dict) -> float:
     return normalized * 0.05
 
 
-def _structural_adjustment(metadata: dict, query: str | None) -> float:
+def _detect_query_metrics(query: str) -> set[str]:
+    """Detect which financial KPI types appear in the query."""
+    return {
+        metric
+        for metric, patterns in METRIC_PATTERNS.items()
+        if any(p in query for p in patterns)
+    }
+
+
+def _structural_adjustment(metadata: dict, query: str | None = None) -> float:
     if not query:
         return 0.0
 
@@ -209,6 +220,12 @@ def _structural_adjustment(metadata: dict, query: str | None) -> float:
         adjustment += 0.03
     if wants_structured and (is_table_chunk or is_chart_chunk):
         adjustment += 0.06
+
+    # Boost chunks whose metric_types intersect with query's detected KPIs
+    query_metrics = _detect_query_metrics(normalized_query)
+    chunk_metrics = set(metadata.get("metric_types") or [])
+    if query_metrics & chunk_metrics:
+        adjustment += 0.07
 
     # Boost overview/summary slides for factual lookup or numeric queries
     slide_purpose = str(metadata.get("slide_purpose") or "")
@@ -312,32 +329,38 @@ def _apply_version_consistency_adjustment(
     if any(term in normalized for term in _COMPARISON_TERMS):
         return
 
-    doc_version_scores: dict[str, dict[str, float]] = defaultdict(
+    doc_version_scores: dict[tuple, dict[str, float]] = defaultdict(
         lambda: defaultdict(float)
     )
+    node_groups: dict[str, tuple] = {}
+
     for node in nodes:
         metadata = node.node.metadata or {}
-        doc_id = metadata.get("document_id") or metadata.get("document_name") or ""
+        # Key by (company_ticker, document_type) instead of raw document_name
+        # This prevents BXP Q4 deck and BXP Investor Day from being treated as versions of each other
+        group_key = (
+            metadata.get("company_ticker") or metadata.get("document_name", ""),
+            metadata.get("document_type", ""),
+        )
         version = metadata.get("version_label") or ""
-        if doc_id and version:
-            doc_version_scores[doc_id][version] += _safe_float(node.score, 0.0) or 0.0
+        doc_version_scores[group_key][version] += _safe_float(node.score, 0.0) or 0.0
+        node_groups[node.node.node_id] = (group_key, version)
 
-    dominant_version: dict[str, str] = {}
-    for doc_id, version_scores in doc_version_scores.items():
+    dominant_version: dict[tuple, str] = {}
+    for group_key, version_scores in doc_version_scores.items():
         if len(version_scores) < 2:
             continue
-        dominant_version[doc_id] = max(version_scores, key=lambda k: version_scores[k])
+        dominant_version[group_key] = max(
+            version_scores, key=lambda k: version_scores[k]
+        )
 
     if not dominant_version:
         return
 
     for node in nodes:
-        metadata = node.node.metadata or {}
-        doc_id = metadata.get("document_id") or metadata.get("document_name") or ""
-        version = metadata.get("version_label") or ""
-        if (
-            doc_id in dominant_version
-            and version
-            and version != dominant_version[doc_id]
-        ):
+        group_info = node_groups.get(node.node.node_id)
+        if not group_info:
+            continue
+        group_key, version = group_info
+        if group_key in dominant_version and version != dominant_version[group_key]:
             node.score = (_safe_float(node.score, 0.0) or 0.0) - _VERSION_PENALTY

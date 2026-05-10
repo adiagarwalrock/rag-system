@@ -28,6 +28,8 @@ PAYLOAD_INDEXES = (
     ("document_id", qdrant_models.PayloadSchemaType.KEYWORD),
     ("file_name", qdrant_models.PayloadSchemaType.KEYWORD),
     ("document_version_group", qdrant_models.PayloadSchemaType.KEYWORD),
+    ("company_ticker", qdrant_models.PayloadSchemaType.KEYWORD),
+    ("document_type", qdrant_models.PayloadSchemaType.KEYWORD),
     ("page_num", qdrant_models.PayloadSchemaType.INTEGER),
     ("slide_num", qdrant_models.PayloadSchemaType.INTEGER),
 )

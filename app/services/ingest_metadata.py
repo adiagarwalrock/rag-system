@@ -7,6 +7,7 @@ from llama_index.core.schema import BaseNode, NodeRelationship, RelatedNodeInfo
 
 from app.core.config import settings
 from app.indexing.vector_store import vector_store_manager
+from app.ingestion.metadata_extractor import extract_chunk_metric_types
 
 NON_SEMANTIC_EMBED_METADATA_KEYS = (
     "document_id",
@@ -14,6 +15,9 @@ NON_SEMANTIC_EMBED_METADATA_KEYS = (
     "ref_doc_id",
     "client_id",
     "client_name",
+    "company_ticker",
+    "document_type",
+    "metric_types",
     "ingestion_job_id",
     "parser_name",
     "parser_version",
@@ -88,6 +92,9 @@ NON_SEMANTIC_LLM_METADATA_KEYS = (
     "ref_doc_id",
     "client_id",
     "client_name",
+    "company_ticker",
+    "document_type",
+    "metric_types",
     "ingestion_job_id",
     "parser_name",
     "parser_version",
@@ -216,6 +223,7 @@ def _apply_retrieval_metadata(
                 "source_file": metadata.get("source_file") or filename,
                 "citation_label": metadata.get("citation_label")
                 or " - ".join(label_parts),
+                "metric_types": extract_chunk_metric_types(node.get_content()),
                 **_core_version_metadata(version_info),
             }
         )

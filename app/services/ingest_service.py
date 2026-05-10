@@ -27,6 +27,7 @@ from app.db.models.document import (
     VectorNodeRegistry,
 )
 from app.indexing.vector_store import COLLECTION_NAME, vector_store_manager
+from app.ingestion.metadata_extractor import extract_document_metadata
 from app.ingestion.parser import parse_document, save_upload_file
 from app.ingestion.validator import (
     compute_checksum,
@@ -374,6 +375,11 @@ class IngestionPipelineExecutor:
         llama_docs, units = parse_document(self.file_path, document_metadata)
         self._apply_parser_metadata(llama_docs)
 
+        # Enrich document-level entities from filename and preview
+        content_preview = llama_docs[0].text[:500] if llama_docs else ""
+        entity_meta = extract_document_metadata(self.filename, content_preview)
+        document_metadata.update(entity_meta)
+
         version_info = self._resolve_version_info(llama_docs)
         self._persist_version_record(version_info)
         self._apply_document_metadata(
@@ -409,6 +415,9 @@ class IngestionPipelineExecutor:
             "file_name": self.filename,
             "file_type": self.file_ext,
             "ingestion_job_id": self.job.id,
+            "company_ticker": "",
+            "document_type": "unknown",
+            "sector": "unknown",
         }
 
     def _apply_parser_metadata(self, llama_docs: list[Any]) -> None:

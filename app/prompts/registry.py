@@ -265,10 +265,12 @@ def _prompt_excerpt(citation: dict[str, Any]) -> str:
         "full_table",
         "table_segment",
         "table_summary_text",
+        "table_aggregation_summary",
         "figure_artifact",
         "chart_context",
         "chart_data_points",
         "visual_proxy_text",
+        "chart_legend_chunk",
     } | REASONING_CHUNK_TYPES
     limit = 2400 if chunk_type in rich_types else 1400
     text = (citation.get("text") or "").strip()
