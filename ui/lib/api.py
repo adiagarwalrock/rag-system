@@ -3,10 +3,10 @@ Core Python service interface for the RAG-System Streamlit UI.
 This bypasses HTTP requests and talks directly natively to the app layers.
 """
 
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
-from app.core.security import verify_password
 from app.db.models.client import Client
 from app.db.models.document import (
     Document,
@@ -14,20 +14,21 @@ from app.db.models.document import (
     IngestionJob,
     VectorNodeRegistry,
 )
-from app.db.models.user import User
-from app.db.snowflake import SessionLocal
+from app.db.schema import ensure_runtime_schema
+from app.db.snowflake import SessionLocal, engine
+from app.services.chat_conversation_service import ChatConversationService
+from app.services.client_service import delete_client as delete_client_with_cascade
 from app.services.ingest_service import (
-    ingest_document,
-    retry_ingestion,
     delete_document,
+    enqueue_document_ingestion,
+    retry_ingestion,
 )
 from app.services.query_history_service import QueryHistoryFilters, QueryHistoryService
-from app.services.query_service import execute_query
 
 logger = logging.getLogger(__name__)
 
 
-class VecteraCore:
+class RAGCore:
     """
     Native internal wrapper mocking the old API schema for the frontend.
     """
@@ -35,33 +36,7 @@ class VecteraCore:
     def __init__(self):
         # We don't maintain a single session here to avoid side effects across
         # separate streamlit interactions. We instantiate it per call.
-        pass
-
-    # --- Auth ---
-    def login(self, email: str, password: str) -> dict:
-        """Login natively by comparing password hash."""
-        with SessionLocal() as db:
-            user = db.query(User).filter(User.email == email).first()
-            if not user or not verify_password(password, user.password_hash):
-                raise ValueError("Incorrect email or password")
-            # Create a mock token data so the UI thinks auth succeeded
-            return {"access_token": user.id, "token_type": "internal"}
-
-    def get_me(self, user_id: str) -> dict:
-        """Fetch user by id (derived from mock internal token)"""
-        if not user_id:
-            raise ValueError("Not authenticated")
-        with SessionLocal() as db:
-            user = db.query(User).filter(User.id == user_id).first()
-            if not user:
-                raise ValueError("User not found")
-            return {
-                "id": user.id,
-                "email": user.email,
-                "full_name": user.full_name,
-                "is_active": user.is_active,
-                "role": "admin",  # Hardcoded default role since it depends on clients
-            }
+        ensure_runtime_schema(engine)
 
     # --- Clients ---
     def list_clients(self) -> List[Dict[str, Any]]:
@@ -98,13 +73,22 @@ class VecteraCore:
                 "description": new_client.description,
             }
 
+    def delete_client(self, client_id: str) -> dict:
+        with SessionLocal() as db:
+            delete_client_with_cascade(client_id=client_id, db=db)
+            return {
+                "status": "success",
+                "message": "Client deleted",
+                "client_id": client_id,
+            }
+
     # --- Documents ---
     def list_documents(self, client_id: str = None) -> List[Dict[str, Any]]:
         with SessionLocal() as db:
             query = db.query(Document)
             if client_id:
                 query = query.filter(Document.client_id == client_id)
-            documents = query.all()
+            documents = query.order_by(Document.created_at.desc()).all()
             results = []
             for d in documents:
                 results.append(
@@ -127,22 +111,25 @@ class VecteraCore:
         client_id: str,
         file_name: str,
         file_content: bytes,
-        user_id: str = "internal",
     ) -> dict:
         with SessionLocal() as db:
             # Need client_name for ingestion service metadata
             client = db.query(Client).filter(Client.id == client_id).first()
             client_name = client.name if client else "Unknown"
 
-            doc = ingest_document(
+            doc, job = enqueue_document_ingestion(
                 file_content=file_content,
                 filename=file_name,
                 client_id=client_id,
                 client_name=client_name,
-                user_id=user_id,
                 db=db,
             )
-            return {"id": doc.id, "name": doc.name, "status": doc.status}
+            return {
+                "id": doc.id,
+                "name": doc.name,
+                "status": doc.status,
+                "ingestion_job_id": job.id,
+            }
 
     def get_document_status(self, document_id: str) -> dict:
         with SessionLocal() as db:
@@ -191,31 +178,139 @@ class VecteraCore:
                 "is_current_version": version.is_current if version else None,
             }
 
-    def retry_document_ingestion(
-        self, document_id: str, user_id: str = "internal"
-    ) -> dict:
+    def retry_document_ingestion(self, document_id: str) -> dict:
         with SessionLocal() as db:
-            doc = retry_ingestion(document_id=document_id, user_id=user_id, db=db)
+            doc = retry_ingestion(document_id=document_id, db=db)
             return {"id": doc.id, "name": doc.name, "status": doc.status}
 
-    def delete_document(
-        self, document_id: str, hard: bool = False, user_id: str = "internal"
-    ) -> dict:
+    def delete_document(self, document_id: str, hard: bool = False) -> dict:
         with SessionLocal() as db:
             delete_document(document_id=document_id, db=db, hard=hard)
             return {"status": "success", "message": "Document deleted"}
 
     # --- Query ---
-    def query(self, client_id: str, question: str, user_id: str = "internal") -> dict:
+    def query(
+        self,
+        client_id: str,
+        question: str,
+        reasoning_effort: str = "medium",
+        session_id: str | None = None,
+    ) -> dict:
         with SessionLocal() as db:
             try:
-                response = execute_query(
-                    client_id=client_id, question=question, user_id=user_id, db=db
+                response = ChatConversationService(db).execute_client_query(
+                    client_id=client_id,
+                    question=question,
+                    reasoning_effort=reasoning_effort,
+                    session_id=session_id,
                 )
                 return response
             except Exception as e:
                 logger.error(f"Query Error: {e}")
                 raise ValueError(str(e))
+
+    def list_chat_sessions(
+        self, client_id: str, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        with SessionLocal() as db:
+            sessions = ChatConversationService(db).list_sessions(
+                client_id=client_id,
+                limit=limit,
+            )
+            return [
+                {
+                    "id": session.id,
+                    "client_id": session.client_id,
+                    "title": session.title,
+                    "summary_text": session.summary_text,
+                    "created_at": (
+                        session.created_at.isoformat() if session.created_at else None
+                    ),
+                    "updated_at": (
+                        session.updated_at.isoformat() if session.updated_at else None
+                    ),
+                    "last_activity_at": (
+                        session.last_activity_at.isoformat()
+                        if session.last_activity_at
+                        else None
+                    ),
+                }
+                for session in sessions
+            ]
+
+    def create_chat_session(
+        self, client_id: str, title: str | None = None
+    ) -> Dict[str, Any]:
+        with SessionLocal() as db:
+            session = ChatConversationService(db).create_session(
+                client_id=client_id, title=title
+            )
+            return {
+                "id": session.id,
+                "client_id": session.client_id,
+                "title": session.title,
+                "summary_text": session.summary_text,
+                "created_at": (
+                    session.created_at.isoformat() if session.created_at else None
+                ),
+                "updated_at": (
+                    session.updated_at.isoformat() if session.updated_at else None
+                ),
+                "last_activity_at": (
+                    session.last_activity_at.isoformat()
+                    if session.last_activity_at
+                    else None
+                ),
+            }
+
+    def list_chat_messages(
+        self, session_id: str, limit: int = 200
+    ) -> List[Dict[str, Any]]:
+        with SessionLocal() as db:
+            messages = ChatConversationService(db).list_messages(
+                session_id=session_id, limit=limit
+            )
+            response_messages: List[Dict[str, Any]] = []
+            for message in messages:
+                payload: Dict[str, Any] = {
+                    "id": message.id,
+                    "client_id": message.client_id,
+                    "session_id": message.session_id,
+                    "role": message.role,
+                    "content": message.content,
+                    "turn_index": message.turn_index,
+                    "query_log_id": message.query_log_id,
+                    "created_at": (
+                        message.created_at.isoformat() if message.created_at else None
+                    ),
+                }
+                if message.role == "assistant":
+                    citations: List[Dict[str, Any]] = []
+                    if message.citations_json:
+                        try:
+                            decoded = json.loads(message.citations_json)
+                            if isinstance(decoded, list):
+                                citations = [
+                                    item for item in decoded if isinstance(item, dict)
+                                ]
+                        except Exception:
+                            citations = []
+
+                    reasoning = (message.reasoning or "").strip() or None
+                    if reasoning or citations or message.query_log_id:
+                        payload["result"] = {
+                            "reasoning": reasoning,
+                            "citations": citations,
+                            "query_id": message.query_log_id,
+                        }
+
+                response_messages.append(payload)
+            return response_messages
+
+    def clear_chat_session(self, session_id: str) -> Dict[str, Any]:
+        with SessionLocal() as db:
+            ChatConversationService(db).clear_session(session_id=session_id)
+            return {"status": "success", "session_id": session_id}
 
     def list_query_history(
         self,

@@ -5,12 +5,10 @@ Query API route — separate from documents.
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_active_user
-from app.db.models.client import Client
-from app.db.models.user import User
 from app.db.snowflake import get_db
 from app.schemas.document import QueryRequest, QueryResponse
-from app.services.query_service import execute_query
+from app.services.chat_conversation_service import ChatConversationService
+from app.services.client_service import ClientLookupService
 
 router = APIRouter()
 
@@ -19,19 +17,18 @@ router = APIRouter()
 def query_documents(
     request: QueryRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
     """Query documents scoped to a client."""
-    # Validate client exists
-    client = db.query(Client).filter(Client.id == request.client_id).first()
-    if not client:
+    try:
+        ClientLookupService(db).require_client(request.client_id)
+    except ValueError:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    result = execute_query(
+    result = ChatConversationService(db).execute_client_query(
         question=request.question,
         client_id=request.client_id,
-        user_id=current_user.id,
-        db=db,
+        reasoning_effort=request.reasoning_effort,
+        session_id=request.session_id,
     )
     return QueryResponse(
         answer=result["answer"],
@@ -44,4 +41,9 @@ def query_documents(
         evidence_count=result.get("evidence_count", 0),
         images_used=result.get("images_used", []),
         image_evidence_count=result.get("image_evidence_count", 0),
+        reasoning_effort=result.get("reasoning_effort", "medium"),
+        reasoning_effort_applied=result.get("reasoning_effort_applied", False),
+        session_id=result.get("session_id"),
+        user_message_id=result.get("user_message_id"),
+        assistant_message_id=result.get("assistant_message_id"),
     )

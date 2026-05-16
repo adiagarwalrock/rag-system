@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from statistics import mean
 from typing import Any
 
-from app.evals.common import safe_lower
+from app.evals.common import mean_or_zero, safe_lower
 
 
 @dataclass(slots=True)
@@ -71,13 +71,15 @@ def evaluate_ingestion_cases(cases: list[IngestionEvalCase]) -> IngestionEvalSum
     scored = [_score_case(case) for case in cases]
     return IngestionEvalSummary(
         case_count=len(scored),
-        parse_success_rate=_mean([case.parse_success for case in scored]),
-        avg_chunk_count=_mean([case.chunk_count for case in scored]),
-        avg_vector_node_count=_mean([case.vector_node_count for case in scored]),
-        avg_metadata_completeness=_mean(
+        parse_success_rate=mean_or_zero([case.parse_success for case in scored]),
+        avg_chunk_count=mean_or_zero([case.chunk_count for case in scored]),
+        avg_vector_node_count=mean_or_zero([case.vector_node_count for case in scored]),
+        avg_metadata_completeness=mean_or_zero(
             [case.metadata_completeness for case in scored]
         ),
-        qdrant_index_success_rate=_mean([case.qdrant_index_success for case in scored]),
+        qdrant_index_success_rate=mean_or_zero(
+            [case.qdrant_index_success for case in scored]
+        ),
         cases=scored,
     )
 
@@ -103,22 +105,20 @@ def _metadata_completeness(
         return 0.0
 
     per_chunk_scores: list[float] = []
-    required = [field for field in required_fields if safe_lower(field)]
+    required = [
+        required_field
+        for required_field in required_fields
+        if safe_lower(required_field)
+    ]
     if not required:
         return 0.0
 
     for metadata in metadata_by_chunk:
         present = 0
-        for field in required:
-            value = metadata.get(field)
+        for required_field in required:
+            value = metadata.get(required_field)
             if value is not None and value != "":
                 present += 1
         per_chunk_scores.append(present / len(required))
 
     return float(mean(per_chunk_scores)) if per_chunk_scores else 0.0
-
-
-def _mean(values: list[float]) -> float:
-    if not values:
-        return 0.0
-    return float(mean(values))

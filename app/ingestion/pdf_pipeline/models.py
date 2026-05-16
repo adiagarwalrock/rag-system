@@ -1,7 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import BaseModel, Field
+
+# -------------------------------------------------------------------------------------
+#
+# DATA MODELS
+#
+# -------------------------------------------------------------------------------------
+
 
 ZONE_ORDER = {
     "header_zone": 0,
@@ -38,6 +47,8 @@ class PageManifest:
     pdf_repair_error: str | None = None
     llm_page_summary: str | None = None
     llm_enriched: bool = False
+    llm_page_summary_status: str = "not_run"
+    llm_page_summary_error: str | None = None
 
 
 @dataclass(slots=True)
@@ -101,6 +112,10 @@ class FigureArtifact:
     key_chart_facts: list[str] = field(default_factory=list)
     numeric_extraction_confidence: float | None = None
     chart_parse_status: str = "not_applicable"
+    # Exhaustive segment/cell extraction for specific visual types
+    pie_segments: list[dict[str, Any]] = field(default_factory=list)
+    matrix_cells: list[dict[str, Any]] = field(default_factory=list)
+    stat_box_values: list[str] = field(default_factory=list)
     llm_enriched: bool = False
     llm_enrichment_confidence: float | None = None
     llm_caption_model: str | None = None
@@ -136,3 +151,94 @@ class ChunkArtifact:
     text: str
     metadata: dict[str, Any]
     asset_refs: list[str] = field(default_factory=list)
+
+
+# -------------------------------------------------------------------------------------
+#
+# RESPONSE MODELS
+#
+# -------------------------------------------------------------------------------------
+
+
+class ChartDatapointResponse(BaseModel):
+    series: str = ""
+    x: str = ""
+    y: float
+    unit: str = ""
+    approximate: bool = True
+
+
+class PieSegmentResponse(BaseModel):
+    """One slice of a pie or donut chart."""
+    label: str = ""
+    value: float = 0.0
+    unit: str = "%"
+
+
+class MatrixCellResponse(BaseModel):
+    """One cell from a comparison matrix or cross-tab grid."""
+    row_header: str = ""
+    col_header: str = ""
+    value: str = ""
+
+
+class ChartCaptionResponse(BaseModel):
+    chart_type: str = ""
+    chart_title: str = ""
+    x_axis_label: str = ""
+    y_axis_label: str = ""
+    x_categories: list[str] = Field(default_factory=list)
+    series: list[str] = Field(default_factory=list)
+    approx_datapoints: list[ChartDatapointResponse] = Field(default_factory=list)
+    trend_summary: str = ""
+    key_chart_facts: list[str] = Field(default_factory=list)
+    numeric_extraction_confidence: float | None = None
+    # Exhaustive segment extraction for pie / donut charts
+    pie_segments: list[PieSegmentResponse] = Field(default_factory=list)
+    # Cell-level extraction for comparison matrices and grids
+    matrix_cells: list[MatrixCellResponse] = Field(default_factory=list)
+    # Labeled values from quick-facts boxes / infographic stat tiles
+    stat_box_values: list[str] = Field(default_factory=list)
+
+
+class ArtifactEnrichmentResponse(BaseModel):
+    summary_points: list[str] = Field(default_factory=list)
+
+
+class PageScreenshotResponse(BaseModel):
+    layout_description: str = ""
+    # Each entry is a "Label: value" pair (e.g. "Properties: 179", "Dividend Yield: 4.7%")
+    labeled_values: list[str] = Field(default_factory=list)
+    numeric_values: list[str] = Field(default_factory=list)
+    chart_descriptions: list[str] = Field(default_factory=list)
+    table_summaries: list[str] = Field(default_factory=list)
+    map_or_diagram_annotations: list[str] = Field(default_factory=list)
+    key_takeaways: list[str] = Field(default_factory=list)
+    # Exhaustive pie slice listing: "label: value%"
+    pie_chart_segments: list[str] = Field(default_factory=list)
+    # Matrix cell listing: "row | col | value"
+    matrix_cell_values: list[str] = Field(default_factory=list)
+
+
+ReasoningClaimText = Annotated[str, Field(min_length=1, max_length=180)]
+ReasoningEvidenceRefText = Annotated[str, Field(min_length=1, max_length=120)]
+
+
+class ReasoningStructuredResponse(BaseModel):
+    key_insights: list[ReasoningClaimText] = Field(default_factory=list, max_length=5)
+    metric_comparisons: list[ReasoningClaimText] = Field(
+        default_factory=list,
+        max_length=4,
+    )
+    trend_statement: Annotated[str, Field(max_length=180)] = ""
+    caveats: list[ReasoningClaimText] = Field(default_factory=list, max_length=3)
+    evidence_refs: list[ReasoningEvidenceRefText] = Field(
+        default_factory=list,
+        max_length=8,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ReasoningInferenceResult:
+    payload: dict[str, Any]
+    used_structured_output: bool

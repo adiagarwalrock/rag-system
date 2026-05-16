@@ -6,7 +6,7 @@ from different document versions or sources.
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,35 @@ NUMERIC_VALUE_PATTERN = re.compile(
     r"(?:\s*(?:%|percent|bps|basis points|million|billion|thousand|bn|mm|m|k|x))?(?!\w)",
     re.IGNORECASE,
 )
+
+COMMON_TOPIC_STOPWORDS = {
+    "the",
+    "this",
+    "that",
+    "with",
+    "from",
+    "into",
+    "during",
+    "were",
+    "was",
+    "and",
+    "for",
+    "is",
+    "are",
+    "by",
+    "of",
+    "to",
+    "in",
+}
+
+CONTEXT_STOPWORDS = {
+    *COMMON_TOPIC_STOPWORDS,
+    "data",
+    "year",
+    "years",
+    "period",
+    "ended",
+}
 
 
 @dataclass(slots=True, frozen=True)
@@ -54,7 +83,7 @@ def detect_conflicts(
     evidence_nodes: list | None = None,
     max_conflicts: int = 3,
     question: str | None = None,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Analyze retrieved nodes for high-confidence conflicting information.
 
@@ -157,64 +186,63 @@ def _find_numeric_conflicts(
     min_context_overlap: int,
     max_conflicts: int,
 ) -> list[dict[str, Any]]:
+    from itertools import combinations
+
     conflicts: list[dict[str, Any]] = []
-    for i in range(len(node_facts)):
-        for j in range(i + 1, len(node_facts)):
-            left = node_facts[i]
-            right = node_facts[j]
-            if _is_non_conflict_pair(left, right, allow_cross_group):
-                continue
-            if not _shares_topic(
-                left.node.node.text or "",
-                right.node.node.text or "",
-                min_shared=min_topic_overlap,
-            ):
-                continue
+    for left, right in combinations(node_facts, 2):
+        if _is_non_conflict_pair(left, right, allow_cross_group):
+            continue
+        if not _shares_topic(
+            left.node.node.text or "",
+            right.node.node.text or "",
+            min_shared=min_topic_overlap,
+        ):
+            continue
 
-            for left_fact in left.facts:
-                for right_fact in right.facts:
-                    if not _facts_conflict(
-                        left_fact, right_fact, min_context_overlap=min_context_overlap
-                    ):
-                        continue
+        for left_fact in left.facts:
+            for right_fact in right.facts:
+                if not _facts_conflict(
+                    left_fact, right_fact, min_context_overlap=min_context_overlap
+                ):
+                    continue
 
-                    signature = _conflict_signature(left, right, left_fact, right_fact)
-                    if signature in seen_signatures:
-                        continue
-                    seen_signatures.add(signature)
+                signature = _conflict_signature(left, right, left_fact, right_fact)
+                if signature in seen_signatures:
+                    continue
+                seen_signatures.add(signature)
 
-                    overlap_tokens = sorted(
-                        left_fact.context_tokens & right_fact.context_tokens
-                    )
-                    overlap_label = (
-                        " ".join(overlap_tokens[:4])
-                        if overlap_tokens
-                        else left_fact.context_label
-                    )
-                    conflicts.append(
-                        {
-                            "conflict_type": "numeric_disagreement",
-                            "summary": (
-                                f"Conflicting values for '{overlap_label}': "
-                                f"'{left_fact.value_raw}' in {left.document_name} ({left.version_label}) "
-                                f"vs '{right_fact.value_raw}' in {right.document_name} ({right.version_label})"
-                            ),
-                            "supporting_chunks": [
-                                {
-                                    "document_name": left.document_name,
-                                    "version_label": left.version_label,
-                                    "text_snippet": (left.node.node.text or "")[:220],
-                                },
-                                {
-                                    "document_name": right.document_name,
-                                    "version_label": right.version_label,
-                                    "text_snippet": (right.node.node.text or "")[:220],
-                                },
-                            ],
-                        }
-                    )
-                    if len(conflicts) >= max_conflicts:
-                        return conflicts
+                overlap_tokens = sorted(
+                    left_fact.context_tokens & right_fact.context_tokens
+                )
+                overlap_label = (
+                    " ".join(overlap_tokens[:4])
+                    if overlap_tokens
+                    else left_fact.context_label
+                )
+                conflicts.append(
+                    {
+                        "conflict_type": "numeric_disagreement",
+                        "summary": (
+                            f"Conflicting values for '{overlap_label}': "
+                            f"'{left_fact.value_raw}' in {left.document_name} ({left.version_label}) "
+                            f"vs '{right_fact.value_raw}' in {right.document_name} ({right.version_label})"
+                        ),
+                        "supporting_chunks": [
+                            {
+                                "document_name": left.document_name,
+                                "version_label": left.version_label,
+                                "text_snippet": (left.node.node.text or "")[:220],
+                            },
+                            {
+                                "document_name": right.document_name,
+                                "version_label": right.version_label,
+                                "text_snippet": (right.node.node.text or "")[:220],
+                            },
+                        ],
+                    }
+                )
+                if len(conflicts) >= max_conflicts:
+                    return conflicts
     return conflicts
 
 
@@ -345,43 +373,7 @@ def _context_tokens_around(text: str, start: int, end: int) -> list[str]:
     right = text[end : min(len(text), end + 70)]
     window = f"{left} {right}".strip()
     tokens = re.findall(r"[a-zA-Z]{3,}", window.lower())
-
-    stopwords = {
-        "the",
-        "this",
-        "that",
-        "with",
-        "from",
-        "into",
-        "during",
-        "were",
-        "was",
-        "and",
-        "for",
-        "is",
-        "are",
-        "by",
-        "of",
-        "to",
-        "in",
-        "data",
-        "year",
-        "years",
-        "period",
-        "ended",
-    }
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for token in tokens:
-        if token in stopwords:
-            continue
-        if token in seen:
-            continue
-        seen.add(token)
-        deduped.append(token)
-        if len(deduped) >= 7:
-            break
-    return deduped
+    return _dedupe_filtered_tokens(tokens, CONTEXT_STOPWORDS, max_items=7)
 
 
 def _parse_numeric_value(raw_value: str) -> tuple[float | None, str]:
@@ -423,27 +415,25 @@ def _shares_topic(text_a: str, text_b: str, min_shared: int = 2) -> bool:
 
 
 def _topic_tokens(text: str) -> set[str]:
-    stopwords = {
-        "the",
-        "this",
-        "that",
-        "with",
-        "from",
-        "into",
-        "during",
-        "were",
-        "was",
-        "and",
-        "for",
-        "is",
-        "are",
-        "by",
-        "of",
-        "to",
-        "in",
-    }
     tokens = re.findall(r"[a-zA-Z]{4,}", (text or "").lower())
-    return {token for token in tokens if token not in stopwords}
+    return set(_dedupe_filtered_tokens(tokens, COMMON_TOPIC_STOPWORDS))
+
+
+def _dedupe_filtered_tokens(
+    tokens: list[str],
+    stopwords: set[str],
+    max_items: int | None = None,
+) -> list[str]:
+    filtered: list[str] = []
+    seen: set[str] = set()
+    for token in tokens:
+        if token in stopwords or token in seen:
+            continue
+        seen.add(token)
+        filtered.append(token)
+        if max_items is not None and len(filtered) >= max_items:
+            break
+    return filtered
 
 
 def _node_key(node: Any) -> str:

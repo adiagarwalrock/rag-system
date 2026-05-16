@@ -20,3 +20,5 @@ data/raw*
 plan/*
 artifacts/*
 .codex
+logs/
+.coverage

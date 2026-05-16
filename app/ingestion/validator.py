@@ -3,9 +3,9 @@ File validation for uploads: type, size, and checksums.
 """
 
 import hashlib
-import os
+from pathlib import Path
 
-from fastapi import HTTPException, UploadFile
+from fastapi import HTTPException
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx"}
 MAX_FILE_SIZE_MB = 100
@@ -21,7 +21,7 @@ def validate_file_type(filename: str) -> str:
     Returns:
         Lower-cased validated extension string.
     """
-    _, ext = os.path.splitext(filename)
+    ext = Path(filename).suffix
     ext = ext.lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(

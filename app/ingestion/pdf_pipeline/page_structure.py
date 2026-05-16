@@ -6,12 +6,13 @@ from typing import Any
 
 from app.ingestion.pdf_pipeline.contracts import PageStructureStage
 from app.ingestion.pdf_pipeline.helpers import (
+    bbox_area,
     has_chart_signals,
     has_table_signals,
     normalize_whitespace,
     to_float_bbox,
 )
-from app.ingestion.pdf_pipeline.models import PageManifest, Region, ZONE_ORDER
+from app.ingestion.pdf_pipeline.models import ZONE_ORDER, PageManifest, Region
 
 
 class DefaultPageStructureStage(PageStructureStage):
@@ -158,7 +159,9 @@ def build_page_manifests_and_regions(
     return manifests, all_regions
 
 
-def _blocks_from_liteparse_items(text_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _blocks_from_liteparse_items(
+    text_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     if not text_items:
         return []
 
@@ -334,7 +337,7 @@ def _prepare_layout_predictions(
     prepared: list[dict[str, Any]] = []
     for prediction in raw_predictions:
         bbox = to_float_bbox(prediction.get("bbox"))
-        if _bbox_area(bbox) <= 1.0:
+        if bbox_area(bbox) <= 1.0:
             continue
         label = normalize_whitespace(str(prediction.get("label") or "")).lower()
         mapped_region_type, mapped_zone = _map_layout_label(label)
@@ -356,8 +359,8 @@ def _find_layout_hint(
     if not predictions:
         return None
 
-    bbox_area = _bbox_area(bbox)
-    if bbox_area <= 0:
+    area = bbox_area(bbox)
+    if area <= 0:
         return None
 
     best: dict[str, Any] | None = None
@@ -367,7 +370,7 @@ def _find_layout_hint(
         intersection = _bbox_intersection_area(bbox, pred_bbox)
         if intersection <= 0:
             continue
-        coverage = intersection / bbox_area
+        coverage = intersection / area
         score = max(_bbox_iou(bbox, pred_bbox), coverage)
         if score > best_score:
             best_score = score
@@ -401,7 +404,9 @@ def _map_layout_label(label: str) -> tuple[str | None, str | None]:
         return "title", "header_zone"
     if any(token in label for token in ("heading", "section", "subtitle")):
         return "section_heading", "main_body"
-    if any(token in label for token in ("left_column", "left column", "column_1", "col1")):
+    if any(
+        token in label for token in ("left_column", "left column", "column_1", "col1")
+    ):
         return "body_text", "left_column"
     if any(
         token in label for token in ("right_column", "right column", "column_2", "col2")
@@ -447,10 +452,6 @@ def _resolve_region_type(current: str, hinted: str | None) -> str:
     return current
 
 
-def _bbox_area(bbox: list[float]) -> float:
-    return max(0.0, bbox[2] - bbox[0]) * max(0.0, bbox[3] - bbox[1])
-
-
 def _bbox_intersection_area(left: list[float], right: list[float]) -> float:
     x0 = max(left[0], right[0])
     y0 = max(left[1], right[1])
@@ -465,7 +466,7 @@ def _bbox_iou(left: list[float], right: list[float]) -> float:
     intersection = _bbox_intersection_area(left, right)
     if intersection <= 0:
         return 0.0
-    union = _bbox_area(left) + _bbox_area(right) - intersection
+    union = bbox_area(left) + bbox_area(right) - intersection
     if union <= 0:
         return 0.0
     return intersection / union

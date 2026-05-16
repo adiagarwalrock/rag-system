@@ -3,11 +3,25 @@ Reranker: deterministic metadata-aware ranking for retrieved nodes.
 """
 
 import logging
+from collections import defaultdict
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-TABLE_QUERY_TERMS = ("table", "row", "rows", "column", "columns")
+TABLE_QUERY_TERMS = (
+    "table",
+    "row",
+    "rows",
+    "column",
+    "columns",
+    "matrix",
+    "tabular",
+    "breakdown",
+    "top ",
+    "top-",
+    "portfolio composition",
+    "market mix",
+)
 CHART_QUERY_TERMS = (
     "chart",
     "graph",
@@ -16,6 +30,11 @@ CHART_QUERY_TERMS = (
     "map",
     "diagram",
     "figure",
+    "legend",
+    "infographic",
+    "pie",
+    "bar",
+    "line",
 )
 IMAGE_QUERY_TERMS = ("image", "images", "screenshot", "screenshots", "visual")
 NUMERIC_QUERY_TERMS = (
@@ -27,6 +46,23 @@ NUMERIC_QUERY_TERMS = (
     "percent",
     "value",
     "values",
+)
+# Terms that indicate a question is asking for headline / overview statistics
+_FACTUAL_LOOKUP_TERMS = (
+    "quick facts",
+    "fast facts",
+    "headline stats",
+    "at a glance",
+    "key stats",
+    "key facts",
+    "what are",
+    "how many",
+    "what is",
+    "what was",
+    "what does",
+    "how much",
+    "overview",
+    "summary",
 )
 
 
@@ -69,6 +105,8 @@ def rerank_nodes(
     scored.sort(key=lambda x: x[0], reverse=True)
     result = [node for _, node in scored[:top_k]]
 
+    _apply_version_consistency_adjustment(result, query or "")
+
     logger.info("Reranked %d nodes, returning top %d", len(source_nodes), len(result))
     return result
 
@@ -80,7 +118,7 @@ def _temporal_adjustment(
 
     is_current = _safe_bool(metadata.get("is_current"), None)
     if is_current is True:
-        adjustment += 0.1
+        adjustment += 0.1 if prefer_latest else 0.01
     elif is_current is False and prefer_latest:
         adjustment -= 0.05
 
@@ -137,6 +175,7 @@ def _structural_adjustment(metadata: dict, query: str | None) -> float:
     wants_chart = any(term in normalized_query for term in CHART_QUERY_TERMS)
     wants_image = any(term in normalized_query for term in IMAGE_QUERY_TERMS)
     wants_numeric = any(term in normalized_query for term in NUMERIC_QUERY_TERMS)
+    wants_structured = wants_table or wants_chart or "legend" in normalized_query
 
     is_table_chunk = chunk_type in {
         "full_table",
@@ -167,8 +206,19 @@ def _structural_adjustment(metadata: dict, query: str | None) -> float:
         adjustment += 0.06
     if wants_numeric and _safe_bool(metadata.get("contains_numeric_data"), False):
         adjustment += 0.03
+    if wants_structured and (is_table_chunk or is_chart_chunk):
+        adjustment += 0.06
 
-    return min(adjustment, 0.2)
+    # Boost overview/summary slides for factual lookup queries
+    slide_purpose = str(metadata.get("slide_purpose") or "")
+    if slide_purpose == "overview_stats":
+        is_factual_lookup = any(
+            term in normalized_query for term in _FACTUAL_LOOKUP_TERMS
+        )
+        if is_factual_lookup:
+            adjustment += 0.06
+
+    return min(adjustment, 0.26)
 
 
 def _parse_date(val) -> datetime | None:
@@ -213,3 +263,58 @@ def _safe_bool(value, default: bool) -> bool:
         if lowered in {"false", "0", "no"}:
             return False
     return default
+
+
+_COMPARISON_TERMS = (
+    "compare",
+    "comparison",
+    "difference",
+    "versus",
+    "vs",
+    "between",
+    "changed",
+    "changes",
+)
+_VERSION_PENALTY = 0.03
+
+
+def _apply_version_consistency_adjustment(
+    nodes: list,
+    query: str,
+) -> None:
+    """Penalize non-dominant versions of the same document for non-comparison queries."""
+    if not nodes or not query:
+        return
+    normalized = query.lower()
+    if any(term in normalized for term in _COMPARISON_TERMS):
+        return
+
+    doc_version_scores: dict[str, dict[str, float]] = defaultdict(
+        lambda: defaultdict(float)
+    )
+    for node in nodes:
+        metadata = node.node.metadata or {}
+        doc_id = metadata.get("document_id") or metadata.get("document_name") or ""
+        version = metadata.get("version_label") or ""
+        if doc_id and version:
+            doc_version_scores[doc_id][version] += _safe_float(node.score, 0.0) or 0.0
+
+    dominant_version: dict[str, str] = {}
+    for doc_id, version_scores in doc_version_scores.items():
+        if len(version_scores) < 2:
+            continue
+        dominant_version[doc_id] = max(version_scores, key=version_scores.get)
+
+    if not dominant_version:
+        return
+
+    for node in nodes:
+        metadata = node.node.metadata or {}
+        doc_id = metadata.get("document_id") or metadata.get("document_name") or ""
+        version = metadata.get("version_label") or ""
+        if (
+            doc_id in dominant_version
+            and version
+            and version != dominant_version[doc_id]
+        ):
+            node.score = (_safe_float(node.score, 0.0) or 0.0) - _VERSION_PENALTY

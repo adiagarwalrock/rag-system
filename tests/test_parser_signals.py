@@ -70,9 +70,7 @@ def test_parse_document_pdf_layout_path_emits_artifact_chunks(tmp_path):
     assert units
     chunk_types = {doc.metadata.get("chunk_type") for doc in docs}
     assert any(kind in chunk_types for kind in {"full_table", "table_segment"})
-    assert any(
-        kind in chunk_types for kind in {"figure_artifact", "visual_proxy_text"}
-    )
+    assert any(kind in chunk_types for kind in {"figure_artifact", "visual_proxy_text"})
     assert "chart_data_points" in chunk_types
     assert "page_card" in chunk_types
 
@@ -81,7 +79,7 @@ def test_parse_document_pdf_layout_path_emits_artifact_chunks(tmp_path):
     assert (Path(artifact_bundle_path) / "chunk_artifacts.json").exists()
 
 
-def test_parse_document_pdf_layout_strict_mode_raises(monkeypatch, tmp_path):
+def test_parse_document_pdf_layout_strict_mode_raises(monkeypatch, tmp_path, caplog):
     file_path = tmp_path / "strict-financial.pdf"
     _create_sample_financial_pdf(file_path)
 
@@ -94,17 +92,28 @@ def test_parse_document_pdf_layout_strict_mode_raises(monkeypatch, tmp_path):
     def _raise_layout_error(*_args, **_kwargs):
         raise RuntimeError("layout parsing failed")
 
-    monkeypatch.setattr("app.ingestion.parser.parse_pdf_layout_aware", _raise_layout_error)
+    monkeypatch.setattr(
+        "app.ingestion.parser.parse_pdf_layout_aware", _raise_layout_error
+    )
     monkeypatch.setattr("app.ingestion.parser.settings.ENABLE_LAYOUT_AWARE_PDF", True)
     monkeypatch.setattr(
         "app.ingestion.parser.settings.STRICT_LAYOUT_AWARE_PDF_FAILURE", True
     )
+    caplog.set_level("ERROR", logger="app.ingestion.parser")
 
     with pytest.raises(RuntimeError, match="layout parsing failed"):
         parse_document(str(file_path), metadata)
 
+    parser_errors = [
+        record
+        for record in caplog.records
+        if record.name == "app.ingestion.parser" and record.levelname == "ERROR"
+    ]
+    assert parser_errors
+    assert "strict mode enabled" in parser_errors[0].message
 
-def test_parse_document_pdf_layout_non_strict_falls_back(monkeypatch, tmp_path):
+
+def test_parse_document_pdf_layout_non_strict_falls_back(monkeypatch, tmp_path, caplog):
     file_path = tmp_path / "nonstrict-financial.pdf"
     _create_sample_financial_pdf(file_path)
 
@@ -117,16 +126,30 @@ def test_parse_document_pdf_layout_non_strict_falls_back(monkeypatch, tmp_path):
     def _raise_layout_error(*_args, **_kwargs):
         raise RuntimeError("layout parsing failed")
 
-    monkeypatch.setattr("app.ingestion.parser.parse_pdf_layout_aware", _raise_layout_error)
+    monkeypatch.setattr(
+        "app.ingestion.parser.parse_pdf_layout_aware", _raise_layout_error
+    )
     monkeypatch.setattr("app.ingestion.parser.settings.ENABLE_LAYOUT_AWARE_PDF", True)
     monkeypatch.setattr(
         "app.ingestion.parser.settings.STRICT_LAYOUT_AWARE_PDF_FAILURE", False
     )
+    caplog.set_level("WARNING", logger="app.ingestion.parser")
 
     docs, units = parse_document(str(file_path), metadata)
     assert docs
     assert units
     assert docs[0].metadata["parser_version"] == "1.0.0"
+
+    parser_records = [
+        record for record in caplog.records if record.name == "app.ingestion.parser"
+    ]
+    parser_warnings = [
+        record for record in parser_records if record.levelname == "WARNING"
+    ]
+    parser_errors = [record for record in parser_records if record.levelname == "ERROR"]
+    assert parser_warnings
+    assert "Falling back to legacy parser" in parser_warnings[0].message
+    assert not parser_errors
 
 
 def _create_sample_financial_pdf(path: Path) -> None:

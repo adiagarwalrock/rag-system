@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 import re
 from pathlib import Path
@@ -222,10 +220,13 @@ class PDFPipelineHelper:
         return [float(x0), float(y0), float(x1), float(y1)]
 
     @staticmethod
+    def bbox_area(bbox: list[float]) -> float:
+        return max(0.0, bbox[2] - bbox[0]) * max(0.0, bbox[3] - bbox[1])
+
+    @staticmethod
     def header_signature(headers: list[str]) -> str:
         return "|".join(
-            PDFPipelineHelper.normalize_whitespace(header).lower()
-            for header in headers
+            PDFPipelineHelper.normalize_whitespace(header).lower() for header in headers
         )
 
 
@@ -283,6 +284,10 @@ def to_float_bbox(bbox: Any) -> list[float]:
 
 def union_bbox(bboxes: list[list[float]]) -> list[float] | None:
     return PDFPipelineHelper.union_bbox(bboxes)
+
+
+def bbox_area(bbox: list[float]) -> float:
+    return PDFPipelineHelper.bbox_area(bbox)
 
 
 def header_signature(headers: list[str]) -> str:

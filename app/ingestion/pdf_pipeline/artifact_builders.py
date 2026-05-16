@@ -1,52 +1,151 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import json
 import logging
+import mimetypes
 import re
+import time
 import uuid
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, TypeVar
 
-from PIL import Image, ImageStat
-
 import pymupdf as fitz
 from llama_index.core import Settings as LlamaSettings
+from llama_index.core.base.llms.types import (
+    ChatMessage,
+    ImageBlock,
+    MessageRole,
+    TextBlock,
+)
+from PIL import Image, ImageStat
+from pydantic import BaseModel
 
+from app.core.ai_provider import invoke_llm_chat
 from app.core.config import settings
-from app.indexing.vector_store import is_placeholder_mode
+from app.core.prompts import (
+    _GENERIC_STRUCTURED_PROMPT,
+    CHART_REASONING_PROMPT,
+    PAGE_REASONING_PROMPT,
+    PAGE_SCREENSHOT_PROMPT,
+    REASONING_PROMPT_VERSION,
+    TABLE_REASONING_PROMPT,
+    build_artifact_enrichment_prompt,
+    build_chart_caption_prompt,
+)
+from app.core.token_budget import truncate_text_by_tokens
+from app.indexing.vector_store import vector_store_manager
 from app.ingestion.pdf_pipeline.contracts import ArtifactResult, ArtifactStage
 from app.ingestion.pdf_pipeline.helpers import (
+    bbox_area,
     extract_units,
     header_signature,
     normalize_table_rows,
     normalize_whitespace,
+    numeric_density,
     parse_table_like_text,
     table_rows_to_html,
     to_float_bbox,
     union_bbox,
 )
-from app.ingestion.pdf_pipeline.models import (
+from app.ingestion.pdf_pipeline.models import (  # Artifacts; Response Models
+    ArtifactEnrichmentResponse,
+    ChartCaptionResponse,
     FigureArtifact,
     PageManifest,
+    PageScreenshotResponse,
     ReasoningArtifact,
+    ReasoningInferenceResult,
+    ReasoningStructuredResponse,
     Region,
     TableArtifact,
 )
 
 logger = logging.getLogger(__name__)
 
-_MAX_PARALLEL_LLM_REQUESTS = 4
+_REASONING_RETRY_TOKEN_CAP = 1200
+_REASONING_RETRY_TOKEN_INCREMENT = 350
+
 _Job = TypeVar("_Job")
 _Result = TypeVar("_Result")
+_Model = TypeVar("_Model", bound=BaseModel)
+
+
+def _llm_available_for_pipeline() -> bool:
+    try:
+        vector_store_manager.configure_llama_settings()
+        return True
+    except Exception as exc:
+        logger.warning("Skipping LLM artifact step: %s", exc)
+        return False
+
+
+@dataclass(frozen=True, slots=True)
+class ParallelExecutionConfig:
+    max_parallel_requests: int = 4
+
+
+class ParallelExecutor:
+    def __init__(self, config: ParallelExecutionConfig | None = None) -> None:
+        self._config = config or ParallelExecutionConfig()
+
+    def worker_count(self, job_count: int, max_workers: int | None = None) -> int:
+        limit = max_workers or self._config.max_parallel_requests
+        return max(1, min(job_count, limit))
+
+    def run(
+        self,
+        jobs: list[_Job],
+        runner: Callable[[_Job], _Result],
+        *,
+        max_workers: int | None = None,
+        timeout_seconds: float | None = None,
+    ) -> list[tuple[_Job, _Result | None, Exception | None]]:
+        if not jobs:
+            return []
+
+        workers = self.worker_count(len(jobs), max_workers=max_workers)
+
+        def _wrapped(job: _Job) -> tuple[_Job, _Result | None, Exception | None]:
+            try:
+                return (job, runner(job), None)
+            except Exception as exc:
+                return (job, None, exc)
+
+        if workers == 1 and timeout_seconds is None:
+            return [_wrapped(job) for job in jobs]
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(runner, job) for job in jobs]
+            results: list[tuple[_Job, _Result | None, Exception | None]] = []
+            for job, future in zip(jobs, futures):
+                try:
+                    result = future.result(timeout=timeout_seconds)
+                    results.append((job, result, None))
+                except FuturesTimeoutError:
+                    future.cancel()
+                    timeout_error = TimeoutError(
+                        f"job exceeded timeout ({timeout_seconds}s)"
+                    )
+                    results.append((job, None, timeout_error))
+                except Exception as exc:
+                    results.append((job, None, exc))
+            return results
+
+
+_PARALLEL_EXECUTOR = ParallelExecutor()
 
 
 def _parallel_worker_count(
     job_count: int,
     *,
-    max_workers: int = _MAX_PARALLEL_LLM_REQUESTS,
+    max_workers: int | None = None,
 ) -> int:
-    return max(1, min(job_count, max_workers))
+    return _PARALLEL_EXECUTOR.worker_count(job_count, max_workers=max_workers)
 
 
 def _run_parallel_jobs(
@@ -54,26 +153,157 @@ def _run_parallel_jobs(
     runner: Callable[[_Job], _Result],
     *,
     max_workers: int | None = None,
+    timeout_seconds: float | None = None,
 ) -> list[tuple[_Job, _Result | None, Exception | None]]:
-    if not jobs:
-        return []
-
-    workers = _parallel_worker_count(
-        len(jobs),
-        max_workers=max_workers or _MAX_PARALLEL_LLM_REQUESTS,
+    return _PARALLEL_EXECUTOR.run(
+        jobs,
+        runner,
+        max_workers=max_workers,
+        timeout_seconds=timeout_seconds,
     )
 
-    def _wrapped(job: _Job) -> tuple[_Job, _Result | None, Exception | None]:
+
+def _is_transient_provider_error(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    error_text = str(exc).lower()
+    return status_code in {429, 500, 502, 503, 504} or any(
+        marker in error_text
+        for marker in (
+            "deadline expired",
+            "timed out",
+            "timeout",
+            "unavailable",
+            "temporarily unavailable",
+            "try again",
+        )
+    )
+
+
+def _is_incomplete_structured_output_error(exc: Exception) -> bool:
+    markers = (
+        "invalid json: eof while parsing",
+        "json_invalid",
+        "failed to produce a structured response",
+    )
+    current: Exception | None = exc
+    while current is not None:
+        message = str(current).lower()
+        if any(marker in message for marker in markers):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _reasoning_retry_output_tokens(max_output_tokens: int | None) -> int | None:
+    if max_output_tokens is None or max_output_tokens <= 0:
+        return None
+    scaled = int(max_output_tokens * 1.6)
+    expanded = max(max_output_tokens + _REASONING_RETRY_TOKEN_INCREMENT, scaled)
+    return min(_REASONING_RETRY_TOKEN_CAP, max(max_output_tokens, expanded))
+
+
+def _coerce_structured_output(output: Any, output_cls: type[_Model]) -> _Model | None:
+    if isinstance(output, output_cls):
+        return output
+
+    raw = getattr(output, "raw", None)
+    if isinstance(raw, output_cls):
+        return raw
+
+    if isinstance(raw, BaseModel):
         try:
-            return (job, runner(job), None)
-        except Exception as exc:
-            return (job, None, exc)
+            return output_cls.model_validate(raw.model_dump())
+        except Exception:
+            pass
 
-    if workers == 1:
-        return [_wrapped(job) for job in jobs]
+    if isinstance(output, BaseModel):
+        try:
+            return output_cls.model_validate(output.model_dump())
+        except Exception:
+            pass
 
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        return list(executor.map(_wrapped, jobs))
+    if isinstance(output, dict):
+        try:
+            return output_cls.model_validate(output)
+        except Exception:
+            pass
+
+    message = getattr(output, "message", None)
+    content = getattr(message, "content", None) if message is not None else None
+    if isinstance(content, str) and content.strip():
+        try:
+            return output_cls.model_validate_json(content)
+        except Exception:
+            pass
+
+    if isinstance(output, str) and output.strip():
+        try:
+            return output_cls.model_validate_json(output)
+        except Exception:
+            pass
+
+    return None
+
+
+def _run_structured_text_inference(
+    prompt: str, output_cls: type[_Model]
+) -> _Model | None:
+    try:
+        structured = LlamaSettings.llm.structured_predict(
+            output_cls,
+            _GENERIC_STRUCTURED_PROMPT,
+            user_prompt=prompt,
+        )
+        return _coerce_structured_output(structured, output_cls)
+    except Exception:
+        logger.exception("Structured text inference failed for %s", output_cls.__name__)
+        return None
+
+
+def _run_structured_multimodal_inference(
+    *,
+    prompt: str,
+    image_path: str,
+    output_cls: type[_Model],
+) -> _Model | None:
+    if (
+        not image_path
+        or settings.is_openai_api_key_placeholder
+        or not Path(image_path).exists()
+    ):
+        return None
+
+    try:
+        mime_type = mimetypes.guess_type(image_path)[0] or "image/png"
+        structured_llm = LlamaSettings.llm.as_structured_llm(output_cls)
+        response = structured_llm.chat(
+            [
+                ChatMessage(
+                    role=MessageRole.USER,
+                    blocks=[
+                        TextBlock(text=prompt),
+                        ImageBlock(path=image_path, image_mimetype=mime_type),
+                    ],
+                )
+            ]
+        )
+        parsed = _coerce_structured_output(response, output_cls)
+        if parsed is not None:
+            return parsed
+    except Exception as exc:
+        if _is_transient_provider_error(exc):
+            logger.warning(
+                "Structured multimodal inference unavailable for %s (status=%s): %s",
+                image_path,
+                getattr(exc, "status_code", None),
+                exc,
+            )
+        else:
+            logger.exception(
+                "Structured multimodal inference failed for %s", image_path
+            )
+
+    return None
 
 
 class DefaultArtifactStage(ArtifactStage):
@@ -86,7 +316,7 @@ class DefaultArtifactStage(ArtifactStage):
         regions: list[Region],
         figure_dir: Path,
     ) -> ArtifactResult:
-        table_fragments = build_table_artifacts(pymupdf_pages, regions)
+        table_fragments = build_table_artifacts(pymupdf_pages, regions, page_manifests)
         merged_tables = merge_table_artifacts(table_fragments)
         figures = build_figure_artifacts(
             pdf_doc=pdf_doc,
@@ -114,65 +344,204 @@ class DefaultArtifactStage(ArtifactStage):
 def build_table_artifacts(
     pymupdf_pages: list[dict[str, Any]],
     regions: list[Region],
+    page_manifests: list[PageManifest] | None = None,
 ) -> list[TableArtifact]:
     artifacts: list[TableArtifact] = []
     by_page = _regions_by_page(regions)
+    screenshot_by_page: dict[int, str] = {}
+    if page_manifests:
+        for m in page_manifests:
+            if m.screenshot_path:
+                screenshot_by_page[m.page_num] = m.screenshot_path
 
     for page in pymupdf_pages:
         page_num = int(page.get("page_num", 1))
         page_regions = by_page.get(page_num, [])
-        candidates = list(page.get("table_candidates") or [])
-
-        if not candidates:
-            table_regions = [
-                region
-                for region in page_regions
-                if region.region_type == "table_region"
-            ]
-            if table_regions:
-                merged_rows = parse_table_like_text(
-                    "\n".join(region.text for region in table_regions)
-                )
-                if len(merged_rows) >= 2:
-                    candidates.append(
-                        {
-                            "candidate_id": f"text_regions_page_{page_num}",
-                            "bbox": _union_region_bbox(table_regions),
-                            "rows": merged_rows,
-                        }
-                    )
-
+        candidates = _table_candidates_for_page(
+            page_num=page_num,
+            page=page,
+            page_regions=page_regions,
+            screenshot_path=screenshot_by_page.get(page_num, ""),
+        )
         for candidate in candidates:
-            rows = _normalize_rows(candidate.get("rows") or [])
-            if len(rows) < 2:
-                continue
-
-            bbox = to_float_bbox(candidate.get("bbox"))
-            caption = _nearest_caption(page_regions, bbox)
-            section_path = _section_for_bbox(page_regions, bbox)
-            footnotes = _footnotes_for_bbox(page_regions, bbox)
-            normalized_table_text = normalize_table_rows(rows)
-            header = [normalize_whitespace(cell) for cell in rows[0]] if rows else []
-
-            artifacts.append(
-                TableArtifact(
-                    table_id=str(uuid.uuid4()),
-                    page_nums=[page_num],
-                    bbox_list=[bbox],
-                    caption_text=caption,
-                    section_path=section_path,
-                    html_table=table_rows_to_html(rows),
-                    json_table=rows,
-                    normalized_table_text=normalized_table_text,
-                    header_rows=header,
-                    units=extract_units(f"{caption} {normalized_table_text}"),
-                    footnotes=footnotes,
-                    continuation_flag=False,
-                    confidence=0.86 if caption else 0.74,
-                )
+            artifact = _table_artifact_from_candidate(
+                page_num=page_num,
+                page_regions=page_regions,
+                candidate=candidate,
             )
+            if artifact is not None:
+                artifacts.append(artifact)
 
     return artifacts
+
+
+def _table_candidates_for_page(
+    *,
+    page_num: int,
+    page: dict[str, Any],
+    page_regions: list[Region],
+    screenshot_path: str = "",
+) -> list[dict[str, Any]]:
+    candidates = list(page.get("table_candidates") or [])
+    if candidates:
+        return candidates
+
+    table_regions = [
+        region for region in page_regions if region.region_type == "table_region"
+    ]
+    if table_regions:
+        merged_rows = parse_table_like_text(
+            "\n".join(region.text for region in table_regions)
+        )
+        if len(merged_rows) >= 2:
+            candidates.append(
+                {
+                    "candidate_id": f"text_regions_page_{page_num}",
+                    "bbox": _union_region_bbox(table_regions),
+                    "rows": merged_rows,
+                }
+            )
+            return candidates
+
+    # Tier 3: Chonkie TableChef fallback for tables missed by PyMuPDF + text regions
+    body_text = "\n".join(
+        region.text
+        for region in page_regions
+        if region.region_type in {"body_text", "table_region"}
+    )
+    if body_text.strip():
+        candidates.extend(_tablechef_extract(body_text, page_num))
+
+    # Tier 4: img2table fallback — extracts image-rendered tables from page screenshot
+    if not candidates and screenshot_path:
+        candidates.extend(_img2table_extract(screenshot_path, page_num))
+
+    return candidates
+
+
+def _tablechef_extract(
+    page_text: str,
+    page_num: int,
+) -> list[dict[str, Any]]:
+    """Use Chonkie TableChef to detect tables in page body text."""
+    try:
+        from chonkie import TableChef
+    except ImportError:
+        return []
+
+    try:
+        chef = TableChef()
+        doc = chef.process(page_text)
+        if not hasattr(doc, "tables") or not doc.tables:
+            return []
+
+        candidates: list[dict[str, Any]] = []
+        for idx, table in enumerate(doc.tables):
+            content = getattr(table, "content", "") or ""
+            rows = parse_table_like_text(content)
+            if len(rows) >= 2:
+                candidates.append(
+                    {
+                        "candidate_id": f"tablechef_page_{page_num}_{idx}",
+                        "bbox": [0.0, 0.0, 0.0, 0.0],
+                        "rows": rows,
+                    }
+                )
+        return candidates
+    except Exception:
+        logger.debug("TableChef fallback failed for page %s", page_num)
+        return []
+
+
+def _img2table_extract(
+    screenshot_path: str,
+    page_num: int,
+) -> list[dict[str, Any]]:
+    """Extract image-rendered tables from a page screenshot using img2table + EasyOCR.
+
+    Fires only when PyMuPDF, text-region, and TableChef tiers all returned zero candidates.
+    img2table uses OpenCV line detection so it can find tables not present in extracted text.
+    """
+    if not screenshot_path or not Path(screenshot_path).exists():
+        return []
+    try:
+        from img2table.document import Image as Img2TableImage  # type: ignore[import]
+        from img2table.ocr import EasyOCR  # type: ignore[import]
+    except ImportError:
+        logger.debug("img2table not installed; skipping Tier 4 for page %s", page_num)
+        return []
+
+    try:
+        doc = Img2TableImage(src=screenshot_path)
+        ocr = EasyOCR(lang=["en"])
+        extracted = doc.extract_tables(ocr=ocr, borderless_tables=True, min_confidence=50)
+        candidates: list[dict[str, Any]] = []
+        for idx, table_obj in enumerate(extracted or []):
+            df = getattr(table_obj, "df", None)
+            if df is None or df.empty:
+                continue
+            # Convert DataFrame to list[list[str]] row format
+            rows: list[list[str]] = [
+                [str(cell) if cell is not None else "" for cell in row]
+                for row in df.values.tolist()
+            ]
+            if df.columns is not None and not all(
+                str(c).startswith("Unnamed") for c in df.columns
+            ):
+                header = [str(c) for c in df.columns]
+                rows = [header] + rows
+            if len(rows) >= 2:
+                candidates.append(
+                    {
+                        "candidate_id": f"img2table_page_{page_num}_{idx}",
+                        "bbox": [0.0, 0.0, 0.0, 0.0],
+                        "rows": rows,
+                    }
+                )
+        if candidates:
+            logger.info(
+                "img2table extracted %d table(s) from screenshot on page %s",
+                len(candidates),
+                page_num,
+            )
+        return candidates
+    except Exception:
+        logger.debug("img2table fallback failed for page %s", page_num, exc_info=True)
+        return []
+
+
+def _table_artifact_from_candidate(
+    *,
+    page_num: int,
+    page_regions: list[Region],
+    candidate: dict[str, Any],
+) -> TableArtifact | None:
+    rows = _normalize_rows(candidate.get("rows") or [])
+    if len(rows) < 2:
+        return None
+
+    bbox = to_float_bbox(candidate.get("bbox"))
+    caption = _nearest_caption(page_regions, bbox)
+    section_path = _section_for_bbox(page_regions, bbox)
+    footnotes = _footnotes_for_bbox(page_regions, bbox)
+    normalized_table_text = normalize_table_rows(rows)
+    header = [normalize_whitespace(cell) for cell in rows[0]]
+
+    return TableArtifact(
+        table_id=str(uuid.uuid4()),
+        page_nums=[page_num],
+        bbox_list=[bbox],
+        caption_text=caption,
+        section_path=section_path,
+        html_table=table_rows_to_html(rows),
+        json_table=rows,
+        normalized_table_text=normalized_table_text,
+        header_rows=header,
+        units=extract_units(f"{caption} {normalized_table_text}"),
+        footnotes=footnotes,
+        continuation_flag=False,
+        confidence=0.86 if caption else 0.74,
+    )
 
 
 def merge_table_artifacts(tables: list[TableArtifact]) -> list[TableArtifact]:
@@ -192,25 +561,35 @@ def merge_table_artifacts(tables: list[TableArtifact]) -> list[TableArtifact]:
             merged.append(table)
             continue
 
-        prev.page_nums = sorted(set(prev.page_nums + table.page_nums))
-        prev.bbox_list.extend(table.bbox_list)
-
-        prev_rows = prev.json_table or []
-        next_rows = table.json_table or []
-        if prev_rows and next_rows and _same_headers(prev_rows[0], next_rows[0]):
-            prev_rows.extend(next_rows[1:])
-        else:
-            prev_rows.extend(next_rows)
-        prev.json_table = prev_rows
-
-        prev.normalized_table_text = normalize_table_rows(prev_rows)
-        prev.html_table = table_rows_to_html(prev_rows)
-        prev.units = sorted(set(prev.units + table.units))
-        prev.footnotes = _dedupe_strings(prev.footnotes + table.footnotes)
-        prev.continuation_flag = True
-        prev.confidence = max(prev.confidence, table.confidence)
+        _merge_table_into_previous(previous=prev, current=table)
 
     return merged
+
+
+def _merge_table_into_previous(
+    *, previous: TableArtifact, current: TableArtifact
+) -> None:
+    previous.page_nums = sorted(set(previous.page_nums + current.page_nums))
+    previous.bbox_list.extend(current.bbox_list)
+
+    previous_rows = previous.json_table or []
+    current_rows = current.json_table or []
+    if (
+        previous_rows
+        and current_rows
+        and _same_headers(previous_rows[0], current_rows[0])
+    ):
+        previous_rows.extend(current_rows[1:])
+    else:
+        previous_rows.extend(current_rows)
+    previous.json_table = previous_rows
+
+    previous.normalized_table_text = normalize_table_rows(previous_rows)
+    previous.html_table = table_rows_to_html(previous_rows)
+    previous.units = sorted(set(previous.units + current.units))
+    previous.footnotes = _dedupe_strings(previous.footnotes + current.footnotes)
+    previous.continuation_flag = True
+    previous.confidence = max(previous.confidence, current.confidence)
 
 
 def build_figure_artifacts(
@@ -221,6 +600,7 @@ def build_figure_artifacts(
     figure_dir: Path,
 ) -> list[FigureArtifact]:
     artifacts: list[FigureArtifact] = []
+    seen_image_hashes: set[str] = set()
     by_page = _regions_by_page(regions)
     manifests = {manifest.page_num: manifest for manifest in page_manifests}
 
@@ -276,6 +656,16 @@ def build_figure_artifacts(
                         continue
 
                     crop_path = ""
+                else:
+                    image_hash = _hash_file(crop_path)
+                    if image_hash and image_hash in seen_image_hashes:
+                        try:
+                            Path(crop_path).unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                        continue
+                    if image_hash:
+                        seen_image_hashes.add(image_hash)
 
             artifacts.append(
                 FigureArtifact(
@@ -327,25 +717,20 @@ def analyze_chart_artifacts(
             figure.llm_caption_status = "skipped"
             _apply_heuristic_chart_fields(figure)
         return
-
-    if is_placeholder_mode():
+    if not _llm_available_for_pipeline():
         for figure in chart_candidates:
             figure.llm_caption_status = "skipped"
-            figure.llm_caption_error = "llm_unavailable_placeholder_mode"
+            figure.llm_caption_error = "openai_api_key_unavailable"
             _apply_heuristic_chart_fields(figure)
         return
 
     max_pages = max(1, int(settings.LLM_CAPTION_MAX_PAGES))
     max_artifacts = max(1, int(settings.LLM_CAPTION_MAX_ARTIFACTS_PER_PAGE))
-    eligible_pages = [
-        manifest.page_num
-        for manifest in sorted(
-            page_manifests,
-            key=lambda item: item.complexity_score,
-            reverse=True,
-        )
-        if manifest.page_class in {"visual_heavy_page", "hard_page", "table_heavy_page"}
-    ][:max_pages]
+    eligible_pages = _select_balanced_chart_pages(
+        page_manifests=page_manifests,
+        chart_candidates=chart_candidates,
+        max_pages=max_pages,
+    )
     eligible_page_set = set(eligible_pages)
 
     figures_by_page: dict[int, list[FigureArtifact]] = {}
@@ -363,44 +748,57 @@ def analyze_chart_artifacts(
 
         for figure in page_figures[:max_artifacts]:
             manifest = manifest_by_page.get(figure.page_num)
-            prompt = _build_chart_caption_prompt(figure, manifest)
+            prompt = build_chart_caption_prompt(
+                page_num=figure.page_num,
+                page_class=manifest.page_class if manifest else "unknown",
+                caption_text=figure.caption_text,
+                nearby_text=figure.nearby_text,
+                current_proxy=_chart_summary_text(figure),
+            )
             llm_jobs.append((figure, prompt))
 
         for figure in page_figures[max_artifacts:]:
             figure.llm_caption_status = "skipped"
             _apply_heuristic_chart_fields(figure)
 
-    def _run_chart_job(job: tuple[FigureArtifact, str]) -> str:
+    def _run_chart_job(job: tuple[FigureArtifact, str]) -> ChartCaptionResponse | None:
         figure, prompt = job
         return _run_chart_inference(prompt, figure.crop_path)
 
     chart_results = _run_parallel_jobs(
         llm_jobs,
         _run_chart_job,
-        max_workers=_parallel_worker_count(len(llm_jobs)),
+        max_workers=_parallel_worker_count(len(llm_jobs), max_workers=2),
+        timeout_seconds=float(settings.LLM_CAPTION_TIMEOUT_SECONDS),
     )
 
-    for job, response_text, error in chart_results:
+    for job, chart_payload, error in chart_results:
         figure, _prompt = job
         if error is not None:
-            logger.error(
-                "Chart captioning failed for figure %s",
-                figure.figure_id,
-                exc_info=error,
-            )
-            figure.llm_caption_status = "failed"
+            if isinstance(error, TimeoutError):
+                logger.warning(
+                    "Chart captioning timed out for figure %s; applying heuristic fallback",
+                    figure.figure_id,
+                )
+                figure.llm_caption_status = "timeout_fallback"
+            else:
+                logger.error(
+                    "Chart captioning failed for figure %s",
+                    figure.figure_id,
+                    exc_info=error,
+                )
+                figure.llm_caption_status = "failed"
             figure.llm_caption_error = str(error)[:400]
             _apply_heuristic_chart_fields(figure)
             continue
 
-        parsed = _parse_chart_json_response(response_text or "")
-        if not parsed:
+        if chart_payload is None:
             figure.llm_caption_status = "failed"
-            figure.llm_caption_error = "invalid_json_response"
+            figure.llm_caption_error = "invalid_structured_response"
             _apply_heuristic_chart_fields(figure)
             continue
 
-        _apply_llm_chart_fields(figure, parsed)
+        _apply_llm_chart_fields(figure, chart_payload.model_dump())
         if not figure.approx_datapoints and not figure.key_chart_facts:
             _apply_heuristic_chart_fields(figure)
         figure.llm_caption_status = "success"
@@ -427,6 +825,85 @@ def analyze_chart_artifacts(
         )
 
 
+def _select_balanced_chart_pages(
+    *,
+    page_manifests: list[PageManifest],
+    chart_candidates: list[FigureArtifact],
+    max_pages: int,
+) -> list[int]:
+    manifest_by_page = {manifest.page_num: manifest for manifest in page_manifests}
+    chart_count_by_page: dict[int, int] = defaultdict(int)
+    missing_numeric_by_page: dict[int, int] = defaultdict(int)
+
+    for figure in chart_candidates:
+        chart_count_by_page[figure.page_num] += 1
+        if not figure.approx_datapoints and not figure.key_chart_facts:
+            missing_numeric_by_page[figure.page_num] += 1
+
+    ranked_pages: list[tuple[float, int]] = []
+    for page_num, chart_count in chart_count_by_page.items():
+        manifest = manifest_by_page.get(page_num)
+        if manifest is None:
+            continue
+
+        class_weight = (
+            2.0
+            if manifest.page_class
+            in {"visual_heavy_page", "hard_page", "table_heavy_page"}
+            else 1.0
+        )
+        degraded_weight = 1.0 if manifest.page_parse_degraded else 0.0
+        missing_numeric_weight = missing_numeric_by_page.get(page_num, 0) * 1.5
+        priority = (
+            (chart_count * 3.0)
+            + missing_numeric_weight
+            + class_weight
+            + degraded_weight
+            + float(manifest.complexity_score)
+        )
+        ranked_pages.append((priority, page_num))
+
+    ranked_pages.sort(reverse=True)
+    return [page_num for _, page_num in ranked_pages[:max_pages]]
+
+
+def _select_balanced_enrichment_pages(
+    *,
+    page_manifests: list[PageManifest],
+    table_map: dict[int, list[TableArtifact]],
+    figure_map: dict[int, list[FigureArtifact]],
+    max_pages: int,
+) -> list[int]:
+    ranked_pages: list[tuple[float, int]] = []
+
+    for manifest in page_manifests:
+        if manifest.page_class == "simple_text_page":
+            continue
+        table_count = len(table_map.get(manifest.page_num, []))
+        figure_count = len(figure_map.get(manifest.page_num, []))
+        if table_count == 0 and figure_count == 0:
+            continue
+
+        class_weight = (
+            2.0
+            if manifest.page_class
+            in {"visual_heavy_page", "table_heavy_page", "hard_page"}
+            else 1.0
+        )
+        degraded_weight = 1.0 if manifest.page_parse_degraded else 0.0
+        priority = (
+            (table_count * 2.5)
+            + (figure_count * 2.0)
+            + class_weight
+            + degraded_weight
+            + float(manifest.complexity_score)
+        )
+        ranked_pages.append((priority, manifest.page_num))
+
+    ranked_pages.sort(reverse=True)
+    return [page_num for _, page_num in ranked_pages[:max_pages]]
+
+
 def maybe_llm_enrich_artifacts(
     page_manifests: list[PageManifest],
     tables: list[TableArtifact],
@@ -434,21 +911,7 @@ def maybe_llm_enrich_artifacts(
 ) -> None:
     if not settings.ENABLE_LLM_ARTIFACT_ENRICHMENT:
         return
-    if is_placeholder_mode():
-        return
-
-    max_pages = max(1, int(settings.LLM_ARTIFACT_ENRICHMENT_MAX_PAGES))
-    eligible_pages = [
-        manifest.page_num
-        for manifest in sorted(
-            page_manifests,
-            key=lambda item: item.complexity_score,
-            reverse=True,
-        )
-        if manifest.page_class != "simple_text_page"
-    ][:max_pages]
-
-    if not eligible_pages:
+    if not _llm_available_for_pipeline():
         return
 
     table_map: dict[int, list[TableArtifact]] = {}
@@ -460,6 +923,17 @@ def maybe_llm_enrich_artifacts(
     for figure in figures:
         figure_map.setdefault(figure.page_num, []).append(figure)
 
+    max_pages = max(1, int(settings.LLM_ARTIFACT_ENRICHMENT_MAX_PAGES))
+    eligible_pages = _select_balanced_enrichment_pages(
+        page_manifests=page_manifests,
+        table_map=table_map,
+        figure_map=figure_map,
+        max_pages=max_pages,
+    )
+
+    if not eligible_pages:
+        return
+
     enrichment_jobs: list[
         tuple[int, list[TableArtifact], list[FigureArtifact], str]
     ] = []
@@ -469,51 +943,63 @@ def maybe_llm_enrich_artifacts(
         if not page_tables and not page_figures:
             continue
 
-        prompt = _build_llm_enrichment_prompt(page_num, page_tables, page_figures)
+        table_summaries = [
+            (table.caption_text, table.normalized_table_text) for table in page_tables
+        ]
+        figure_summaries = [
+            (figure.caption_text, figure.nearby_text) for figure in page_figures
+        ]
+        prompt = build_artifact_enrichment_prompt(
+            page_num=page_num,
+            table_summaries=table_summaries,
+            figure_summaries=figure_summaries,
+        )
         enrichment_jobs.append((page_num, page_tables, page_figures, prompt))
 
     def _run_enrichment_job(
         job: tuple[int, list[TableArtifact], list[FigureArtifact], str],
-    ) -> str:
+    ) -> ArtifactEnrichmentResponse | None:
         _page_num, _page_tables, _page_figures, prompt = job
-        response = LlamaSettings.llm.complete(prompt)
-        return normalize_whitespace(str(response))
+        return _run_structured_text_inference(prompt, ArtifactEnrichmentResponse)
 
     for job, enrichment, error in _run_parallel_jobs(
         enrichment_jobs,
         _run_enrichment_job,
         max_workers=_parallel_worker_count(len(enrichment_jobs)),
+        timeout_seconds=float(settings.LLM_CAPTION_TIMEOUT_SECONDS),
     ):
         page_num, page_tables, page_figures, _prompt = job
         if error is not None:
             logger.error("LLM enrichment failed for page %s", page_num, exc_info=error)
             continue
 
-        if not enrichment:
+        if enrichment is None:
+            continue
+
+        summary_text = _format_summary_points(enrichment.summary_points, max_points=6)
+        if not summary_text:
             continue
 
         for table in page_tables:
-            table.normalized_table_text = f"{table.normalized_table_text}\nLLM summary: {enrichment[:600]}".strip()
+            table.normalized_table_text = f"{table.normalized_table_text}\nLLM summary:\n{summary_text[:600]}".strip()
             table.llm_enriched = True
             table.llm_enrichment_confidence = min(1.0, table.confidence + 0.07)
 
         for figure in page_figures:
             if figure.llm_caption_status == "success":
                 continue
-            figure.visual_proxy_text = (
-                f"{figure.visual_proxy_text}\nLLM summary: {enrichment[:600]}".strip()
-            )
+            figure.visual_proxy_text = f"{figure.visual_proxy_text}\nLLM summary:\n{summary_text[:600]}".strip()
             figure.llm_enriched = True
             figure.llm_enrichment_confidence = min(1.0, figure.confidence + 0.07)
 
 
 def _regions_by_page(regions: list[Region]) -> dict[int, list[Region]]:
-    grouped: dict[int, list[Region]] = {}
+    grouped: dict[int, list[Region]] = defaultdict(list)
     for region in regions:
-        grouped.setdefault(region.page_num, []).append(region)
+        grouped[region.page_num].append(region)
     for region_list in grouped.values():
         region_list.sort(key=lambda region: region.reading_order)
-    return grouped
+    return dict(grouped)
 
 
 def _union_region_bbox(regions: list[Region]) -> list[float]:
@@ -717,20 +1203,28 @@ def _dedupe_strings(values: list[str]) -> list[str]:
     return result
 
 
+def _hash_file(path: str) -> str | None:
+    if not path:
+        return None
+    target = Path(path)
+    if not target.exists() or not target.is_file():
+        return None
+    try:
+        return hashlib.sha256(target.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
 def _dedupe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     accepted: list[dict[str, Any]] = []
     for candidate in candidates:
         bbox = to_float_bbox(candidate.get("bbox"))
-        if _bbox_area(bbox) <= 1.0:
+        if bbox_area(bbox) <= 1.0:
             continue
         if any(_bbox_iou(bbox, current["bbox"]) > 0.8 for current in accepted):
             continue
         accepted.append({"bbox": bbox, "kind": candidate.get("kind", "unknown")})
     return accepted
-
-
-def _bbox_area(bbox: list[float]) -> float:
-    return max(0.0, bbox[2] - bbox[0]) * max(0.0, bbox[3] - bbox[1])
 
 
 def _bbox_iou(left: list[float], right: list[float]) -> float:
@@ -739,11 +1233,11 @@ def _bbox_iou(left: list[float], right: list[float]) -> float:
     x1 = min(left[2], right[2])
     y1 = min(left[3], right[3])
 
-    inter = _bbox_area([x0, y0, x1, y1])
+    inter = bbox_area([x0, y0, x1, y1])
     if inter <= 0:
         return 0.0
 
-    union = _bbox_area(left) + _bbox_area(right) - inter
+    union = bbox_area(left) + bbox_area(right) - inter
     if union <= 0:
         return 0.0
     return inter / union
@@ -759,79 +1253,68 @@ def _is_chart_candidate(figure_type: str, caption_text: str) -> bool:
     )
 
 
-def _build_chart_caption_prompt(
-    figure: FigureArtifact,
-    manifest: PageManifest | None,
-) -> str:
-    context = _chart_summary_text(figure)
-    return "\n".join(
-        [
-            "You are extracting chart structure from a financial report.",
-            "Return strict JSON with keys:",
-            "chart_type, chart_title, x_axis_label, y_axis_label, x_categories, series, approx_datapoints, trend_summary, key_chart_facts, numeric_extraction_confidence.",
-            "approx_datapoints must be an array of objects with shape:",
-            '{"series": "...", "x": "...", "y": <number>, "unit": "...", "approximate": true}',
-            "Use approximate values when exact values are not readable.",
-            "Do not include markdown. Output JSON only.",
-            f"Page: {figure.page_num}",
-            f"Page class: {manifest.page_class if manifest else 'unknown'}",
-            f"Caption: {figure.caption_text}",
-            f"Nearby text: {figure.nearby_text}",
-            f"Current proxy: {context}",
-        ]
+def _run_chart_inference(prompt: str, image_path: str) -> ChartCaptionResponse | None:
+    multimodal = _run_structured_multimodal_inference(
+        prompt=prompt,
+        image_path=image_path,
+        output_cls=ChartCaptionResponse,
     )
+    if multimodal is not None:
+        return multimodal
+
+    return _run_structured_text_inference(prompt, ChartCaptionResponse)
 
 
-def _run_chart_inference(prompt: str, image_path: str) -> str:
-    multimodal_text = _run_google_multimodal_inference(prompt, image_path)
-    if multimodal_text:
-        return multimodal_text
-
-    response = LlamaSettings.llm.complete(prompt)
-    return str(response)
-
-
-def _run_google_multimodal_inference(prompt: str, image_path: str) -> str | None:
+def _run_multimodal_inference(prompt: str, image_path: str) -> str | None:
     if (
         not image_path
-        or settings.is_google_api_key_placeholder
+        or settings.is_openai_api_key_placeholder
         or not Path(image_path).exists()
     ):
         return None
 
     try:
-        from google import genai
-        from google.genai import types as genai_types
-    except Exception:
-        return None
-
-    try:
-        client = genai.Client(api_key=settings.google_api_key)
-        image_bytes = Path(image_path).read_bytes()
-        response = client.models.generate_content(
-            model=settings.LLM_MODEL,
-            contents=[
-                genai_types.Part.from_text(text=prompt),
-                genai_types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
-            ],
+        mime_type = mimetypes.guess_type(image_path)[0] or "image/png"
+        response = LlamaSettings.llm.chat(
+            [
+                ChatMessage(
+                    role=MessageRole.USER,
+                    blocks=[
+                        TextBlock(text=prompt),
+                        ImageBlock(path=image_path, image_mimetype=mime_type),
+                    ],
+                )
+            ]
         )
 
-        if getattr(response, "text", None):
-            return str(response.text)
-
-        candidates = getattr(response, "candidates", None) or []
-        extracted: list[str] = []
-        for candidate in candidates:
-            content = getattr(candidate, "content", None)
-            parts = getattr(content, "parts", None) or []
-            for part in parts:
-                text = getattr(part, "text", None)
+        message = getattr(response, "message", None)
+        if message is not None:
+            parts: list[str] = []
+            for block in getattr(message, "blocks", None) or []:
+                text = getattr(block, "text", None)
                 if text:
-                    extracted.append(str(text))
-        if extracted:
-            return "\n".join(extracted)
-    except Exception:
-        logger.exception("Google multimodal chart inference failed for %s", image_path)
+                    parts.append(str(text).strip())
+            if parts:
+                return "\n".join(part for part in parts if part)
+
+            content = getattr(message, "content", None)
+            if content:
+                return str(content)
+
+        response_text = str(response).strip()
+        if response_text:
+            return response_text
+    except Exception as exc:
+        if _is_transient_provider_error(exc):
+            logger.warning(
+                "Multimodal inference unavailable for %s (status=%s): %s. "
+                "Falling back to text-only inference.",
+                image_path,
+                getattr(exc, "status_code", None),
+                exc,
+            )
+        else:
+            logger.exception("Multimodal inference failed for %s", image_path)
     return None
 
 
@@ -840,21 +1323,27 @@ def _parse_chart_json_response(response_text: str) -> dict[str, Any] | None:
         return None
     raw = response_text.strip()
     try:
-        return json.loads(raw)
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            return parsed
     except Exception:
         pass
 
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, flags=re.S)
     if fenced:
         try:
-            return json.loads(fenced.group(1))
+            parsed = json.loads(fenced.group(1))
+            if isinstance(parsed, dict):
+                return parsed
         except Exception:
             pass
 
     brace_match = re.search(r"\{.*\}", raw, flags=re.S)
     if brace_match:
         try:
-            return json.loads(brace_match.group(0))
+            parsed = json.loads(brace_match.group(0))
+            if isinstance(parsed, dict):
+                return parsed
         except Exception:
             return None
     return None
@@ -873,6 +1362,10 @@ def _apply_llm_chart_fields(figure: FigureArtifact, payload: dict[str, Any]) -> 
     figure.numeric_extraction_confidence = _to_float(
         payload.get("numeric_extraction_confidence")
     )
+    # Exhaustive structured extractions for specific visual types
+    figure.pie_segments = _coerce_list_of_dicts(payload.get("pie_segments"))
+    figure.matrix_cells = _coerce_list_of_dicts(payload.get("matrix_cells"))
+    figure.stat_box_values = _clean_str_list(payload.get("stat_box_values"))
 
 
 def _apply_heuristic_chart_fields(figure: FigureArtifact) -> None:
@@ -910,9 +1403,7 @@ def _apply_heuristic_chart_fields(figure: FigureArtifact) -> None:
         figure.trend_summary = (
             "Increasing trend"
             if numbers[-1] > numbers[0]
-            else "Decreasing trend"
-            if numbers[-1] < numbers[0]
-            else "Flat trend"
+            else "Decreasing trend" if numbers[-1] < numbers[0] else "Flat trend"
         )
         figure.numeric_extraction_confidence = 0.42
 
@@ -934,6 +1425,21 @@ def _chart_summary_text(figure: FigureArtifact) -> str:
         pieces.append(f"trend={figure.trend_summary}")
     if figure.key_chart_facts:
         pieces.extend(figure.key_chart_facts[:4])
+    # Exhaustive visual type extractions
+    if figure.pie_segments:
+        seg_strs = [
+            f"{s.get('label', '?')}: {s.get('value', '?')}{s.get('unit', '%')}"
+            for s in figure.pie_segments[:20]
+        ]
+        pieces.append("pie_segments=" + "; ".join(seg_strs))
+    if figure.matrix_cells:
+        cell_strs = [
+            f"{c.get('row_header', '?')} | {c.get('col_header', '?')} | {c.get('value', '?')}"
+            for c in figure.matrix_cells[:30]
+        ]
+        pieces.append("matrix_cells=" + "; ".join(cell_strs))
+    if figure.stat_box_values:
+        pieces.append("stat_boxes=" + " | ".join(figure.stat_box_values[:20]))
     return " | ".join(piece for piece in pieces if piece)
 
 
@@ -989,167 +1495,217 @@ def _coerce_datapoints(value: Any) -> list[dict[str, Any]]:
     return datapoints
 
 
-def _build_llm_enrichment_prompt(
-    page_num: int,
-    tables: list[TableArtifact],
-    figures: list[FigureArtifact],
-) -> str:
-    lines = [
-        "Summarize these artifacts for retrieval.",
-        "Output 4-6 concise bullet points with concrete metrics, units, and interpretation cues.",
-        "Do not speculate.",
-        f"Page: {page_num}",
+def _coerce_list_of_dicts(value: Any) -> list[dict[str, Any]]:
+    """Coerce a JSON-parsed list of dicts, discarding non-dict items."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _coerce_reasoning_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+
+    if isinstance(value, dict):
+        raw_items: list[Any] = [f"{key}: {val}" for key, val in value.items()]
+    elif isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    else:
+        raw_items = [value]
+
+    cleaned: list[str] = []
+    for item in raw_items:
+        item_text = _clean_str(item)
+        if item_text and item_text not in cleaned:
+            cleaned.append(item_text)
+    return cleaned
+
+
+def _format_summary_points(points: list[str], *, max_points: int) -> str:
+    cleaned = _coerce_reasoning_list(points)
+    if not cleaned:
+        return ""
+    return "\n".join(f"- {point}" for point in cleaned[:max_points])
+
+
+def _render_page_screenshot_summary(summary: PageScreenshotResponse) -> str:
+    sections: list[str] = []
+
+    layout = _clean_str(summary.layout_description)
+    if layout:
+        sections.append(f"Layout: {layout}")
+
+    group_specs: list[tuple[str, list[str], int]] = [
+        ("Labeled values", summary.labeled_values, 20),
+        ("Numeric values", summary.numeric_values, 12),
+        ("Pie chart segments", summary.pie_chart_segments, 20),
+        ("Matrix cells", summary.matrix_cell_values, 30),
+        ("Charts", summary.chart_descriptions, 6),
+        ("Tables", summary.table_summaries, 6),
+        ("Maps/diagrams", summary.map_or_diagram_annotations, 6),
+        ("Key takeaways", summary.key_takeaways, 6),
     ]
 
-    if tables:
-        lines.append("Tables:")
-        for table in tables:
-            lines.append(f"- Caption: {table.caption_text}")
-            lines.append(f"- Content: {table.normalized_table_text[:1200]}")
+    for title, values, max_points in group_specs:
+        bullets = _format_summary_points(values, max_points=max_points)
+        if bullets:
+            sections.append(f"{title}:\n{bullets}")
 
-    if figures:
-        lines.append("Figures:")
-        for figure in figures:
-            lines.append(f"- Caption: {figure.caption_text}")
-            lines.append(f"- Nearby: {figure.nearby_text[:1200]}")
+    return "\n\n".join(sections).strip()
 
-    return "\n".join(lines)
+
+def _build_parser_fallback_page_summary(manifest: PageManifest) -> str:
+    sections = [
+        "Layout: Deterministic parser fallback summary (multimodal analysis unavailable).",
+        (
+            "Key takeaways:\n"
+            f"- Page class: {manifest.page_class}\n"
+            f"- Layout confidence: {manifest.layout_confidence:.2f}\n"
+            f"- Complexity score: {manifest.complexity_score:.2f}\n"
+            f"- OCR used: {manifest.ocr_used}\n"
+            f"- Parser sources: {', '.join(manifest.parser_sources)}"
+        ),
+    ]
+    numeric_matches = re.findall(
+        r"\b\d[\d,]*(?:\.\d+)?%?\b",
+        manifest.full_page_text or "",
+    )
+    if numeric_matches:
+        preview = ", ".join(numeric_matches[:12])
+        sections.append(f"Numeric values:\n- {preview}")
+    excerpt = normalize_whitespace(manifest.full_page_text or "")[:600]
+    if excerpt:
+        sections.append(f"Text excerpt:\n- {excerpt}")
+    return "\n\n".join(sections).strip()
+
+
+def _is_retryable_screenshot_failure(
+    *,
+    result: PageScreenshotResponse | None,
+    error: Exception | None,
+) -> bool:
+    if isinstance(error, TimeoutError):
+        return True
+    if error is not None:
+        return _is_transient_provider_error(error)
+    return result is None
 
 
 # ---------------------------------------------------------------------------
 # Holistic page-level multimodal analysis
 # ---------------------------------------------------------------------------
 
-_PAGE_SCREENSHOT_PROMPT = """\
-You are a data analyst reviewing a full document page/slide screenshot.
-Describe everything visible: charts, tables, maps, diagrams, annotations, and key numbers.
-Output a structured plain-text summary with:
-- Page layout description (what elements are present and how they relate)
-- All numeric values, metrics, and units visible
-- Chart/graph descriptions including axes, trends, and approximate data points
-- Table contents summarized with key rows and columns
-- Map/diagram annotations and geographic/spatial data
-- Key takeaways and relationships between visual elements
-Be exhaustive. Do not omit any numbers, labels, or annotations visible on the page.
-"""
-
 
 def analyze_page_screenshots(page_manifests: list[PageManifest]) -> None:
     """Run multimodal LLM analysis on full page screenshots for non-trivial pages."""
-    if not settings.ENABLE_MULTIMODAL_CAPTIONING:
-        return
-    if is_placeholder_mode():
-        return
-
     eligible = [
         m
         for m in page_manifests
         if m.page_class in {"visual_heavy_page", "table_heavy_page", "hard_page"}
         and m.screenshot_path
     ]
+    if not eligible:
+        return
+
+    if not settings.ENABLE_MULTIMODAL_CAPTIONING:
+        for manifest in eligible:
+            manifest.llm_page_summary_status = "skipped"
+            manifest.llm_page_summary_error = "multimodal_captioning_disabled"
+        return
+    if not _llm_available_for_pipeline():
+        for manifest in eligible:
+            manifest.llm_page_summary_status = "skipped"
+            manifest.llm_page_summary_error = "llm_unavailable"
+        return
+
     max_pages = max(1, int(settings.LLM_CAPTION_MAX_PAGES))
     eligible = sorted(eligible, key=lambda m: m.complexity_score, reverse=True)[
         :max_pages
     ]
+    timeout_seconds = max(1.0, float(settings.LLM_SCREENSHOT_TIMEOUT_SECONDS))
+    max_workers = max(1, int(settings.LLM_SCREENSHOT_MAX_WORKERS))
+    max_retries = max(0, int(settings.LLM_SCREENSHOT_RETRIES))
+    pending = list(eligible)
 
-    def _run_screenshot_job(manifest: PageManifest) -> str | None:
-        return _run_google_multimodal_inference(
-            _PAGE_SCREENSHOT_PROMPT, manifest.screenshot_path
+    for manifest in eligible:
+        manifest.llm_page_summary_status = "pending"
+        manifest.llm_page_summary_error = None
+
+    def _run_screenshot_job(manifest: PageManifest) -> PageScreenshotResponse | None:
+        return _run_structured_multimodal_inference(
+            prompt=PAGE_SCREENSHOT_PROMPT,
+            image_path=manifest.screenshot_path,
+            output_cls=PageScreenshotResponse,
         )
 
-    for manifest, result, error in _run_parallel_jobs(
-        eligible,
-        _run_screenshot_job,
-        max_workers=_parallel_worker_count(len(eligible)),
-    ):
-        if error is not None:
-            logger.error(
-                "Page screenshot analysis failed for page %d",
-                manifest.page_num,
-                exc_info=error,
+    for attempt in range(max_retries + 1):
+        if not pending:
+            break
+
+        retry_pending: list[PageManifest] = []
+        max_parallel = min(_parallel_worker_count(len(pending)), max_workers)
+        for manifest, result, error in _run_parallel_jobs(
+            pending,
+            _run_screenshot_job,
+            max_workers=max_parallel,
+            timeout_seconds=timeout_seconds,
+        ):
+            if result is not None:
+                summary_text = _render_page_screenshot_summary(result)
+                if summary_text:
+                    manifest.llm_page_summary = truncate_text_by_tokens(
+                        summary_text,
+                        max_tokens=settings.REASONING_MAX_OUTPUT_TOKENS,
+                        encoding_name=settings.TOKEN_BUDGET_ENCODING,
+                    )
+                    manifest.llm_enriched = True
+                    manifest.llm_page_summary_status = "success"
+                    manifest.llm_page_summary_error = None
+                    logger.info(
+                        "Page %d screenshot analysis complete",
+                        manifest.page_num,
+                    )
+                    continue
+
+                error = RuntimeError("empty_structured_summary")
+
+            if (
+                _is_retryable_screenshot_failure(result=result, error=error)
+                and attempt < max_retries
+            ):
+                retry_pending.append(manifest)
+                logger.warning(
+                    "Retrying screenshot analysis for page %d (attempt %d/%d)",
+                    manifest.page_num,
+                    attempt + 1,
+                    max_retries,
+                )
+                continue
+
+            fallback_summary = _build_parser_fallback_page_summary(manifest)
+            manifest.llm_page_summary = truncate_text_by_tokens(
+                fallback_summary,
+                max_tokens=settings.REASONING_MAX_OUTPUT_TOKENS,
+                encoding_name=settings.TOKEN_BUDGET_ENCODING,
             )
-            continue
-        if result:
-            manifest.llm_page_summary = result[: settings.REASONING_MAX_OUTPUT_CHARS]
             manifest.llm_enriched = True
-            logger.info(
-                "Page %d screenshot analysis complete (%d chars)",
-                manifest.page_num,
-                len(manifest.llm_page_summary),
+            manifest.llm_page_summary_status = "fallback"
+            manifest.llm_page_summary_error = (
+                str(error)[:400] if error is not None else "empty_structured_summary"
             )
+            logger.warning(
+                "Page screenshot analysis fell back to parser summary for page %d",
+                manifest.page_num,
+            )
+
+        pending = retry_pending
+        if pending:
+            time.sleep(min(1.0 * (attempt + 1), 3.0))
 
 
 # ---------------------------------------------------------------------------
 # Artifact-first reasoning enrichment
 # ---------------------------------------------------------------------------
-
-_REASONING_PROMPT_VERSION = "reasoning_v1"
-
-_TABLE_REASONING_PROMPT = """\
-You are a financial data analyst. Analyze the following table artifact and produce grounded insights.
-
-Table caption: {caption}
-Section: {section_path}
-Page: {page_num}
-Units: {units}
-Content (first 1500 chars):
-{content}
-
-Output a JSON object with:
-- "key_insights": list of 3-5 specific factual insights with concrete numbers
-- "metric_comparisons": list of comparisons between rows/columns (e.g. "X grew 15% vs Y")
-- "trend_statement": one sentence describing the overall trend
-- "caveats": list of data quality warnings or assumptions
-- "evidence_refs": list of specific cell references or row labels supporting each claim
-
-Be precise. Every claim must reference specific data from the table. Do not speculate.
-"""
-
-_CHART_REASONING_PROMPT = """\
-You are a financial data analyst. Analyze the following chart/figure artifact and produce grounded insights.
-
-Chart type: {chart_type}
-Title: {chart_title}
-Caption: {caption}
-Section: {section_path}
-Page: {page_num}
-X axis: {x_axis}
-Y axis: {y_axis}
-Series: {series}
-Trend: {trend_summary}
-Key facts: {key_facts}
-Approximate datapoints (sample): {datapoints}
-
-Output a JSON object with:
-- "key_insights": list of 3-5 specific factual insights with concrete numbers
-- "metric_comparisons": list of comparisons between series/categories
-- "trend_statement": one sentence describing the overall trend
-- "caveats": list of data quality warnings (e.g. approximate values)
-- "evidence_refs": list of specific series names, axis labels, or datapoints supporting each claim
-
-Be precise. Every claim must cite specific data from the chart. Do not speculate.
-"""
-
-_PAGE_REASONING_PROMPT = """\
-You are a financial data analyst. Analyze the relationships between artifacts on this page.
-
-Page: {page_num}
-Page class: {page_class}
-Artifacts present:
-{artifact_summaries}
-
-LLM page summary (if available):
-{llm_page_summary}
-
-Output a JSON object with:
-- "key_insights": list of 3-5 cross-artifact insights (how table data relates to chart trends)
-- "metric_comparisons": list of consistency checks between artifacts
-- "trend_statement": one sentence summarizing the page overall message
-- "caveats": any inconsistencies or gaps between artifacts
-- "evidence_refs": specific artifact IDs and data points supporting each claim
-
-Be precise. Every claim must reference specific artifacts and their data. Do not speculate.
-"""
 
 
 def run_reasoning_enrichment(
@@ -1157,91 +1713,156 @@ def run_reasoning_enrichment(
     tables: list[TableArtifact],
     figures: list[FigureArtifact],
 ) -> list[ReasoningArtifact]:
-    """Generate grounded, citation-aware reasoning artifacts."""
-    if not settings.ENABLE_LLM_REASONING_ENRICHMENT:
-        return []
-    if is_placeholder_mode():
-        return []
+    return ReasoningEnrichmentService(page_manifests, tables, figures).run()
 
-    reasoning_model = settings.REASONING_MODEL or settings.LLM_MODEL
-    max_pages = max(1, int(settings.REASONING_MAX_PAGES))
-    max_per_page = max(1, int(settings.REASONING_MAX_ARTIFACTS_PER_PAGE))
-    max_output = max(200, int(settings.REASONING_MAX_OUTPUT_CHARS))
 
-    eligible_manifests = [
-        m
-        for m in sorted(page_manifests, key=lambda m: m.complexity_score, reverse=True)
-        if m.page_class != "simple_text_page" or _page_has_high_numeric_density(m)
-    ][:max_pages]
-    eligible_pages = [m.page_num for m in eligible_manifests]
+@dataclass(frozen=True, slots=True)
+class ReasoningConfig:
+    model: str
+    max_pages: int
+    max_artifacts_per_page: int
+    max_output_tokens: int
+    timeout_seconds: float
 
-    tables_by_page: dict[int, list[TableArtifact]] = {}
-    for table in tables:
-        for pn in table.page_nums:
-            tables_by_page.setdefault(pn, []).append(table)
 
-    figures_by_page: dict[int, list[FigureArtifact]] = {}
-    for fig in figures:
-        figures_by_page.setdefault(fig.page_num, []).append(fig)
+class ReasoningEnrichmentService:
+    def __init__(
+        self,
+        page_manifests: list[PageManifest],
+        tables: list[TableArtifact],
+        figures: list[FigureArtifact],
+    ) -> None:
+        self._page_manifests = page_manifests
+        self._manifest_by_page = {
+            manifest.page_num: manifest for manifest in page_manifests
+        }
+        self._tables_by_page = self._index_tables(tables)
+        self._figures_by_page = self._index_figures(figures)
+        self._config = ReasoningConfig(
+            model=settings.REASONING_MODEL or settings.LLM_MODEL,
+            max_pages=max(1, int(settings.REASONING_MAX_PAGES)),
+            max_artifacts_per_page=max(
+                1, int(settings.REASONING_MAX_ARTIFACTS_PER_PAGE)
+            ),
+            max_output_tokens=max(200, int(settings.REASONING_MAX_OUTPUT_TOKENS)),
+            timeout_seconds=float(settings.REASONING_TIMEOUT_SECONDS),
+        )
 
-    manifest_by_page = {m.page_num: m for m in page_manifests}
-    artifacts: list[ReasoningArtifact] = []
+    def run(self) -> list[ReasoningArtifact]:
+        if not settings.ENABLE_LLM_REASONING_ENRICHMENT:
+            return []
+        if not _llm_available_for_pipeline():
+            return []
 
-    def _run_page_reasoning(page_num: int) -> list[ReasoningArtifact]:
-        manifest = manifest_by_page.get(page_num)
+        eligible_pages = [manifest.page_num for manifest in self._eligible_manifests()]
+        artifacts: list[ReasoningArtifact] = []
+        for page_num, page_artifacts, error in _run_parallel_jobs(
+            eligible_pages,
+            self._reason_page,
+            max_workers=_parallel_worker_count(len(eligible_pages)),
+            timeout_seconds=self._config.timeout_seconds,
+        ):
+            if error is not None:
+                logger.error(
+                    "Reasoning enrichment failed for page %s",
+                    page_num,
+                    exc_info=error,
+                )
+                continue
+            if page_artifacts:
+                artifacts.extend(page_artifacts)
+
+        logger.info(
+            "Reasoning enrichment complete: %d artifacts across %d pages",
+            len(artifacts),
+            len(eligible_pages),
+        )
+        return artifacts
+
+    def _eligible_manifests(self) -> list[PageManifest]:
+        ordered = sorted(
+            self._page_manifests,
+            key=lambda manifest: manifest.complexity_score,
+            reverse=True,
+        )
+        return [
+            manifest
+            for manifest in ordered
+            if manifest.page_class != "simple_text_page"
+            or numeric_density(manifest.full_page_text or "") > 0.15
+        ][: self._config.max_pages]
+
+    def _reason_page(self, page_num: int) -> list[ReasoningArtifact]:
+        manifest = self._manifest_by_page.get(page_num)
         if manifest is None:
             return []
 
-        page_tables = tables_by_page.get(page_num, [])[:max_per_page]
-        page_figures = figures_by_page.get(page_num, [])[:max_per_page]
-        artifact_count = 0
-        page_artifacts: list[ReasoningArtifact] = []
+        page_tables = self._tables_by_page.get(page_num, [])[
+            : self._config.max_artifacts_per_page
+        ]
+        page_figures = self._figures_by_page.get(page_num, [])[
+            : self._config.max_artifacts_per_page
+        ]
 
-        # --- Table reasoning ---
-        for table in page_tables:
-            if artifact_count >= max_per_page:
-                break
-            prompt = _TABLE_REASONING_PROMPT.format(
+        artifacts: list[ReasoningArtifact] = []
+        artifacts.extend(self._build_table_reasoning(page_num, page_tables))
+
+        remaining = max(0, self._config.max_artifacts_per_page - len(artifacts))
+        if remaining > 0:
+            artifacts.extend(
+                self._build_chart_reasoning(page_num, page_figures, remaining)
+            )
+
+        page_reasoning = self._build_page_reasoning(manifest, page_tables, page_figures)
+        if page_reasoning is not None:
+            artifacts.append(page_reasoning)
+
+        return artifacts
+
+    def _build_table_reasoning(
+        self,
+        page_num: int,
+        tables: list[TableArtifact],
+    ) -> list[ReasoningArtifact]:
+        artifacts: list[ReasoningArtifact] = []
+        for table in tables:
+            prompt = TABLE_REASONING_PROMPT.format(
                 caption=table.caption_text,
                 section_path=table.section_path,
                 page_num=page_num,
                 units=", ".join(table.units) if table.units else "not specified",
                 content=table.normalized_table_text[:1500],
             )
-            reasoning = _run_reasoning_inference(prompt, reasoning_model, max_output)
-            if reasoning:
-                parsed = _parse_chart_json_response(reasoning)
-                claims = parsed.get("key_insights", []) if parsed else []
-                trend = parsed.get("trend_statement", "") if parsed else ""
-                evidence = parsed.get("evidence_refs", []) if parsed else []
-                text_parts = _build_reasoning_text(parsed, trend, claims)
-                page_artifacts.append(
-                    ReasoningArtifact(
-                        reasoning_id=str(uuid.uuid4()),
-                        reasoning_type="table_reasoning",
-                        page_nums=[page_num],
-                        source_artifact_ids=[table.table_id],
-                        text="\n".join(text_parts)[:max_output],
-                        claims=claims[:5],
-                        evidence_refs={
-                            "table_id": table.table_id,
-                            "caption": table.caption_text,
-                            "evidence": evidence[:10],
-                        },
-                        confidence=0.8 if parsed else 0.5,
-                        model=reasoning_model,
-                        prompt_version=_REASONING_PROMPT_VERSION,
-                    )
-                )
-                artifact_count += 1
+            artifact = self._build_reasoning_artifact(
+                prompt=prompt,
+                reasoning_type="table_reasoning",
+                page_num=page_num,
+                source_artifact_ids=[table.table_id],
+                evidence_refs={
+                    "table_id": table.table_id,
+                    "caption": table.caption_text,
+                },
+                success_confidence=0.8,
+                fallback_confidence=0.5,
+            )
+            if artifact is not None:
+                artifacts.append(artifact)
+        return artifacts
 
-        # --- Chart/figure reasoning ---
-        for figure in page_figures:
-            if artifact_count >= max_per_page:
+    def _build_chart_reasoning(
+        self,
+        page_num: int,
+        figures: list[FigureArtifact],
+        max_items: int,
+    ) -> list[ReasoningArtifact]:
+        artifacts: list[ReasoningArtifact] = []
+        for figure in figures:
+            if len(artifacts) >= max_items:
                 break
             if figure.figure_type not in {"chart", "diagram", "infographic"}:
                 continue
-            prompt = _CHART_REASONING_PROMPT.format(
+
+            prompt = CHART_REASONING_PROMPT.format(
                 chart_type=figure.chart_type or figure.figure_type,
                 chart_title=figure.chart_title or figure.caption_text,
                 caption=figure.caption_text,
@@ -1254,111 +1875,130 @@ def run_reasoning_enrichment(
                 key_facts="; ".join(figure.key_chart_facts[:5]),
                 datapoints=str(figure.approx_datapoints[:10]),
             )
-            reasoning = _run_reasoning_inference(prompt, reasoning_model, max_output)
-            if reasoning:
-                parsed = _parse_chart_json_response(reasoning)
-                claims = parsed.get("key_insights", []) if parsed else []
-                trend = parsed.get("trend_statement", "") if parsed else ""
-                evidence = parsed.get("evidence_refs", []) if parsed else []
-                text_parts = _build_reasoning_text(parsed, trend, claims)
-                page_artifacts.append(
-                    ReasoningArtifact(
-                        reasoning_id=str(uuid.uuid4()),
-                        reasoning_type="chart_reasoning",
-                        page_nums=[page_num],
-                        source_artifact_ids=[figure.figure_id],
-                        text="\n".join(text_parts)[:max_output],
-                        claims=claims[:5],
-                        evidence_refs={
-                            "figure_id": figure.figure_id,
-                            "chart_type": figure.chart_type,
-                            "caption": figure.caption_text,
-                            "evidence": evidence[:10],
-                        },
-                        confidence=0.8 if parsed else 0.5,
-                        model=reasoning_model,
-                        prompt_version=_REASONING_PROMPT_VERSION,
-                    )
-                )
-                artifact_count += 1
-
-        # --- Page-level reasoning (cross-artifact synthesis) ---
-        if page_tables or page_figures:
-            summaries = []
-            for t in page_tables:
-                summaries.append(
-                    f"Table [{t.table_id[:8]}]: {t.caption_text} "
-                    f"({len(t.json_table)} rows, units: {', '.join(t.units[:3])})"
-                )
-            for f in page_figures:
-                summaries.append(
-                    f"Figure [{f.figure_id[:8]}]: {f.figure_type} - {f.caption_text} "
-                    f"(chart_type: {f.chart_type})"
-                )
-            prompt = _PAGE_REASONING_PROMPT.format(
+            artifact = self._build_reasoning_artifact(
+                prompt=prompt,
+                reasoning_type="chart_reasoning",
                 page_num=page_num,
-                page_class=manifest.page_class,
-                artifact_summaries="\n".join(summaries),
-                llm_page_summary=manifest.llm_page_summary or "Not available",
+                source_artifact_ids=[figure.figure_id],
+                evidence_refs={
+                    "figure_id": figure.figure_id,
+                    "chart_type": figure.chart_type,
+                    "caption": figure.caption_text,
+                },
+                success_confidence=0.8,
+                fallback_confidence=0.5,
             )
-            reasoning = _run_reasoning_inference(prompt, reasoning_model, max_output)
-            if reasoning:
-                parsed = _parse_chart_json_response(reasoning)
-                claims = parsed.get("key_insights", []) if parsed else []
-                trend = parsed.get("trend_statement", "") if parsed else ""
-                text_parts = _build_reasoning_text(parsed, trend, claims)
-                source_ids = [t.table_id for t in page_tables] + [
-                    f.figure_id for f in page_figures
-                ]
-                page_artifacts.append(
-                    ReasoningArtifact(
-                        reasoning_id=str(uuid.uuid4()),
-                        reasoning_type="page_reasoning",
-                        page_nums=[page_num],
-                        source_artifact_ids=source_ids,
-                        text="\n".join(text_parts)[:max_output],
-                        claims=claims[:5],
-                        evidence_refs={
-                            "source_artifact_ids": source_ids,
-                            "evidence": (
-                                parsed.get("evidence_refs", []) if parsed else []
-                            )[:10],
-                        },
-                        confidence=0.75 if parsed else 0.4,
-                        model=reasoning_model,
-                        prompt_version=_REASONING_PROMPT_VERSION,
-                    )
-                )
+            if artifact is not None:
+                artifacts.append(artifact)
+        return artifacts
 
-        return page_artifacts
+    def _build_page_reasoning(
+        self,
+        manifest: PageManifest,
+        tables: list[TableArtifact],
+        figures: list[FigureArtifact],
+    ) -> ReasoningArtifact | None:
+        if not tables and not figures:
+            return None
 
-    for page_num, page_artifacts, error in _run_parallel_jobs(
-        eligible_pages,
-        _run_page_reasoning,
-        max_workers=_parallel_worker_count(len(eligible_pages)),
-    ):
-        if error is not None:
-            logger.error(
-                "Reasoning enrichment failed for page %s",
-                page_num,
-                exc_info=error,
+        summaries: list[str] = []
+        for table in tables:
+            summaries.append(
+                f"Table [{table.table_id[:8]}]: {table.caption_text} "
+                f"({len(table.json_table)} rows, units: {', '.join(table.units[:3])})"
             )
-            continue
-        if page_artifacts:
-            artifacts.extend(page_artifacts)
+        for figure in figures:
+            summaries.append(
+                f"Figure [{figure.figure_id[:8]}]: {figure.figure_type} - {figure.caption_text} "
+                f"(chart_type: {figure.chart_type})"
+            )
 
-    logger.info(
-        "Reasoning enrichment complete: %d artifacts across %d pages",
-        len(artifacts),
-        len(eligible_pages),
-    )
-    return artifacts
+        prompt = PAGE_REASONING_PROMPT.format(
+            page_num=manifest.page_num,
+            page_class=manifest.page_class,
+            artifact_summaries="\n".join(summaries),
+            llm_page_summary=manifest.llm_page_summary or "Not available",
+        )
+        source_ids = [table.table_id for table in tables] + [
+            figure.figure_id for figure in figures
+        ]
+        return self._build_reasoning_artifact(
+            prompt=prompt,
+            reasoning_type="page_reasoning",
+            page_num=manifest.page_num,
+            source_artifact_ids=source_ids,
+            evidence_refs={"source_artifact_ids": source_ids},
+            success_confidence=0.75,
+            fallback_confidence=0.4,
+        )
+
+    def _build_reasoning_artifact(
+        self,
+        *,
+        prompt: str,
+        reasoning_type: str,
+        page_num: int,
+        source_artifact_ids: list[str],
+        evidence_refs: dict[str, Any],
+        success_confidence: float,
+        fallback_confidence: float,
+    ) -> ReasoningArtifact | None:
+        inference = _run_reasoning_inference(
+            prompt,
+            self._config.max_output_tokens,
+        )
+        if inference is None:
+            return None
+
+        parsed = inference.payload
+        claims = _coerce_reasoning_list(parsed.get("key_insights"))
+        trend = _clean_str(parsed.get("trend_statement"))
+        comparisons = _coerce_reasoning_list(parsed.get("metric_comparisons"))
+        caveats = _coerce_reasoning_list(parsed.get("caveats"))
+        merged_evidence = {
+            **evidence_refs,
+            "evidence": _coerce_reasoning_list(parsed.get("evidence_refs"))[:10],
+        }
+        return ReasoningArtifact(
+            reasoning_id=str(uuid.uuid4()),
+            reasoning_type=reasoning_type,
+            page_nums=[page_num],
+            source_artifact_ids=source_artifact_ids,
+            text="\n".join(_build_reasoning_text(trend, claims, comparisons, caveats)),
+            claims=claims[:5],
+            evidence_refs=merged_evidence,
+            confidence=(
+                success_confidence
+                if inference.used_structured_output
+                else fallback_confidence
+            ),
+            model=self._config.model,
+            prompt_version=REASONING_PROMPT_VERSION,
+        )
+
+    @staticmethod
+    def _index_tables(tables: list[TableArtifact]) -> dict[int, list[TableArtifact]]:
+        by_page: dict[int, list[TableArtifact]] = {}
+        for table in tables:
+            for page_num in table.page_nums:
+                by_page.setdefault(page_num, []).append(table)
+        return by_page
+
+    @staticmethod
+    def _index_figures(
+        figures: list[FigureArtifact],
+    ) -> dict[int, list[FigureArtifact]]:
+        by_page: dict[int, list[FigureArtifact]] = {}
+        for figure in figures:
+            by_page.setdefault(figure.page_num, []).append(figure)
+        return by_page
 
 
 def _build_reasoning_text(
-    parsed: dict[str, Any] | None,
     trend: str,
     claims: list[str],
+    metric_comparisons: list[str],
+    caveats: list[str],
 ) -> list[str]:
     """Assemble readable text from parsed reasoning JSON."""
     parts: list[str] = []
@@ -1366,37 +2006,107 @@ def _build_reasoning_text(
         parts.append(f"Trend: {trend}")
     for claim in claims[:5]:
         parts.append(f"- {claim}")
-    if parsed:
-        for comp in parsed.get("metric_comparisons", [])[:3]:
-            parts.append(f"Comparison: {comp}")
-        for caveat in parsed.get("caveats", [])[:2]:
-            parts.append(f"Caveat: {caveat}")
+    for comp in metric_comparisons[:3]:
+        parts.append(f"Comparison: {comp}")
+    for caveat in caveats[:2]:
+        parts.append(f"Caveat: {caveat}")
     return parts
 
 
 def _run_reasoning_inference(
     prompt: str,
-    model: str,
-    max_output: int,
-) -> str | None:
-    """Run LLM inference for reasoning enrichment with single retry."""
+    max_output_tokens: int,
+    model: str | None = None,
+    timeout_seconds: float | None = None,
+) -> ReasoningInferenceResult | None:
+    """Run reasoning inference with strict generation-time token limits."""
+    resolved_model = model or settings.REASONING_MODEL or settings.LLM_MODEL
+    resolved_timeout = (
+        float(timeout_seconds)
+        if timeout_seconds is not None
+        else float(settings.REASONING_TIMEOUT_SECONDS)
+    )
+    if not settings.is_openai_api_key_placeholder:
+        base_tokens: int | None
+        if settings.OPENAI_USE_RESPONSES:
+            base_tokens = None
+        elif max_output_tokens > 0:
+            base_tokens = max_output_tokens
+        else:
+            base_tokens = None
+
+        retry_tokens = _reasoning_retry_output_tokens(base_tokens)
+        for attempt in range(2):
+            attempt_tokens = base_tokens if attempt == 0 else retry_tokens
+            try:
+                response = invoke_llm_chat(
+                    model=resolved_model,
+                    input_messages=[
+                        {
+                            "role": "developer",
+                            "content": (
+                                "Extract structured reasoning from the provided "
+                                "context and fill the schema fields accurately. "
+                                "Keep outputs concise: each list item must be a "
+                                "single short sentence, avoid long quotes, and use "
+                                "compact evidence references."
+                            ),
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    structured_output_cls=ReasoningStructuredResponse,
+                    reasoning_effort="low",
+                    max_output_tokens=attempt_tokens,
+                    timeout_seconds=resolved_timeout,
+                )
+                structured_payload = _coerce_structured_output(
+                    response,
+                    ReasoningStructuredResponse,
+                )
+                if structured_payload is None:
+                    raise ValueError(
+                        "reasoning inference returned invalid structured payload"
+                    )
+                return ReasoningInferenceResult(
+                    payload=structured_payload.model_dump(),
+                    used_structured_output=True,
+                )
+            except Exception as exc:
+                if _is_incomplete_structured_output_error(exc):
+                    if attempt == 0:
+                        logger.warning(
+                            "Reasoning structured output incomplete at max_output_tokens=%s; retrying with %s",
+                            attempt_tokens,
+                            retry_tokens,
+                        )
+                    else:
+                        logger.warning(
+                            "Reasoning structured output incomplete after retry (max_output_tokens=%s)",
+                            attempt_tokens,
+                        )
+                elif attempt == 0:
+                    logger.exception("Reasoning inference failed, retrying once")
+                else:
+                    logger.exception("Reasoning inference retry also failed")
+
     try:
-        response = LlamaSettings.llm.complete(prompt)
-        text = normalize_whitespace(str(response))
-        return text[:max_output] if text else None
+        structured = LlamaSettings.llm.structured_predict(
+            ReasoningStructuredResponse,
+            _GENERIC_STRUCTURED_PROMPT,
+            user_prompt=prompt,
+        )
+        if isinstance(structured, BaseModel):
+            payload = structured.model_dump()
+        elif isinstance(structured, dict):
+            payload = structured
+        else:
+            payload = None
+
+        if isinstance(payload, dict):
+            return ReasoningInferenceResult(
+                payload=payload,
+                used_structured_output=True,
+            )
     except Exception:
-        logger.exception("Reasoning inference failed, retrying once")
-        try:
-            response = LlamaSettings.llm.complete(prompt)
-            text = normalize_whitespace(str(response))
-            return text[:max_output] if text else None
-        except Exception:
-            logger.exception("Reasoning inference retry also failed")
-            return None
-
-
-def _page_has_high_numeric_density(manifest: PageManifest) -> bool:
-    """Check if a simple_text_page has enough numeric content to warrant reasoning."""
-    from app.ingestion.pdf_pipeline.helpers import numeric_density as _nd
-
-    return _nd(manifest.full_page_text or "") > 0.15
+        logger.exception("Structured reasoning fallback failed")
+    return None

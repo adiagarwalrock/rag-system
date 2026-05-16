@@ -2,9 +2,8 @@
 Shared helpers for eval scoring and payload shaping.
 """
 
-from __future__ import annotations
-
 from dataclasses import asdict, is_dataclass
+from statistics import mean
 from typing import Any
 
 
@@ -36,3 +35,9 @@ def as_plain_dict(value: Any) -> Any:
     if isinstance(value, tuple):
         return [as_plain_dict(v) for v in value]
     return value
+
+
+def mean_or_zero(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    return float(mean(values))

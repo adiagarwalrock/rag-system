@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.db.base import Base
-from app.db.models import Client, Document, User
+from app.db.models import Client, Document
 
 
 @pytest.fixture()
@@ -36,18 +36,10 @@ def db_session():
 
 @pytest.fixture()
 def seeded_entities(db_session):
-    user = User(
-        id="user-1",
-        email="user@example.com",
-        password_hash="fake-hash",
-        is_active=True,
-        full_name="Test User",
-    )
     client = Client(
         id="client-1",
         name="Acme Co",
         description="Test client",
-        created_by=user.id,
         is_active=True,
     )
     document = Document(
@@ -57,11 +49,10 @@ def seeded_entities(db_session):
         file_type=".pdf",
         storage_path="/tmp/policy_v1.pdf",
         checksum="seed-checksum",
-        uploaded_by=user.id,
         status="indexed",
     )
 
-    db_session.add_all([user, client, document])
+    db_session.add_all([client, document])
     db_session.commit()
 
-    return {"user": user, "client": client, "document": document}
+    return {"client": client, "document": document}
