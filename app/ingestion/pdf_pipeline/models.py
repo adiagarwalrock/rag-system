@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
@@ -50,6 +50,9 @@ class PageManifest:
     llm_page_summary_status: str = "not_run"
     llm_page_summary_error: str | None = None
 
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
 
 @dataclass(slots=True)
 class Region:
@@ -66,6 +69,9 @@ class Region:
     source_parser: str
     confidence: float
     zone: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass(slots=True)
@@ -85,6 +91,9 @@ class TableArtifact:
     confidence: float
     llm_enriched: bool = False
     llm_enrichment_confidence: float | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass(slots=True)
@@ -107,6 +116,7 @@ class FigureArtifact:
     y_axis_label: str = ""
     x_categories: list[str] = field(default_factory=list)
     series: list[str] = field(default_factory=list)
+    legend_items: list[str] = field(default_factory=list)
     approx_datapoints: list[dict[str, Any]] = field(default_factory=list)
     trend_summary: str = ""
     key_chart_facts: list[str] = field(default_factory=list)
@@ -124,6 +134,9 @@ class FigureArtifact:
     llm_caption_status: str = "skipped"
     llm_caption_error: str | None = None
 
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
 
 @dataclass(slots=True)
 class ReasoningArtifact:
@@ -140,6 +153,9 @@ class ReasoningArtifact:
     model: str | None = None
     prompt_version: str | None = None
 
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
 
 @dataclass(slots=True)
 class ChunkArtifact:
@@ -151,6 +167,9 @@ class ChunkArtifact:
     text: str
     metadata: dict[str, Any]
     asset_refs: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 # -------------------------------------------------------------------------------------
@@ -189,6 +208,7 @@ class ChartCaptionResponse(BaseModel):
     y_axis_label: str = ""
     x_categories: list[str] = Field(default_factory=list)
     series: list[str] = Field(default_factory=list)
+    legend_items: list[str] = Field(default_factory=list)
     approx_datapoints: list[ChartDatapointResponse] = Field(default_factory=list)
     trend_summary: str = ""
     key_chart_facts: list[str] = Field(default_factory=list)

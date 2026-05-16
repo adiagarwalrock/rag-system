@@ -27,6 +27,7 @@ from pydantic import BaseModel
 
 from app.agents.agent_base import invoke_llm_chat
 from app.core.config import settings
+from app.core.structured_output import coerce_structured_output
 from app.prompts.templates import (
     _GENERIC_STRUCTURED_PROMPT,
     CHART_REASONING_PROMPT,
@@ -202,49 +203,6 @@ def _reasoning_retry_output_tokens(max_output_tokens: int | None) -> int | None:
     return min(_REASONING_RETRY_TOKEN_CAP, max(max_output_tokens, expanded))
 
 
-def _coerce_structured_output(output: Any, output_cls: type[_Model]) -> _Model | None:
-    if isinstance(output, output_cls):
-        return output
-
-    raw = getattr(output, "raw", None)
-    if isinstance(raw, output_cls):
-        return raw
-
-    if isinstance(raw, BaseModel):
-        try:
-            return output_cls.model_validate(raw.model_dump())
-        except Exception:
-            pass
-
-    if isinstance(output, BaseModel):
-        try:
-            return output_cls.model_validate(output.model_dump())
-        except Exception:
-            pass
-
-    if isinstance(output, dict):
-        try:
-            return output_cls.model_validate(output)
-        except Exception:
-            pass
-
-    message = getattr(output, "message", None)
-    content = getattr(message, "content", None) if message is not None else None
-    if isinstance(content, str) and content.strip():
-        try:
-            return output_cls.model_validate_json(content)
-        except Exception:
-            pass
-
-    if isinstance(output, str) and output.strip():
-        try:
-            return output_cls.model_validate_json(output)
-        except Exception:
-            pass
-
-    return None
-
-
 def _run_structured_text_inference(
     prompt: str, output_cls: type[_Model]
 ) -> _Model | None:
@@ -254,7 +212,7 @@ def _run_structured_text_inference(
             _GENERIC_STRUCTURED_PROMPT,
             user_prompt=prompt,
         )
-        return _coerce_structured_output(structured, output_cls)
+        return coerce_structured_output(structured, output_cls)
     except Exception:
         logger.exception("Structured text inference failed for %s", output_cls.__name__)
         return None
@@ -287,7 +245,7 @@ def _run_structured_multimodal_inference(
                 )
             ]
         )
-        parsed = _coerce_structured_output(response, output_cls)
+        parsed = coerce_structured_output(response, output_cls)
         if parsed is not None:
             return parsed
     except Exception as exc:
@@ -1368,6 +1326,7 @@ def _apply_llm_chart_fields(figure: FigureArtifact, payload: dict[str, Any]) -> 
     figure.y_axis_label = _clean_str(payload.get("y_axis_label"))
     figure.x_categories = _clean_str_list(payload.get("x_categories"))
     figure.series = _clean_str_list(payload.get("series"))
+    figure.legend_items = _clean_str_list(payload.get("legend_items"))
     figure.approx_datapoints = _coerce_datapoints(payload.get("approx_datapoints"))
     figure.trend_summary = _clean_str(payload.get("trend_summary"))
     figure.key_chart_facts = _clean_str_list(payload.get("key_chart_facts"))
@@ -2071,7 +2030,7 @@ def _run_reasoning_inference(
                     max_output_tokens=attempt_tokens,
                     timeout_seconds=resolved_timeout,
                 )
-                structured_payload = _coerce_structured_output(
+                structured_payload = coerce_structured_output(
                     response,
                     ReasoningStructuredResponse,
                 )

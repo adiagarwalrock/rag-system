@@ -175,14 +175,13 @@ class ChatHistoryVectorStore:
         client_id: str,
         exclude_session_id: str | None,
     ) -> qdrant_models.Filter:
-        must_not_conditions = (
-            [self._field_condition("session_id", exclude_session_id)]
-            if exclude_session_id
-            else None
-        )
+        if exclude_session_id:
+            return qdrant_models.Filter(
+                must=[self._field_condition("client_id", client_id)],
+                must_not=self._field_condition("session_id", exclude_session_id),
+            )
         return qdrant_models.Filter(
             must=[self._field_condition("client_id", client_id)],
-            must_not=must_not_conditions or None,
         )
 
     def _delete_by_field(self, *, field_name: str, value: str) -> None:

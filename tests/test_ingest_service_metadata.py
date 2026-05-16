@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from llama_index.core.schema import NodeRelationship, TextNode
@@ -11,18 +10,9 @@ from app.services.ingest_service import (
 )
 
 
-@dataclass
-class DummyNode:
-    node_id: str
-    metadata: dict
-    excluded_embed_metadata_keys: list[str] | None = None
-    excluded_llm_metadata_keys: list[str] | None = None
-    ref_doc_id: str | None = None
-
-
 def test_apply_retrieval_metadata_sets_labels_and_version_fields():
-    node = DummyNode(
-        node_id="node-1",
+    node = TextNode(
+        text="chunk",
         metadata={"page_num": 3, "chunk_id": "chunk-abc"},
     )
     version_info = {
@@ -44,7 +34,7 @@ def test_apply_retrieval_metadata_sets_labels_and_version_fields():
 
 
 def test_apply_retrieval_metadata_generates_chunk_id_when_missing():
-    node = DummyNode(node_id="node-2", metadata={"slide_num": 5})
+    node = TextNode(text="chunk", metadata={"slide_num": 5})
 
     _apply_retrieval_metadata([node], filename="deck.pptx", version_info={})
 
@@ -53,8 +43,8 @@ def test_apply_retrieval_metadata_generates_chunk_id_when_missing():
 
 
 def test_apply_metadata_exclusions_merges_existing_keys_without_duplicates():
-    node = DummyNode(
-        node_id="node-3",
+    node = TextNode(
+        text="chunk",
         metadata={},
         excluded_embed_metadata_keys=["already_here", "document_id"],
         excluded_llm_metadata_keys=["already_here"],
@@ -62,19 +52,19 @@ def test_apply_metadata_exclusions_merges_existing_keys_without_duplicates():
 
     _apply_metadata_exclusions([node])
 
-    assert "already_here" in node.excluded_embed_metadata_keys
-    assert "citation_label" in node.excluded_embed_metadata_keys
-    assert "chunk_type" in node.excluded_embed_metadata_keys
-    assert "source_artifact_type" in node.excluded_embed_metadata_keys
-    assert "document_id" in node.excluded_embed_metadata_keys
-    assert "version_rank" in node.excluded_llm_metadata_keys
-    assert node.excluded_embed_metadata_keys == sorted(
-        node.excluded_embed_metadata_keys
-    )
-    assert node.excluded_llm_metadata_keys == sorted(node.excluded_llm_metadata_keys)
-    assert len(node.excluded_embed_metadata_keys) == len(
-        set(node.excluded_embed_metadata_keys)
-    )
+    embed_keys = node.excluded_embed_metadata_keys
+    llm_keys = node.excluded_llm_metadata_keys
+    assert embed_keys is not None
+    assert llm_keys is not None
+    assert "already_here" in embed_keys
+    assert "citation_label" in embed_keys
+    assert "chunk_type" in embed_keys
+    assert "source_artifact_type" in embed_keys
+    assert "document_id" in embed_keys
+    assert "version_rank" in llm_keys
+    assert embed_keys == sorted(embed_keys)
+    assert llm_keys == sorted(llm_keys)
+    assert len(embed_keys) == len(set(embed_keys))
 
 
 def test_build_non_layout_node_parser_semantic_uses_config(monkeypatch):
@@ -112,6 +102,8 @@ def test_apply_ref_doc_ids_sets_from_metadata_document_id():
     _apply_ref_doc_ids([first, second, third])
 
     assert first.ref_doc_id == "doc-1"
-    assert first.relationships[NodeRelationship.SOURCE].node_id == "doc-1"
+    source_rel = first.relationships[NodeRelationship.SOURCE]
+    assert not isinstance(source_rel, list)
+    assert source_rel.node_id == "doc-1"
     assert second.ref_doc_id is None
     assert third.ref_doc_id is None

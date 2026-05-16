@@ -17,6 +17,7 @@ from app.ingestion.pdf_pipeline.helpers import (
     has_chart_signals,
     has_numeric_data,
     has_table_signals,
+    numeric_density as _numeric_density,
 )
 from app.ingestion.pdf_pipeline.pipeline import parse_pdf_layout_aware
 
@@ -24,6 +25,17 @@ logger = logging.getLogger(__name__)
 PARSER_NAME = "rag_parser"
 PARSER_VERSION = settings.PDF_LAYOUT_PARSER_VERSION
 LEGACY_PARSER_VERSION = "1.0.0"
+
+
+def _classify_slide_purpose_simple(text: str) -> str:
+    """Lightweight slide_purpose classifier for legacy PPTX parsing."""
+    nd = _numeric_density(text)
+    length = len(text)
+    if length < 600 and nd > 0.08:
+        return "overview_stats"
+    if nd > 0.06:
+        return "data_slide"
+    return "content"
 
 
 def save_upload_file(file_content: bytes, filename: str, dest_folder: str) -> str:
@@ -108,6 +120,9 @@ def _parse_legacy(
     def add_item(text: str, index: int, unit_type: str):
         page_or_slide = index + 1
         meta_key = "slide_num" if unit_type == "slide" else "page_num"
+        slide_purpose = (
+            _classify_slide_purpose_simple(text) if unit_type == "slide" else None
+        )
 
         meta = {
             **document_metadata,
@@ -116,6 +131,9 @@ def _parse_legacy(
             "parser_name": PARSER_NAME,
             "parser_version": LEGACY_PARSER_VERSION,
         }
+        if slide_purpose:
+            meta["slide_purpose"] = slide_purpose
+
         docs.append(LlamaDocument(text=text, metadata=meta))
 
         units.append(
@@ -128,6 +146,7 @@ def _parse_legacy(
                 "table_detected": has_table_signals(text),
                 "chart_detected": has_chart_signals(text),
                 "contains_numeric_data": has_numeric_data(text),
+                "slide_purpose": slide_purpose,
             }
         )
 

@@ -1,5 +1,7 @@
 from types import SimpleNamespace
+from typing import cast
 
+from app.db.models.chat import ChatMessage
 from app.core.config import settings
 from observability.cost_tracker import count_tokens
 from app.ingestion.pdf_pipeline.chunk_builder import split_body_text
@@ -39,7 +41,7 @@ def test_heuristic_summary_respects_token_limit(monkeypatch):
         SimpleNamespace(role="assistant", content=" ".join(["y"] * 300)),
     ]
 
-    summary = _heuristic_summary(rows)
+    summary = _heuristic_summary(cast(list[ChatMessage], rows))
     assert (
         count_tokens(summary, encoding_name=settings.TOKEN_BUDGET_ENCODING)
         <= settings.CHAT_SUMMARY_MAX_OUTPUT_TOKENS

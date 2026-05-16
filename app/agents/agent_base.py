@@ -7,6 +7,7 @@ from typing import Any
 
 from llama_index.core import Settings as LlamaSettings
 from llama_index.core.base.llms.types import (
+    ChatMessage,
     TextBlock,
 )
 from pydantic import BaseModel
@@ -80,7 +81,8 @@ def get_embeddings(*, model: str | None = None, api_key: str | None = None):
 def invoke_llm_chat(
     *,
     model: str,
-    input_messages: list[dict[str, Any]],
+    input_messages: list[dict[str, Any]] | None = None,
+    messages: list[ChatMessage] | None = None,
     structured_output_cls: type[BaseModel] | None = None,
     reasoning_effort: str | None = None,
     max_output_tokens: int | None = None,
@@ -95,7 +97,12 @@ def invoke_llm_chat(
     llm = get_llm(model=model, reasoning_effort=reasoning_effort)
     if structured_output_cls is not None:
         llm = llm.as_structured_llm(structured_output_cls)
-    messages = factory.to_chat_messages(input_messages)
+
+    if messages is None:
+        if input_messages is None:
+            raise ValueError("Either input_messages or messages must be provided")
+        messages = factory.to_chat_messages(input_messages)
+
     runtime_kwargs = factory.build_chat_runtime_kwargs(
         max_output_tokens=max_output_tokens,
         prompt_cache_key=prompt_cache_key,

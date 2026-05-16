@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from app.ingestion.pdf_pipeline import artifact_builders as builders
+from app.ingestion.pdf_pipeline.artifact import core as builders
 
 
 def test_run_reasoning_inference_disables_output_cap_for_responses(monkeypatch):

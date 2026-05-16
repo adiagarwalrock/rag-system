@@ -1,5 +1,8 @@
 {
   "permissions": {
+    "additionalDirectories": [
+      "/home/adiagarwal/vectera/tests"
+    ],
     "allow": [
       "Bash(uv add *)",
       "Bash(* --version)",

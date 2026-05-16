@@ -1,13 +1,14 @@
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 from app.core.config import settings
 from app.ingestion.pdf_pipeline import (
     adapters,
-    artifact_builders,
     page_structure,
     repair,
 )
+from app.ingestion.pdf_pipeline.artifact import core as artifact_builders
 from app.ingestion.pdf_pipeline.models import (
     ChartDatapointResponse,
     FigureArtifact,
@@ -27,6 +28,7 @@ class _FakeTextItem:
 
 class _FakePage:
     def __init__(self):
+        self.number = 0
         self.pageNum = 1
         self.width = 600
         self.height = 800
@@ -497,8 +499,10 @@ def test_run_reasoning_inference_uses_user_prompt_kwarg(monkeypatch):
     assert result.payload["key_insights"] == ["Structured insight"]
     messages = captured["input_messages"]
     assert isinstance(messages, list)
-    assert messages[1]["role"] == "user"
-    assert messages[1]["content"] == "analyze this"
+    msg = cast(dict[str, object], messages[1])
+    assert isinstance(msg, dict)
+    assert msg["role"] == "user"
+    assert msg["content"] == "analyze this"
     assert (
         captured["structured_output_cls"]
         is artifact_builders.ReasoningStructuredResponse

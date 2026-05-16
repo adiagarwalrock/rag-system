@@ -4,18 +4,24 @@ from types import SimpleNamespace
 from llama_index.core.base.llms.types import TextBlock, ThinkingBlock
 from llama_index.core.schema import NodeWithScore, TextNode
 
-import app.components.hybrid_retriever as retriever_module
+import app.components.retriever.core as retriever_module
+import app.services.synth_chat as synth_chat_module
 import app.services.synthesizer as synthesizer_module
+import app.services.synth_responses as synth_responses_module
+from app.prompts.registry import (
+    _build_conversation_context_block,
+    _collect_image_evidence_paths,
+)
 from app.services.citation_builder import build_citations
 from app.services.query_rewriter import should_expand_query
-from app.components.hybrid_retriever import (
+from app.services.synth_parse import (
+    extract_answer_and_reasoning_from_chat as _extract_answer_and_reasoning_from_chat,
+    split_reasoning_from_text as _split_reasoning_from_text,
+)
+from app.components.retriever.core import (
     RAGRetriever,
-    _build_conversation_context_block,
     _build_retrieval_diagnostics,
-    _collect_image_evidence_paths,
-    _extract_answer_and_reasoning_from_chat,
     _fuse_node_batches,
-    _split_reasoning_from_text,
 )
 from app.schemas.retrieval import GroundedAnswerStructuredResponse
 
@@ -619,6 +625,22 @@ def test_split_reasoning_from_text_extracts_thinking_and_answer():
     assert "compare figures" in reasoning
 
 
+def test_normalize_inline_citations_drops_out_of_range_and_dedupes():
+    normalized = synthesizer_module._normalize_inline_citations(
+        "Revenue increased [1, 9, 1]. Margin held [2][11].",
+        evidence_count=3,
+    )
+    assert normalized == "Revenue increased [1]. Margin held [2]."
+
+
+def test_normalize_inline_citations_preserves_valid_groups():
+    normalized = synthesizer_module._normalize_inline_citations(
+        "Top drivers were rent growth [1,2] and occupancy [3].",
+        evidence_count=3,
+    )
+    assert normalized == "Top drivers were rent growth [1,2] and occupancy [3]."
+
+
 def test_build_conversation_context_block_returns_no_context_marker():
     context_block = _build_conversation_context_block({})
     assert context_block == "NO_PRIOR_CONVERSATION_CONTEXT"
@@ -689,14 +711,14 @@ def test_synthesize_answer_prefers_responses_structured_output(monkeypatch):
             )
         )
 
-    monkeypatch.setattr(retriever_module, "ResponsesInputBudgeter", _FakeBudgeter)
+    monkeypatch.setattr(synth_responses_module, "ResponsesInputBudgeter", _FakeBudgeter)
     monkeypatch.setattr(
-        retriever_module,
+        synth_responses_module,
         "invoke_llm_chat",
         _fake_invoke_llm_chat,
     )
     monkeypatch.setattr(
-        retriever_module,
+        synth_responses_module,
         "extract_chat_response_text",
         lambda _response: "",
     )
@@ -774,10 +796,10 @@ def test_synthesize_answer_falls_back_when_structured_has_extra_keys(monkeypatch
             "extra": "unexpected",
         }
 
-    monkeypatch.setattr(retriever_module, "ResponsesInputBudgeter", _FakeBudgeter)
-    monkeypatch.setattr(retriever_module, "invoke_llm_chat", _fake_invoke_llm_chat)
+    monkeypatch.setattr(synth_responses_module, "ResponsesInputBudgeter", _FakeBudgeter)
+    monkeypatch.setattr(synth_responses_module, "invoke_llm_chat", _fake_invoke_llm_chat)
     monkeypatch.setattr(
-        retriever_module,
+        synth_responses_module,
         "extract_chat_response_text",
         lambda response: (
             json.dumps(response)
@@ -850,10 +872,10 @@ def test_synthesize_answer_falls_back_when_structured_has_cot_artifacts(monkeypa
             return json.dumps(response)
         return ""
 
-    monkeypatch.setattr(retriever_module, "ResponsesInputBudgeter", _FakeBudgeter)
-    monkeypatch.setattr(retriever_module, "invoke_llm_chat", _fake_invoke_llm_chat)
+    monkeypatch.setattr(synth_responses_module, "ResponsesInputBudgeter", _FakeBudgeter)
+    monkeypatch.setattr(synth_responses_module, "invoke_llm_chat", _fake_invoke_llm_chat)
     monkeypatch.setattr(
-        retriever_module,
+        synth_responses_module,
         "extract_chat_response_text",
         _fake_extract_chat_response_text,
     )
@@ -913,14 +935,10 @@ def test_synthesize_answer_uses_source_grounded_fallback_when_all_paths_fail(
             }
         return {"id": "empty-fallback"}
 
-    class _EmptyLLM:
-        def chat(self, _messages):
-            return SimpleNamespace(message=SimpleNamespace(blocks=[TextBlock(text="")]))
-
-    monkeypatch.setattr(retriever_module, "ResponsesInputBudgeter", _FakeBudgeter)
-    monkeypatch.setattr(retriever_module, "invoke_llm_chat", _fake_invoke_llm_chat)
+    monkeypatch.setattr(synth_responses_module, "ResponsesInputBudgeter", _FakeBudgeter)
+    monkeypatch.setattr(synth_responses_module, "invoke_llm_chat", _fake_invoke_llm_chat)
     monkeypatch.setattr(
-        retriever_module,
+        synth_responses_module,
         "extract_chat_response_text",
         lambda response: (
             json.dumps(response)
@@ -929,7 +947,13 @@ def test_synthesize_answer_uses_source_grounded_fallback_when_all_paths_fail(
             else ""
         ),
     )
-    monkeypatch.setattr(synthesizer_module, "get_llm", lambda **_kwargs: _EmptyLLM())
+    monkeypatch.setattr(
+        synth_chat_module,
+        "invoke_llm_chat",
+        lambda **_kwargs: SimpleNamespace(
+            message=SimpleNamespace(blocks=[TextBlock(text="")])
+        ),
+    )
 
     retriever = RAGRetriever("client-1", top_k=5)
     result = retriever._synthesize_answer(

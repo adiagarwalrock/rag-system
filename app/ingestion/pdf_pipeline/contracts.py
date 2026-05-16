@@ -20,7 +20,7 @@ from app.ingestion.pdf_pipeline.models import (
 
 @dataclass(slots=True)
 class ExtractionResult:
-    liteparse_pages: list[dict[str, Any]]
+    text_pages: list[dict[str, Any]]
     pymupdf_pages: list[dict[str, Any]]
     parse_meta: dict[str, Any]
 

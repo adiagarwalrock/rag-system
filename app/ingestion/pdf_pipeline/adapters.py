@@ -3,12 +3,13 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 import pymupdf as fitz
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions, TableStructureOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
+import docling.pipeline.standard_pdf_pipeline as docling_standard_pdf_pipeline
 
 from app.core.config import settings
 from app.ingestion.pdf_pipeline.contracts import ExtractionResult, PDFExtractionStage
@@ -21,11 +22,87 @@ from app.ingestion.pdf_pipeline.registry import PDFPipelineRegistry
 
 logger = logging.getLogger(__name__)
 
+
+@runtime_checkable
+class _PageLike(Protocol):
+    def find_tables(self, **kwargs: Any) -> Any: ...
+
+
 # ---------------------------------------------------------------------------
 # Docling singleton — loaded lazily on first use, reused across all documents
 # ---------------------------------------------------------------------------
 
 _DOCLING_CONVERTER: Any | None = None
+
+
+class _VecteraStandardPdfPipeline(docling_standard_pdf_pipeline.StandardPdfPipeline):
+    """
+    Docling pipeline variant that avoids deprecated table-image plumbing.
+
+    Upstream StandardPdfPipeline reads `generate_table_images`, which is deprecated
+    and emits a warning on attribute access. We follow Docling guidance by using
+    page images only (`generate_page_images=True`) and avoid touching the
+    deprecated field.
+    """
+
+    def _init_models(self) -> None:
+        m = docling_standard_pdf_pipeline
+        art_path = self.artifacts_path
+        self.keep_images = (
+            self.pipeline_options.generate_page_images
+            or self.pipeline_options.generate_picture_images
+        )
+        self.preprocessing_model = m.PagePreprocessingModel(
+            options=m.PagePreprocessingOptions(images_scale=self.pipeline_options.images_scale)
+        )
+        self.ocr_model = self._make_ocr_model(art_path)
+        layout_factory = m.get_layout_factory(
+            allow_external_plugins=self.pipeline_options.allow_external_plugins
+        )
+        self.layout_model = layout_factory.create_instance(
+            options=self.pipeline_options.layout_options,
+            artifacts_path=art_path,
+            accelerator_options=self.pipeline_options.accelerator_options,
+            enable_remote_services=self.pipeline_options.enable_remote_services,
+        )
+        table_factory = m.get_table_structure_factory(
+            allow_external_plugins=self.pipeline_options.allow_external_plugins
+        )
+        self.table_model = table_factory.create_instance(
+            options=self.pipeline_options.table_structure_options,
+            enabled=self.pipeline_options.do_table_structure,
+            artifacts_path=art_path,
+            accelerator_options=self.pipeline_options.accelerator_options,
+            enable_remote_services=self.pipeline_options.enable_remote_services,
+        )
+        self.assemble_model = m.PageAssembleModel(options=m.PageAssembleOptions())
+        self.reading_order_model = m.ReadingOrderModel(options=m.ReadingOrderOptions())
+
+        code_formula_opts = self.pipeline_options.code_formula_options.model_copy(
+            update={
+                "extract_code": self.pipeline_options.do_code_enrichment,
+                "extract_formulas": self.pipeline_options.do_formula_enrichment,
+            }
+        )
+        self.enrichment_pipe = [
+            m.CodeFormulaVlmModel(
+                enabled=self.pipeline_options.do_code_enrichment
+                or self.pipeline_options.do_formula_enrichment,
+                artifacts_path=self.artifacts_path,
+                options=code_formula_opts,
+                accelerator_options=self.pipeline_options.accelerator_options,
+                enable_remote_services=self.pipeline_options.enable_remote_services,
+            ),
+            *self.enrichment_pipe,
+        ]
+        self.keep_backend = any(
+            (
+                self.pipeline_options.do_formula_enrichment,
+                self.pipeline_options.do_code_enrichment,
+                self.pipeline_options.do_picture_classification,
+                self.pipeline_options.do_picture_description,
+            )
+        )
 
 
 def _get_docling_converter() -> DocumentConverter:
@@ -35,11 +112,19 @@ def _get_docling_converter() -> DocumentConverter:
         opts = PdfPipelineOptions()
         opts.do_ocr = False
         opts.do_table_structure = True
+        # Docling guidance: use page images and TableItem.get_image() instead of
+        # the deprecated generate_table_images field.
+        opts.generate_page_images = True
         if isinstance(opts.table_structure_options, TableStructureOptions):
             opts.table_structure_options.do_cell_matching = True
 
         _DOCLING_CONVERTER = DocumentConverter(
-            format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
+            format_options={
+                InputFormat.PDF: PdfFormatOption(
+                    pipeline_options=opts,
+                    pipeline_cls=_VecteraStandardPdfPipeline,
+                )
+            }
         )
         logger.info("Docling DocumentConverter initialised (DocLayNet layout model)")
     return _DOCLING_CONVERTER
@@ -241,7 +326,7 @@ class DefaultPDFExtractionStage(PDFExtractionStage):
             ),
         }
         return ExtractionResult(
-            liteparse_pages=text_pages,
+            text_pages=text_pages,
             pymupdf_pages=pymupdf_pages,
             parse_meta=parse_meta,
         )
@@ -463,7 +548,7 @@ def _extract_vector_bboxes(page: fitz.Page) -> list[list[float]] | None:
         return None
 
 
-def _extract_table_candidates(page: fitz.Page) -> list[dict[str, Any]] | None:
+def _extract_table_candidates(page: _PageLike) -> list[dict[str, Any]] | None:
     page_num = _page_number_for_logs(page)
     successful_detection = False
     strategy_failures = 0
@@ -569,7 +654,7 @@ def _build_table_candidates_from_tables(
     return candidates
 
 
-def _page_number_for_logs(page: fitz.Page) -> int:
+def _page_number_for_logs(page: _PageLike) -> int:
     page_index = getattr(page, "number", None)
     if isinstance(page_index, int):
         return page_index + 1

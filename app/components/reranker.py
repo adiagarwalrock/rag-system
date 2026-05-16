@@ -201,6 +201,7 @@ def _structural_adjustment(metadata: dict, query: str | None = None) -> float:
             "chart_context",
             "chart_data_points",
             "visual_proxy_text",
+            "chart_legend_chunk",
         }
         or _safe_bool(metadata.get("chart_detected"), False)
         or figure_type in {"chart", "diagram", "infographic"}

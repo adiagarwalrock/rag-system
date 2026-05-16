@@ -13,12 +13,7 @@ from typing import Any, Dict, List
 from llama_index.core.vector_stores import ExactMatchFilter, MetadataFilters
 
 # Backward-compatible re-exports: tests monkeypatch these on retriever_module
-from app.agents.agent_base import (  # noqa: F401
-    extract_chat_response_text,
-    invoke_llm_chat,
-    normalize_reasoning_effort,
-)
-from observability.cost_tracker import ResponsesInputBudgeter  # noqa: F401
+from app.agents.agent_base import normalize_reasoning_effort
 from app.indexing.vector_store import vector_store_manager
 from app.services.citation_builder import build_citations
 from app.services.conflict_detector import detect_conflicts
@@ -35,19 +30,10 @@ from app.services.evidence_selector import (
     _is_reasoning_chunk,
     _is_reasoning_priority_query,
     _is_time_anchored_query,
-    _node_has_image_assets,
     _node_unique_key,
 )
-from app.prompts.registry import (
-    _build_conversation_context_block,
-    _collect_image_evidence_paths,
-)
 from app.services.query_rewriter import build_query_variants, should_expand_query
-from app.services.synthesizer import (
-    GroundedAnswerSynthesizer,
-    _extract_answer_and_reasoning_from_chat,
-    _split_reasoning_from_text,
-)
+from app.services.synthesizer import GroundedAnswerSynthesizer
 
 logger = logging.getLogger(__name__)
 
@@ -288,14 +274,12 @@ class RAGRetriever:
             ranked_nodes=ranked_nodes,
             evidence_cap=evidence_cap,
         )
-
         selected = _ensure_image_evidence(
             question=question,
             selected_nodes=selected,
             ranked_nodes=ranked_nodes,
             evidence_cap=evidence_cap,
         )
-
         return selected
 
     def _resolve_evidence_cap(

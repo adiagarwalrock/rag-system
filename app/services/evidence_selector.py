@@ -8,7 +8,6 @@ from evidence-level logic.
 import logging
 import re
 from collections import Counter
-from functools import lru_cache
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -278,6 +277,7 @@ def _is_chart_like_node(node: Any) -> bool:
             "chart_context",
             "chart_data_points",
             "visual_proxy_text",
+            "chart_legend_chunk",
             "reasoning_chart",
             "reasoning_figure",
         }
@@ -392,6 +392,37 @@ def _build_retrieval_diagnostics(
 # ---------------------------------------------------------------------------
 
 
+def _is_stats_slide_node(node: Any) -> bool:
+    meta = node.node.metadata or {}
+    return meta.get("slide_purpose") in {"overview_stats", "data_slide"}
+
+
+def _wants_stats_slide_evidence(question: str) -> bool:
+    lowered = question.lower()
+    return any(
+        term in lowered
+        for term in (
+            "properties",
+            "leased",
+            "walt",
+            "abr",
+            "occupancy",
+            "enterprise value",
+            "total",
+            "portfolio",
+            "sq ft",
+            "square feet",
+            "assets under",
+            "aum",
+            "noi",
+            "ebitda",
+            "quick facts",
+            "fast facts",
+            "at a glance",
+        )
+    )
+
+
 def _ensure_structured_evidence(
     *,
     question: str,
@@ -401,14 +432,22 @@ def _ensure_structured_evidence(
 ) -> list[Any]:
     want_table = _wants_table_evidence(question)
     want_chart = _wants_chart_evidence(question)
-    if not want_table and not want_chart:
+    want_stats = _wants_stats_slide_evidence(question)
+
+    if not want_table and not want_chart and not want_stats:
         return selected_nodes
 
     selected = list(selected_nodes)
     selected_keys = {_node_unique_key(node) for node in selected}
+
+    anchor_doc_id = None
+    if selected and not _is_comparison_or_conflict_query(question):
+        anchor_doc_id = (selected[0].node.metadata or {}).get("document_id")
+
     requirements: list[tuple[bool, Any, str]] = [
         (want_table, _is_table_like_node, "table"),
         (want_chart, _is_chart_like_node, "chart"),
+        (want_stats, _is_stats_slide_node, "stats_slide"),
     ]
 
     for enabled, predicate, requirement_name in requirements:
@@ -416,15 +455,28 @@ def _ensure_structured_evidence(
             continue
         if any(predicate(node) for node in selected):
             continue
-
         candidate = next(
             (
                 node
                 for node in ranked_nodes
-                if predicate(node) and _node_unique_key(node) not in selected_keys
+                if predicate(node)
+                and _node_unique_key(node) not in selected_keys
+                and (
+                    not anchor_doc_id
+                    or (node.node.metadata or {}).get("document_id") == anchor_doc_id
+                )
             ),
             None,
         )
+        if candidate is None and anchor_doc_id:
+            candidate = next(
+                (
+                    node
+                    for node in ranked_nodes
+                    if predicate(node) and _node_unique_key(node) not in selected_keys
+                ),
+                None,
+            )
         if candidate is None:
             logger.debug(
                 "Structured evidence requirement unmet (type=%s): no ranked candidate",
@@ -506,7 +558,9 @@ def _ensure_image_evidence(
         for candidate in ranked_nodes:
             if image_node_count >= desired_image_nodes:
                 break
-            if not _is_page_card_node(candidate) or not _node_has_image_assets(candidate):
+            if not _is_page_card_node(candidate) or not _node_has_image_assets(
+                candidate
+            ):
                 continue
             candidate_key = _node_unique_key(candidate)
             if candidate_key in selected_keys:

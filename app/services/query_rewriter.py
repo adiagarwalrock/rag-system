@@ -247,11 +247,15 @@ def _build_query_expansion_messages(
         {
             "role": "user",
             "content": (
-                "Rewrite the latest user question into retrieval queries. "
-                "Use prior turns only for reference resolution. "
-                "Do not answer.\n\n"
-                f"Latest question:\n{current_question}\n\n"
-                f"max_rewrites={max_rewrites}"
+                "Rewrite the latest user question into short retrieval queries.\n"
+                "Outcome: maximize retrieval recall while preserving the user's intent.\n"
+                "Rules:\n"
+                "- Keep entities, versions, dates, and numbers intact.\n"
+                "- Use prior turns only to resolve references.\n"
+                "- Do not answer the question.\n"
+                f"- Return at most {max_rewrites} rewrites.\n"
+                "- If the original question is already retrieval-ready, return one close rewrite.\n\n"
+                f"Latest question:\n{current_question}\n"
             ),
         }
     )

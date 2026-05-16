@@ -12,7 +12,7 @@ from llama_index.core import Document as LlamaDocument
 
 from app.core.config import settings
 from app.ingestion.pdf_pipeline.adapters import DefaultPDFExtractionStage
-from app.ingestion.pdf_pipeline.artifact_builders import DefaultArtifactStage
+from app.ingestion.pdf_pipeline.artifact.core import DefaultArtifactStage
 from app.ingestion.pdf_pipeline.chunk_builder import DefaultChunkStage
 from app.ingestion.pdf_pipeline.contracts import (
     ArtifactStage,
@@ -101,7 +101,7 @@ class PDFIngestionPipeline:
             )
             page_manifests, regions = self.page_structure_stage.build(
                 document_id=self.document_id,
-                liteparse_pages=extraction.liteparse_pages,
+                liteparse_pages=extraction.text_pages,
                 pymupdf_pages=extraction.pymupdf_pages,
                 parse_meta=extraction.parse_meta,
                 repair_meta=repair_meta,
@@ -124,7 +124,7 @@ class PDFIngestionPipeline:
 
         self.chunk_stage.write_bundle(
             artifact_root=self.paths.artifact_root,
-            liteparse_pages=extraction.liteparse_pages,
+            liteparse_pages=extraction.text_pages,
             pymupdf_pages=extraction.pymupdf_pages,
             page_manifests=page_manifests,
             regions=regions,

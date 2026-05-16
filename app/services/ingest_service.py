@@ -15,6 +15,7 @@ from llama_index.core.extractors import (
 )
 from llama_index.core.ingestion import IngestionPipeline
 from llama_index.core.schema import BaseNode
+from llama_index.core.storage.docstore import SimpleDocumentStore
 from sqlalchemy import true
 from sqlalchemy.orm import Session
 
@@ -550,7 +551,11 @@ class IngestionPipelineExecutor:
                     SummaryExtractor(summaries=["prev", "self"]),
                     KeywordExtractor(keywords=10),
                     QuestionsAnsweredExtractor(num_questions=3),
-                    DocumentContextExtractor(llm=LlamaSettings.llm, num_workers=3),
+                    DocumentContextExtractor(
+                        docstore=SimpleDocumentStore(),
+                        llm=LlamaSettings.llm,
+                        num_workers=3,
+                    ),
                 ]
             )
             logger.info("Added LLM-based extractors (Title, Summary) to pipeline")
@@ -686,3 +691,31 @@ def _supersede_older_versions(db: Session, client_id: str, doc_id: str, group: s
             old_ver.document_id,
             doc_id,
         )
+
+
+def _mark_current_by_version_rank(resolved_versions: list[dict]) -> None:
+    """For each version_group, mark the highest version_rank as is_current=True."""
+    by_group: dict[str, list[dict]] = {}
+    for v in resolved_versions:
+        group = v.get("version_group", "")
+        by_group.setdefault(group, []).append(v)
+
+    for group, versions in by_group.items():
+        if len(versions) <= 1:
+            continue
+        best = max(versions, key=lambda v: v.get("version_rank", 0))
+        if not best.get("is_current"):
+            best["is_current"] = True
+            logger.info(
+                "Marked version %s (group %s) as is_current=True",
+                best.get("version_label"),
+                group,
+            )
+        for v in versions:
+            if v["id"] != best["id"] and v.get("is_current"):
+                v["is_current"] = False
+                logger.info(
+                    "Marked version %s (group %s) as is_current=False",
+                    v.get("version_label"),
+                    group,
+                )

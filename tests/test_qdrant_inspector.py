@@ -76,6 +76,8 @@ def test_group_points_merges_points_with_same_canonical_document():
     payload_2["_node_content"] = json.dumps(node)
     p2 = _normalize_point_item({"payload": payload_2}, index=2)
 
+    assert p1 is not None
+    assert p2 is not None
     grouped = _group_points_by_document([p1, p2])
     assert len(grouped) == 1
     assert grouped[0]["point_count"] == 2
@@ -95,6 +97,8 @@ def test_group_points_falls_back_to_name_then_unknown():
     )
     unknown = _normalize_point_item({"payload": {"chunk_id": "x2"}}, index=2)
 
+    assert name_only is not None
+    assert unknown is not None
     grouped = _group_points_by_document([name_only, unknown])
     keys = [group["document_key"] for group in grouped]
 
