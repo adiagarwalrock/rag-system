@@ -1,0 +1,24 @@
+{"id": 1, "category": "tables_matrices_and_structured_visuals", "requires_multimodal": true, "difficulty": "easy", "question": "What is Digital Realty's total IT capacity?"}
+{"id": 2, "category": "temporal_and_version_reasoning", "requires_multimodal": false, "difficulty": "medium", "question": "What is BXP's projected 2026 occupancy?"}
+{"id": 3, "category": "temporal_and_version_reasoning", "requires_multimodal": false, "difficulty": "hard", "question": "What's changed in BXP's strategy between the 2025 Investor Day and the Q4 2025 update?"}
+{"id": 4, "category": "single_document_factual_retrieval", "requires_multimodal": false, "difficulty": "medium", "question": "What is the economic impact of Simon's shopping centers on local communities?"}
+{"id": 5, "category": "intra_document_consistency", "requires_multimodal": false, "difficulty": "easy", "question": "How many customers does Digital Realty have?"}
+{"id": 6, "category": "intra_document_consistency", "requires_multimodal": false, "difficulty": "easy", "question": "What is BXP's dividend yield?"}
+{"id": 7, "category": "intra_document_consistency", "requires_multimodal": false, "difficulty": "medium", "question": "What was BXP's actual market dividend yield as of August 29, 2025?"}
+{"id": 8, "category": "intra_document_consistency", "requires_multimodal": false, "difficulty": "hard", "question": "How has Digital Realty's customer credit-quality profile changed between the Dec 2025 and Mar 2026 presentations?"}
+{"id": 9, "category": "single_document_factual_retrieval", "requires_multimodal": false, "difficulty": "easy", "question": "In how many countries does Realty Income operate?"}
+{"id": 10, "category": "single_document_factual_retrieval", "requires_multimodal": false, "difficulty": "easy", "question": "How big is EastGroup's portfolio?"}
+{"id": 11, "category": "document_scope_and_type", "requires_multimodal": false, "difficulty": "medium", "question": "What is Public Storage's NOI margin?"}
+{"id": 12, "category": "document_scope_and_type", "requires_multimodal": false, "difficulty": "medium", "question": "What is PSA's outlook for 2026?"}
+{"id": 13, "category": "document_scope_and_type", "requires_multimodal": false, "difficulty": "medium", "question": "What percentage of BXP's portfolio is in CBD markets?"}
+{"id": 14, "category": "document_scope_and_type", "requires_multimodal": false, "difficulty": "medium", "question": "What is the average occupancy difference between Public Storage and NSA's same-store portfolios?"}
+{"id": 15, "category": "chart_and_graph_interpretation", "requires_multimodal": true, "difficulty": "hard", "question": "Among the major self-storage REITs, what is each company's same-store NOI growth and NOI margin?"}
+{"id": 16, "category": "tables_matrices_and_structured_visuals", "requires_multimodal": false, "difficulty": "medium", "question": "Who is VICI's largest tenant by rent, and what percentage of rent do they represent?"}
+{"id": 17, "category": "chart_and_graph_interpretation", "requires_multimodal": true, "difficulty": "medium", "question": "What are VICI's 10 trophy assets on the Las Vegas Strip?"}
+{"id": 18, "category": "chart_and_graph_interpretation", "requires_multimodal": true, "difficulty": "hard", "question": "What share of Realty Income's annualized base rent comes from each U.S. region vs Europe?"}
+{"id": 19, "category": "chart_and_graph_interpretation", "requires_multimodal": true, "difficulty": "hard", "question": "Which markets does EastGroup operate in, ranked by importance?"}
+{"id": 20, "category": "single_document_factual_retrieval", "requires_multimodal": false, "difficulty": "easy", "question": "What is EastGroup's strategy for property selection?"}
+{"id": 21, "category": "single_document_factual_retrieval", "requires_multimodal": false, "difficulty": "easy", "question": "What is BXP's key strategy?"}
+{"id": 22, "category": "cross_document_synthesis", "requires_multimodal": false, "difficulty": "hard", "question": "How is AI affecting demand across the different real estate sectors represented in these documents?"}
+{"id": 23, "category": "cross_document_synthesis", "requires_multimodal": false, "difficulty": "hard", "question": "VICI and Realty Income both mention gaming exposure. How are their gaming portfolios different?"}
+{"id": 24, "category": "cross_document_synthesis", "requires_multimodal": false, "difficulty": "hard", "question": "What is the 2026 FFO outlook for each REIT in the corpus?"}

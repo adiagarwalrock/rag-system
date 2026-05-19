@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     SNOWFLAKE_SCHEMA: str | None = None
     SNOWFLAKE_WAREHOUSE: str | None = None
     SNOWFLAKE_ROLE: str | None = None
+    SNOWFLAKE_TOKEN: str | None = None
 
     # Qdrant
     QDRANT_URL: str = "http://localhost:6333"
@@ -43,6 +44,7 @@ class Settings(BaseSettings):
     # EMBEDDING_MODEL: str = "gemini-embedding-2-preview"
     EMBEDDING_MODEL: str = "text-embedding-3-large"
     EMBEDDING_OUTPUT_DIMENSION: int | None = None
+    RERANKER_MODEL: str = "jinaai/jina-reranker-v1-turbo-en"
     RESPONSE_INPUT_BUDGET_RATIO: float = 0.8
     RESPONSE_MAX_OUTPUT_TOKENS: int = 1200
     RESPONSE_PROMPT_CACHE_KEY: str = "rag:grounded-answer:v2"
@@ -54,7 +56,8 @@ class Settings(BaseSettings):
     CHAT_SUMMARY_MAX_OUTPUT_TOKENS: int = 300
     SESSION_SUMMARY_TIMEOUT_SECONDS: int = 15
 
-    COLLECTION_NAME: str = "rag_collection_oai_v2"
+    COLLECTION_NAME: str = "rag_collection_oai"
+    # COLLECTION_NAME: str = "rag_original"
     CHAT_HISTORY_COLLECTION_NAME: str = "chat_history"
     VECTOR_DIMENSIONS: int = 3072
 

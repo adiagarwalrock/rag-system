@@ -32,6 +32,7 @@ from app.retrieval.evidence_selector import (
     _has_numeric_signal,
     _is_comparison_or_conflict_query,
     _is_conflict_focused_query,
+    _is_cross_document_synthesis_query,
     _is_reasoning_chunk,
     _is_reasoning_priority_query,
     _is_time_anchored_query,
@@ -59,6 +60,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_EVIDENCE_LIMIT = 7
 COMPARATIVE_EVIDENCE_LIMIT = 10
 CONFLICT_EVIDENCE_LIMIT = 8
+CROSS_DOCUMENT_EVIDENCE_LIMIT = 14
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +85,7 @@ class RAGRetriever:
         self.top_k = top_k
         self.reasoning_effort = normalize_reasoning_effort(reasoning_effort)
         self.conversation_context = conversation_context or {}
-        self.prefetch_top_k = top_k + 5
+        self.prefetch_top_k = top_k * 5
         self.evidence_limit = DEFAULT_EVIDENCE_LIMIT
         self.comparative_evidence_limit = COMPARATIVE_EVIDENCE_LIMIT
         self.conflict_evidence_limit = CONFLICT_EVIDENCE_LIMIT
@@ -160,10 +162,12 @@ class RAGRetriever:
             **retrieval_metadata,
         }
 
-    def retrieve_only(self, question: str) -> List:
+    def retrieve_only(self, question: str, rerank: bool = True) -> List:
         """Retrieve source nodes without generating an answer."""
         source_nodes, _ = self._retrieve(question)
-        return self._rank_nodes(question, source_nodes)
+        if rerank:
+            return self._rank_nodes(question, source_nodes)
+        return source_nodes
 
     def _rank_nodes(self, question: str, source_nodes: list) -> list:
         from app.retrieval.reranker import rerank_nodes
@@ -204,11 +208,9 @@ class RAGRetriever:
         return nodes, {"retrieval_mode": mode, "query_expanded": expanded}
 
     def _retrieve_with_mode(self, question: str, hybrid: bool) -> tuple[list, bool]:
-        prefetch_top_k = (
-            self.prefetch_top_k + 10
-            if _is_conflict_focused_query(question)
-            else self.prefetch_top_k
-        )
+        prefetch_top_k = self.prefetch_top_k
+        if _is_conflict_focused_query(question):
+            prefetch_top_k += 10
         base_retriever = vector_store_manager.get_retriever(
             filters=self.filters,
             similarity_top_k=prefetch_top_k,
@@ -253,9 +255,11 @@ class RAGRetriever:
 
         comparative_query = _is_comparison_or_conflict_query(question)
         conflict_focused_query = _is_conflict_focused_query(question)
+        cross_document_query = _is_cross_document_synthesis_query(ranked_nodes)
         evidence_cap = self._resolve_evidence_cap(
             comparative_query=comparative_query,
             conflict_focused_query=conflict_focused_query,
+            cross_document_query=cross_document_query,
         )
         candidate_nodes = self._prioritize_conflict_candidates(
             ranked_nodes=ranked_nodes,
@@ -292,7 +296,10 @@ class RAGRetriever:
         *,
         comparative_query: bool,
         conflict_focused_query: bool,
+        cross_document_query: bool = False,
     ) -> int:
+        if cross_document_query:
+            return CROSS_DOCUMENT_EVIDENCE_LIMIT
         if conflict_focused_query:
             return self.conflict_evidence_limit
         if comparative_query:
@@ -324,12 +331,25 @@ class RAGRetriever:
         if _is_reasoning_priority_query(question):
             return candidate_nodes, []
 
-        primary_candidates = [
-            node for node in candidate_nodes if not _is_reasoning_chunk(node)
-        ]
-        secondary_candidates = [
-            node for node in candidate_nodes if _is_reasoning_chunk(node)
-        ]
+        # For comparison/conflict queries, keep factual chunks leading regardless of score.
+        if _is_comparison_or_conflict_query(question):
+            primary_candidates = [
+                node for node in candidate_nodes if not _is_reasoning_chunk(node)
+            ]
+            secondary_candidates = [
+                node for node in candidate_nodes if _is_reasoning_chunk(node)
+            ]
+            return primary_candidates, secondary_candidates
+
+        # For all other queries, promote high-scoring reasoning chunks to primary.
+        cutoff = max(1, len(candidate_nodes) // 2)
+        primary_candidates = []
+        secondary_candidates = []
+        for rank, node in enumerate(candidate_nodes):
+            if _is_reasoning_chunk(node) and rank >= cutoff:
+                secondary_candidates.append(node)
+            else:
+                primary_candidates.append(node)
         return primary_candidates, secondary_candidates
 
     def _collect_evidence_candidates(

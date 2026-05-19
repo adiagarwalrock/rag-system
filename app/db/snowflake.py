@@ -26,10 +26,10 @@ def get_engine():
             f"&role={settings.SNOWFLAKE_ROLE}"
         )
         return create_engine(conn_str, echo=False)
-    # Fallback to local SQLite for rapid development and testing
-    logger.info("Connecting to local SQLite database fallback")
+    # Fallback to local SQLite
+    logger.info("Connecting to local SQLite database (sf_dump.db)")
     return create_engine(
-        "sqlite:///./rag_local.db", connect_args={"check_same_thread": False}
+        "sqlite:///./sf_dump.db", connect_args={"check_same_thread": False}
     )
 
 

@@ -1,0 +1,2736 @@
+{
+  "document_id": "",
+  "source_filename": "Public Storage Company Update - March 2026",
+  "document_type": "investor_presentation",
+  "company_name": "Public Storage",
+  "ticker": null,
+  "currency": "USD",
+  "unit_scale": "units",
+  "fiscal_year_end": null,
+  "total_pages": 17,
+  "pages": [
+    {
+      "page_number": 1,
+      "extracted_text_blob": "Public Storage\nCompany Update\nMarch 2026",
+      "company_name": "Public Storage",
+      "timeline": {
+        "start": "",
+        "end": ""
+      },
+      "section_path": "Cover",
+      "tables": [],
+      "figures": [
+        {
+          "figure_id": "p1_f1",
+          "page_num": 1,
+          "bbox": [],
+          "caption_text": "",
+          "nearby_text": "Cover photo with Public Storage signage",
+          "section_path": "Cover",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [],
+          "confidence": 0.98,
+          "figure_type": "photo",
+          "chart_type": "unknown",
+          "chart_title": "",
+          "x_axis_label": "",
+          "y_axis_label": "",
+          "x_categories": [],
+          "units": [],
+          "as_of_date": null,
+          "data_source_label": null,
+          "series": [],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [],
+          "trend_summary": "",
+          "key_chart_facts": [],
+          "visual_proxy_text": "Photo of a Public Storage self-storage property exterior with signage.",
+          "numeric_extraction_confidence": null,
+          "chart_parse_status": "not_applicable",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        }
+      ],
+      "has_table": false,
+      "has_figure": true,
+      "has_image": true,
+      "ocr_confidence": 0.99,
+      "is_scanned": false,
+      "extraction_notes": [
+        "Only month and year (March 2026) shown; no exact dates to populate timeline."
+      ]
+    },
+    {
+      "page_number": 2,
+      "extracted_text_blob": "Public Storage: Fast Facts\nLeadership\n$60B enterprise value\nNYSE / S&P 500 company\n53 years in operation\n#1 largest owner of self-storage globally\nCreditworthiness\nA2 / A credit rating (Moody’s/S&P)\n3.1% weighted average cost of debt\n4.2x net debt and preferred equity to EBITDA\nFinancial\n$4.8b TTM revenues\n$3.5b TTM net operating income (NOI)\n4.3% dividend yield\n9.4% dividend growth CAGR1\nExternal Growth\n24% properties in high growth non-same store portfolio\n$70M incremental NOI to stabilization (’27 and beyond)\n$12B acquired or developed in the last five years\nPortfolio Stats\n3,533 properties\n258M rentable square feet\n40 states\n2.1M customers\nPortfolio Composition (pie): Same Store 76%; Acquisitions 14%; Developments & Expansions 10%\nSource: Company filings\n1. Since 1996.",
+      "company_name": "Public Storage",
+      "timeline": {
+        "start": "",
+        "end": ""
+      },
+      "section_path": "Fast Facts",
+      "tables": [],
+      "figures": [
+        {
+          "figure_id": "p2_f1",
+          "page_num": 2,
+          "bbox": [],
+          "caption_text": "Portfolio Composition",
+          "nearby_text": "Same Store 76%; Acquisitions 14%; Developments & Expansions 10%",
+          "section_path": "Fast Facts",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [],
+          "confidence": 0.96,
+          "figure_type": "chart",
+          "chart_type": "pie",
+          "chart_title": "Portfolio Composition",
+          "x_axis_label": "",
+          "y_axis_label": "",
+          "x_categories": [],
+          "units": [
+            "%"
+          ],
+          "as_of_date": null,
+          "data_source_label": "Source: Company filings",
+          "series": [],
+          "pie_segments": [
+            {
+              "label": "Same Store",
+              "value": null,
+              "pct": 76
+            },
+            {
+              "label": "Acquisitions",
+              "value": null,
+              "pct": 14
+            },
+            {
+              "label": "Developments & Expansions",
+              "value": null,
+              "pct": 10
+            }
+          ],
+          "matrix_cells": [],
+          "stat_box_values": [],
+          "trend_summary": "Same store accounts for the majority of the portfolio.",
+          "key_chart_facts": [
+            "Same Store = 76%",
+            "Acquisitions = 14%",
+            "Developments & Expansions = 10%"
+          ],
+          "visual_proxy_text": "Pie chart labeled Portfolio Composition with segments: Same Store 76%, Acquisitions 14%, Developments & Expansions 10%.",
+          "numeric_extraction_confidence": 0.99,
+          "chart_parse_status": "success",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        },
+        {
+          "figure_id": "p2_f2",
+          "page_num": 2,
+          "bbox": [],
+          "caption_text": "Portfolio Stats map",
+          "nearby_text": "3,533 properties; 258M rentable square feet; 40 states; 2.1M customers",
+          "section_path": "Fast Facts",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [],
+          "confidence": 0.95,
+          "figure_type": "map",
+          "chart_type": "unknown",
+          "chart_title": "Portfolio Stats",
+          "x_axis_label": "",
+          "y_axis_label": "",
+          "x_categories": [],
+          "units": [],
+          "as_of_date": null,
+          "data_source_label": "Source: Company filings",
+          "series": [],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [],
+          "trend_summary": "",
+          "key_chart_facts": [
+            "Properties: 3,533",
+            "Rentable square feet: 258M",
+            "States: 40",
+            "Customers: 2.1M"
+          ],
+          "visual_proxy_text": "United States map shaded in orange across most states with a right-hand panel listing stats: 3,533 properties; 258M rentable square feet; 40 states; 2.1M customers.",
+          "numeric_extraction_confidence": null,
+          "chart_parse_status": "not_applicable",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        }
+      ],
+      "has_table": false,
+      "has_figure": true,
+      "has_image": false,
+      "ocr_confidence": 0.98,
+      "is_scanned": false,
+      "extraction_notes": []
+    },
+    {
+      "page_number": 3,
+      "extracted_text_blob": "Company Updates\nI. PS4.0™\n✓ PS Next™ combines the industry’s leading owned-property portfolio with the only scaled omnichannel digital-first platform\n✓ Value Creation Engine to accelerate capital deployment onto a platform with the industry’s leading cashflows and returns\n• + Welltower Data Science Partnership\n✓ Own-It Culture defined by accountability, collaboration, and long-term value creation\n✓ Executive and Board Leadership transitions to support PS4.0\nII. Results & Guidance\n✓ #1 NOI margin1 at year-end 2025\n✓ Highest rent per available square foot1 in the industry\n✓ +16.2% Non-Same Store NOI growth in 2026\n✓ +11.5% Ancillary NOI growth in 2026\nIII. Operating Trends\n✓ Achieved +50bps in period ending occupancy in 4Q25 and +40bps in YTD 2026 average occupancy\n✓ Move-in rates trending more favorably sequentially\n✓ Strong existing customer behavior with decreasing move-out activity and higher retention\nIV. Capital Activity\n✓ Delivered ~$1.4 billion in acquisitions and developments in 2025 with blended stabilized yields in the low-7% range\n✓ Issued ~$1.4 billion in unsecured bonds in 2025 at an average coupon rate of 4.2%\n✓ 2.9x Net debt / EBITDA and 4.2x Net debt & preferred / EBITDA at quarter-end\nSource: Company filings\n1. As compared to the public Self-Storage peers.",
+      "company_name": "Public Storage",
+      "timeline": {
+        "start": "",
+        "end": ""
+      },
+      "section_path": "Company Updates",
+      "tables": [],
+      "figures": [],
+      "has_table": false,
+      "has_figure": false,
+      "has_image": false,
+      "ocr_confidence": 0.98,
+      "is_scanned": false,
+      "extraction_notes": []
+    },
+    {
+      "page_number": 4,
+      "extracted_text_blob": "Improving Move-In Rates, Occupancy & Retention\nSame-Store Move-In Rate (y/y %)\nValues shown: (5.5%), (5.5%), (5.3%), (10.6%), (4.7%) for 1Q25, 2Q25, 3Q25, 4Q25, YTD 2026\nSame-Store Move-Out Rate (y/y %)\nValues shown: (1.8%), (2.3%), (1.5%), 0.3%, (2.3%) for 1Q25, 2Q25, 3Q25, 4Q25, YTD 2026\nSame-Store Occupancy\nWeighted Avg Occupancy (LHS): 91.1%, 92.3%, 91.9%, 91.1%, 91.3%\nY/Y Occupancy Change (RHS): -0.4%, -0.2%, -0.4%, -0.3%, 0.4%\nSource: Company filings",
+      "company_name": "Public Storage",
+      "timeline": {
+        "start": "",
+        "end": ""
+      },
+      "section_path": "Operating Metrics",
+      "tables": [],
+      "figures": [
+        {
+          "figure_id": "p4_f1",
+          "page_num": 4,
+          "bbox": [],
+          "caption_text": "",
+          "nearby_text": "",
+          "section_path": "Operating Metrics",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [],
+          "confidence": 0.96,
+          "figure_type": "chart",
+          "chart_type": "line",
+          "chart_title": "Same-Store Move-In Rate (y/y %)",
+          "x_axis_label": "",
+          "y_axis_label": "%",
+          "x_categories": [
+            "1Q25",
+            "2Q25",
+            "3Q25",
+            "4Q25",
+            "YTD 2026"
+          ],
+          "units": [
+            "%"
+          ],
+          "as_of_date": null,
+          "data_source_label": "Source: Company filings",
+          "series": [
+            {
+              "series_name": "Move-In Rate y/y",
+              "data_points": [
+                {
+                  "label": "1Q25",
+                  "value": -5.5,
+                  "approximate": false
+                },
+                {
+                  "label": "2Q25",
+                  "value": -5.5,
+                  "approximate": false
+                },
+                {
+                  "label": "3Q25",
+                  "value": -5.3,
+                  "approximate": false
+                },
+                {
+                  "label": "4Q25",
+                  "value": -10.6,
+                  "approximate": false
+                },
+                {
+                  "label": "YTD 2026",
+                  "value": -4.7,
+                  "approximate": false
+                }
+              ]
+            }
+          ],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [],
+          "trend_summary": "Move-in rate y/y decline eased from -10.6% in 4Q25 to -4.7% YTD 2026.",
+          "key_chart_facts": [
+            "Worst reading in 4Q25 at -10.6%",
+            "YTD 2026 at -4.7%"
+          ],
+          "visual_proxy_text": "Line chart with five points labeled 1Q25 to YTD 2026 showing y/y move-in rate: -5.5%, -5.5%, -5.3%, -10.6%, -4.7%.",
+          "numeric_extraction_confidence": 0.99,
+          "chart_parse_status": "success",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        },
+        {
+          "figure_id": "p4_f2",
+          "page_num": 4,
+          "bbox": [],
+          "caption_text": "",
+          "nearby_text": "",
+          "section_path": "Operating Metrics",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [],
+          "confidence": 0.96,
+          "figure_type": "chart",
+          "chart_type": "line",
+          "chart_title": "Same-Store Move-Out Rate (y/y %)",
+          "x_axis_label": "",
+          "y_axis_label": "%",
+          "x_categories": [
+            "1Q25",
+            "2Q25",
+            "3Q25",
+            "4Q25",
+            "YTD 2026"
+          ],
+          "units": [
+            "%"
+          ],
+          "as_of_date": null,
+          "data_source_label": "Source: Company filings",
+          "series": [
+            {
+              "series_name": "Move-Out Rate y/y",
+              "data_points": [
+                {
+                  "label": "1Q25",
+                  "value": -1.8,
+                  "approximate": false
+                },
+                {
+                  "label": "2Q25",
+                  "value": -2.3,
+                  "approximate": false
+                },
+                {
+                  "label": "3Q25",
+                  "value": -1.5,
+                  "approximate": false
+                },
+                {
+                  "label": "4Q25",
+                  "value": 0.3,
+                  "approximate": false
+                },
+                {
+                  "label": "YTD 2026",
+                  "value": -2.3,
+                  "approximate": false
+                }
+              ]
+            }
+          ],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [],
+          "trend_summary": "Move-out rate improved from 0.3% in 4Q25 to -2.3% YTD 2026.",
+          "key_chart_facts": [
+            "4Q25 was +0.3%",
+            "YTD 2026 is -2.3%"
+          ],
+          "visual_proxy_text": "Line chart with values: -1.8%, -2.3%, -1.5%, 0.3%, -2.3%.",
+          "numeric_extraction_confidence": 0.99,
+          "chart_parse_status": "success",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        },
+        {
+          "figure_id": "p4_f3",
+          "page_num": 4,
+          "bbox": [],
+          "caption_text": "",
+          "nearby_text": "",
+          "section_path": "Operating Metrics",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [],
+          "confidence": 0.96,
+          "figure_type": "chart",
+          "chart_type": "combo",
+          "chart_title": "Same-Store Occupancy",
+          "x_axis_label": "",
+          "y_axis_label": "%",
+          "x_categories": [
+            "1Q25",
+            "2Q25",
+            "3Q25",
+            "4Q25",
+            "YTD26"
+          ],
+          "units": [
+            "%"
+          ],
+          "as_of_date": null,
+          "data_source_label": "Source: Company filings",
+          "series": [
+            {
+              "series_name": "Wtd Avg Occupancy (LHS)",
+              "data_points": [
+                {
+                  "label": "1Q25",
+                  "value": 91.1,
+                  "approximate": false
+                },
+                {
+                  "label": "2Q25",
+                  "value": 92.3,
+                  "approximate": false
+                },
+                {
+                  "label": "3Q25",
+                  "value": 91.9,
+                  "approximate": false
+                },
+                {
+                  "label": "4Q25",
+                  "value": 91.1,
+                  "approximate": false
+                },
+                {
+                  "label": "YTD26",
+                  "value": 91.3,
+                  "approximate": false
+                }
+              ]
+            },
+            {
+              "series_name": "Y/Y Occupancy Change (RHS)",
+              "data_points": [
+                {
+                  "label": "1Q25",
+                  "value": -0.4,
+                  "approximate": false
+                },
+                {
+                  "label": "2Q25",
+                  "value": -0.2,
+                  "approximate": false
+                },
+                {
+                  "label": "3Q25",
+                  "value": -0.4,
+                  "approximate": false
+                },
+                {
+                  "label": "4Q25",
+                  "value": -0.3,
+                  "approximate": false
+                },
+                {
+                  "label": "YTD26",
+                  "value": 0.4,
+                  "approximate": false
+                }
+              ]
+            }
+          ],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [],
+          "trend_summary": "Occupancy held around 91–92% with y/y change turning positive to +0.4% YTD26.",
+          "key_chart_facts": [
+            "Occupancy peaked at 92.3% in 2Q25",
+            "Y/Y occupancy change improved to +0.4% YTD26"
+          ],
+          "visual_proxy_text": "Combo chart with occupancy level and y/y change across 1Q25–YTD26: levels 91.1%, 92.3%, 91.9%, 91.1%, 91.3%; y/y changes -0.4%, -0.2%, -0.4%, -0.3%, 0.4%.",
+          "numeric_extraction_confidence": 0.99,
+          "chart_parse_status": "success",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        }
+      ],
+      "has_table": false,
+      "has_figure": true,
+      "has_image": false,
+      "ocr_confidence": 0.98,
+      "is_scanned": false,
+      "extraction_notes": []
+    },
+    {
+      "page_number": 5,
+      "extracted_text_blob": "Self-Storage Industry Outlook\nRising demand, affordable rents, and declining competitive new supply underpin an improving industry backdrop\nRising Utilization — % of Population Using Self Storage1: 1985 3%, 1995 4%, 2005 6%, 2015 8%, 2025 10%\nIn-Place Rents vs Home Prices2 — Indexed to 100 in 2012 (trend lines shown)\nDeclining Competitive New Supply — New Supply Growth3: 2019 5.0%, 2021 3.9%, 2023 3.2%, 2025 2.5%, 2026E 2.0%\nFragmented Industry — ~2.7 billion square feet4: Public 22%, Private 78%\nSource: S&P Dow Jones Indices LLC, The Self Storage Almanac, Radius+, Yardi Matrix, and Public Storage\n1. 2025 Self Storage Almanac.\n2. Based on Public Storage same store average rent per occupied square foot for customers in-place in during each period and S&P Case Shiller Home Price Index.\n3. Reflects estimated annual expansion of total self storage net rentable square footage in the United States.\n4. Public owners include Public Storage, CubeSmart, Extra Space, National Storage Affiliates, SmartStop, and U-Haul.",
+      "company_name": "Public Storage",
+      "timeline": {
+        "start": "",
+        "end": ""
+      },
+      "section_path": "Industry Outlook",
+      "tables": [],
+      "figures": [
+        {
+          "figure_id": "p5_f1",
+          "page_num": 5,
+          "bbox": [],
+          "caption_text": "Rising Utilization",
+          "nearby_text": "% of Population Using Self Storage",
+          "section_path": "Industry Outlook",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [
+            {
+              "ref": "1",
+              "text": "2025 Self Storage Almanac."
+            }
+          ],
+          "confidence": 0.96,
+          "figure_type": "chart",
+          "chart_type": "bar",
+          "chart_title": "Rising Utilization - % of Population Using Self Storage",
+          "x_axis_label": "",
+          "y_axis_label": "%",
+          "x_categories": [
+            "1985",
+            "1995",
+            "2005",
+            "2015",
+            "2025"
+          ],
+          "units": [
+            "%"
+          ],
+          "as_of_date": null,
+          "data_source_label": "Self Storage Almanac",
+          "series": [
+            {
+              "series_name": "Utilization",
+              "data_points": [
+                {
+                  "label": "1985",
+                  "value": 3,
+                  "approximate": false
+                },
+                {
+                  "label": "1995",
+                  "value": 4,
+                  "approximate": false
+                },
+                {
+                  "label": "2005",
+                  "value": 6,
+                  "approximate": false
+                },
+                {
+                  "label": "2015",
+                  "value": 8,
+                  "approximate": false
+                },
+                {
+                  "label": "2025",
+                  "value": 10,
+                  "approximate": false
+                }
+              ]
+            }
+          ],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [],
+          "trend_summary": "Population using self storage increased from 3% in 1985 to 10% in 2025.",
+          "key_chart_facts": [
+            "Utilization reached 10% in 2025."
+          ],
+          "visual_proxy_text": "Bar chart showing utilization: 3% (1985), 4% (1995), 6% (2005), 8% (2015), 10% (2025).",
+          "numeric_extraction_confidence": 0.99,
+          "chart_parse_status": "success",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        },
+        {
+          "figure_id": "p5_f2",
+          "page_num": 5,
+          "bbox": [],
+          "caption_text": "In-Place Rents vs Home Prices (Indexed to 100 in 2012)",
+          "nearby_text": "",
+          "section_path": "Industry Outlook",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [
+            {
+              "ref": "2",
+              "text": "See note 2 on the slide."
+            }
+          ],
+          "confidence": 0.8,
+          "figure_type": "chart",
+          "chart_type": "line",
+          "chart_title": "In-Place Rents vs Home Prices (Indexed to 100 in 2012)",
+          "x_axis_label": "",
+          "y_axis_label": "Index (2012=100)",
+          "x_categories": [],
+          "units": [
+            "index"
+          ],
+          "as_of_date": null,
+          "data_source_label": "",
+          "series": [],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [],
+          "trend_summary": "Both indices rise materially post-2020, with home prices outpacing in-place rents by 2025.",
+          "key_chart_facts": [],
+          "visual_proxy_text": "Two-line index chart (2012–2025) comparing Home Prices vs In-Place Rents; values not labeled; home prices line higher by 2025.",
+          "numeric_extraction_confidence": 0.2,
+          "chart_parse_status": "partial",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        },
+        {
+          "figure_id": "p5_f3",
+          "page_num": 5,
+          "bbox": [],
+          "caption_text": "Declining Competitive New Supply",
+          "nearby_text": "New Supply Growth",
+          "section_path": "Industry Outlook",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [
+            {
+              "ref": "3",
+              "text": "Annual expansion of total U.S. self storage net rentable square footage."
+            }
+          ],
+          "confidence": 0.96,
+          "figure_type": "chart",
+          "chart_type": "bar",
+          "chart_title": "Declining Competitive New Supply - New Supply Growth",
+          "x_axis_label": "",
+          "y_axis_label": "%",
+          "x_categories": [
+            "2019",
+            "2021",
+            "2023",
+            "2025",
+            "2026E"
+          ],
+          "units": [
+            "%"
+          ],
+          "as_of_date": null,
+          "data_source_label": "",
+          "series": [
+            {
+              "series_name": "New Supply Growth",
+              "data_points": [
+                {
+                  "label": "2019",
+                  "value": 5.0,
+                  "approximate": false
+                },
+                {
+                  "label": "2021",
+                  "value": 3.9,
+                  "approximate": false
+                },
+                {
+                  "label": "2023",
+                  "value": 3.2,
+                  "approximate": false
+                },
+                {
+                  "label": "2025",
+                  "value": 2.5,
+                  "approximate": false
+                },
+                {
+                  "label": "2026E",
+                  "value": 2.0,
+                  "approximate": false
+                }
+              ]
+            }
+          ],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [],
+          "trend_summary": "New supply growth has trended down from 5.0% (2019) to 2.0% (2026E).",
+          "key_chart_facts": [
+            "2019 highest at 5.0%",
+            "2026E lowest at 2.0%"
+          ],
+          "visual_proxy_text": "Bar chart labeled New Supply Growth with values: 2019 5.0%; 2021 3.9%; 2023 3.2%; 2025 2.5%; 2026E 2.0%.",
+          "numeric_extraction_confidence": 0.99,
+          "chart_parse_status": "success",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        },
+        {
+          "figure_id": "p5_f4",
+          "page_num": 5,
+          "bbox": [],
+          "caption_text": "Fragmented Industry",
+          "nearby_text": "~2.7 billion square feet",
+          "section_path": "Industry Outlook",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [
+            {
+              "ref": "4",
+              "text": "Public owners include Public Storage, CubeSmart, Extra Space, National Storage Affiliates, SmartStop, and U-Haul."
+            }
+          ],
+          "confidence": 0.96,
+          "figure_type": "chart",
+          "chart_type": "pie",
+          "chart_title": "Fragmented Industry (~2.7 billion square feet)",
+          "x_axis_label": "",
+          "y_axis_label": "",
+          "x_categories": [],
+          "units": [
+            "%"
+          ],
+          "as_of_date": null,
+          "data_source_label": "",
+          "series": [],
+          "pie_segments": [
+            {
+              "label": "Public",
+              "value": null,
+              "pct": 22
+            },
+            {
+              "label": "Private",
+              "value": null,
+              "pct": 78
+            }
+          ],
+          "matrix_cells": [],
+          "stat_box_values": [],
+          "trend_summary": "Private owners represent the majority of industry square footage.",
+          "key_chart_facts": [
+            "Private 78% vs Public 22%"
+          ],
+          "visual_proxy_text": "Pie chart showing Public 22% (grey) and Private 78% (orange).",
+          "numeric_extraction_confidence": 0.99,
+          "chart_parse_status": "success",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        }
+      ],
+      "has_table": false,
+      "has_figure": true,
+      "has_image": false,
+      "ocr_confidence": 0.98,
+      "is_scanned": false,
+      "extraction_notes": []
+    },
+    {
+      "page_number": 6,
+      "extracted_text_blob": "A Superior Cash Flow Profile\nPublic Storage’s competitive advantages combine with industry dynamics to drive robust cash flows and returns\nStrong NOI Growth1 — annotations: Public Storage Cumulative = 118%, CAGR = 5.4%; Other Property Types Cumulative = 64%, CAGR = 3.4%\nHigh NOI Margin1 — bars: Public Storage 78%; Other Property Types 58%\nLow Capital Expenditures1 — % of NOI — bars: Public Storage 6%; Other Property Types 21%\nSource: Company filings and Green Street\n1. NOI growth and margins are for respective same store pools. Maintenance capital expenditures are for consolidated pools. Other Property Types is an average of apartments, office, industrial, mall, strip center, manufactured housing, and lodging sectors.",
+      "company_name": "Public Storage",
+      "timeline": {
+        "start": "",
+        "end": ""
+      },
+      "section_path": "Cash Flow Profile",
+      "tables": [],
+      "figures": [
+        {
+          "figure_id": "p6_f1",
+          "page_num": 6,
+          "bbox": [],
+          "caption_text": "Strong NOI Growth",
+          "nearby_text": "Cumulative and CAGR annotations only; lines without labeled data points",
+          "section_path": "Cash Flow Profile",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [
+            {
+              "ref": "1",
+              "text": "See slide footnote 1."
+            }
+          ],
+          "confidence": 0.88,
+          "figure_type": "chart",
+          "chart_type": "line",
+          "chart_title": "Strong NOI Growth",
+          "x_axis_label": "",
+          "y_axis_label": "",
+          "x_categories": [
+            "2010",
+            "2011",
+            "2012",
+            "2013",
+            "2014",
+            "2015",
+            "2016",
+            "2017",
+            "2018",
+            "2019",
+            "2020",
+            "2021",
+            "2022",
+            "2023",
+            "2024",
+            "2025 YTD"
+          ],
+          "units": [
+            "index"
+          ],
+          "as_of_date": null,
+          "data_source_label": "Company filings; Green Street",
+          "series": [],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [],
+          "trend_summary": "Chart shows higher cumulative NOI growth for Public Storage vs Other Property Types.",
+          "key_chart_facts": [
+            "Public Storage cumulative NOI growth = 118% (CAGR 5.4%)",
+            "Other Property Types cumulative = 64% (CAGR 3.4%)"
+          ],
+          "visual_proxy_text": "Two-line chart from 2010 to 2025 YTD; annotations indicate Public Storage cumulative 118% (CAGR 5.4%) and Other Property Types 64% (CAGR 3.4%).",
+          "numeric_extraction_confidence": 0.4,
+          "chart_parse_status": "partial",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        },
+        {
+          "figure_id": "p6_f2",
+          "page_num": 6,
+          "bbox": [],
+          "caption_text": "High NOI Margin",
+          "nearby_text": "",
+          "section_path": "Cash Flow Profile",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [
+            {
+              "ref": "1",
+              "text": "See slide footnote 1."
+            }
+          ],
+          "confidence": 0.96,
+          "figure_type": "chart",
+          "chart_type": "bar",
+          "chart_title": "High NOI Margin",
+          "x_axis_label": "",
+          "y_axis_label": "%",
+          "x_categories": [
+            "Public Storage",
+            "Other Property Types"
+          ],
+          "units": [
+            "%"
+          ],
+          "as_of_date": null,
+          "data_source_label": "",
+          "series": [
+            {
+              "series_name": "NOI Margin",
+              "data_points": [
+                {
+                  "label": "Public Storage",
+                  "value": 78,
+                  "approximate": false
+                },
+                {
+                  "label": "Other Property Types",
+                  "value": 58,
+                  "approximate": false
+                }
+              ]
+            }
+          ],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [],
+          "trend_summary": "Public Storage shows higher NOI margin than other property types.",
+          "key_chart_facts": [
+            "Public Storage NOI margin 78% vs 58% for other property types"
+          ],
+          "visual_proxy_text": "Two-bar chart: 78% Public Storage; 58% Other Property Types.",
+          "numeric_extraction_confidence": 0.99,
+          "chart_parse_status": "success",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        },
+        {
+          "figure_id": "p6_f3",
+          "page_num": 6,
+          "bbox": [],
+          "caption_text": "Low Capital Expenditures - % of NOI",
+          "nearby_text": "",
+          "section_path": "Cash Flow Profile",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [
+            {
+              "ref": "1",
+              "text": "See slide footnote 1."
+            }
+          ],
+          "confidence": 0.96,
+          "figure_type": "chart",
+          "chart_type": "bar",
+          "chart_title": "Low Capital Expenditures (% of NOI)",
+          "x_axis_label": "",
+          "y_axis_label": "% of NOI",
+          "x_categories": [
+            "Public Storage",
+            "Other Property Types"
+          ],
+          "units": [
+            "%"
+          ],
+          "as_of_date": null,
+          "data_source_label": "",
+          "series": [
+            {
+              "series_name": "Capex as % of NOI",
+              "data_points": [
+                {
+                  "label": "Public Storage",
+                  "value": 6,
+                  "approximate": false
+                },
+                {
+                  "label": "Other Property Types",
+                  "value": 21,
+                  "approximate": false
+                }
+              ]
+            }
+          ],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [],
+          "trend_summary": "Public Storage has materially lower maintenance capex as a % of NOI.",
+          "key_chart_facts": [
+            "Public Storage 6% vs Other Property Types 21%"
+          ],
+          "visual_proxy_text": "Two-bar chart: 6% for Public Storage and 21% for Other Property Types.",
+          "numeric_extraction_confidence": 0.99,
+          "chart_parse_status": "success",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        }
+      ],
+      "has_table": false,
+      "has_figure": true,
+      "has_image": false,
+      "ocr_confidence": 0.98,
+      "is_scanned": false,
+      "extraction_notes": []
+    },
+    {
+      "page_number": 7,
+      "extracted_text_blob": "Looking Back On Our Success\nCompetitive advantages and transformation have driven outperformance and created a solid foundation for future success\nSame Store Performance1\nRevenue Growth2: Public Storage 1.4%; Extra Space 0.5%; CubeSmart 0.3%; National Storage Affiliates -1.6%\nNOI Growth2: Public Storage 0.8%; Extra Space -0.7%; CubeSmart -0.8%; National Storage Affiliates -3.6%\nNOI Margin1: Public Storage 78%; Extra Space 71%; CubeSmart 71%; National Storage Affiliates 69%\nCore FFO/share Growth1: Public Storage 2.2%; CubeSmart 0.8%; Extra Space -0.9%; National Storage Affiliates -7.7%\nTotal Shareholder Returns1\n1Y: Public Storage 4.1%; Extra Space 0.4%; CubeSmart 0.1%; National Storage Affiliates -3.3%\n3Y: Public Storage 17.2%; Extra Space 4.5%; CubeSmart 1.4%; National Storage Affiliates -0.1%\n5Y: Public Storage 61.0%; Extra Space 42.1%; CubeSmart 34.7%; National Storage Affiliates 15.9%\nLegend: Public Storage; CubeSmart; Extra Space; National Storage Affiliates\nSource: Company documents and FactSet\n1. For comparability purposes… measured versus reported two-year prior pools for peers from 2023 - 2025 except for NOI margin, which reflects fiscal-year 2025 average. Total shareholder returns (cumulative) measured over the past 1-, 3-, and 5-years as of February 26, 2026.\n2. Reflects quarterly averages.",
+      "company_name": "Public Storage",
+      "timeline": {
+        "start": "",
+        "end": ""
+      },
+      "section_path": "Performance Review",
+      "tables": [],
+      "figures": [
+        {
+          "figure_id": "p7_f1",
+          "page_num": 7,
+          "bbox": [],
+          "caption_text": "Same Store Performance - Revenue Growth",
+          "nearby_text": "",
+          "section_path": "Performance Review",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [
+            {
+              "ref": "1",
+              "text": "Comparability note as shown."
+            },
+            {
+              "ref": "2",
+              "text": "Reflects quarterly averages."
+            }
+          ],
+          "confidence": 0.95,
+          "figure_type": "chart",
+          "chart_type": "grouped_bar",
+          "chart_title": "Same Store Performance - Revenue Growth",
+          "x_axis_label": "",
+          "y_axis_label": "%",
+          "x_categories": [
+            "Public Storage",
+            "Extra Space",
+            "CubeSmart",
+            "National Storage Affiliates"
+          ],
+          "units": [
+            "%"
+          ],
+          "as_of_date": null,
+          "data_source_label": "Company documents; FactSet",
+          "series": [
+            {
+              "series_name": "Revenue Growth",
+              "data_points": [
+                {
+                  "label": "Public Storage",
+                  "value": 1.4,
+                  "approximate": false
+                },
+                {
+                  "label": "Extra Space",
+                  "value": 0.5,
+                  "approximate": false
+                },
+                {
+                  "label": "CubeSmart",
+                  "value": 0.3,
+                  "approximate": false
+                },
+                {
+                  "label": "National Storage Affiliates",
+                  "value": -1.6,
+                  "approximate": false
+                }
+              ]
+            }
+          ],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [],
+          "trend_summary": "Public Storage led revenue growth among peers.",
+          "key_chart_facts": [
+            "PS 1.4% vs NSA -1.6%"
+          ],
+          "visual_proxy_text": "Bar chart showing same store revenue growth: PS 1.4%; Extra Space 0.5%; CubeSmart 0.3%; NSA -1.6%.",
+          "numeric_extraction_confidence": 0.99,
+          "chart_parse_status": "success",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        },
+        {
+          "figure_id": "p7_f2",
+          "page_num": 7,
+          "bbox": [],
+          "caption_text": "Same Store Performance - NOI Growth",
+          "nearby_text": "",
+          "section_path": "Performance Review",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [
+            {
+              "ref": "2",
+              "text": "Reflects quarterly averages."
+            }
+          ],
+          "confidence": 0.95,
+          "figure_type": "chart",
+          "chart_type": "grouped_bar",
+          "chart_title": "Same Store Performance - NOI Growth",
+          "x_axis_label": "",
+          "y_axis_label": "%",
+          "x_categories": [
+            "Public Storage",
+            "Extra Space",
+            "CubeSmart",
+            "National Storage Affiliates"
+          ],
+          "units": [
+            "%"
+          ],
+          "as_of_date": null,
+          "data_source_label": "",
+          "series": [
+            {
+              "series_name": "NOI Growth",
+              "data_points": [
+                {
+                  "label": "Public Storage",
+                  "value": 0.8,
+                  "approximate": false
+                },
+                {
+                  "label": "Extra Space",
+                  "value": -0.7,
+                  "approximate": false
+                },
+                {
+                  "label": "CubeSmart",
+                  "value": -0.8,
+                  "approximate": false
+                },
+                {
+                  "label": "National Storage Affiliates",
+                  "value": -3.6,
+                  "approximate": false
+                }
+              ]
+            }
+          ],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [],
+          "trend_summary": "PS was the only peer with positive same store NOI growth.",
+          "key_chart_facts": [
+            "PS NOI growth 0.8% vs peers negative"
+          ],
+          "visual_proxy_text": "Bar chart: PS 0.8%; Extra Space -0.7%; CubeSmart -0.8%; NSA -3.6%.",
+          "numeric_extraction_confidence": 0.99,
+          "chart_parse_status": "success",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        },
+        {
+          "figure_id": "p7_f3",
+          "page_num": 7,
+          "bbox": [],
+          "caption_text": "Same Store Performance - NOI Margin",
+          "nearby_text": "",
+          "section_path": "Performance Review",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [
+            {
+              "ref": "1",
+              "text": "Fiscal-year 2025 average for NOI margin."
+            }
+          ],
+          "confidence": 0.95,
+          "figure_type": "chart",
+          "chart_type": "grouped_bar",
+          "chart_title": "Same Store Performance - NOI Margin",
+          "x_axis_label": "",
+          "y_axis_label": "%",
+          "x_categories": [
+            "Public Storage",
+            "Extra Space",
+            "CubeSmart",
+            "National Storage Affiliates"
+          ],
+          "units": [
+            "%"
+          ],
+          "as_of_date": null,
+          "data_source_label": "",
+          "series": [
+            {
+              "series_name": "NOI Margin",
+              "data_points": [
+                {
+                  "label": "Public Storage",
+                  "value": 78,
+                  "approximate": false
+                },
+                {
+                  "label": "Extra Space",
+                  "value": 71,
+                  "approximate": false
+                },
+                {
+                  "label": "CubeSmart",
+                  "value": 71,
+                  "approximate": false
+                },
+                {
+                  "label": "National Storage Affiliates",
+                  "value": 69,
+                  "approximate": false
+                }
+              ]
+            }
+          ],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [],
+          "trend_summary": "PS shows the highest NOI margin among peers.",
+          "key_chart_facts": [
+            "PS NOI margin 78%"
+          ],
+          "visual_proxy_text": "Bar chart: 78% PS; 71% Extra Space; 71% CubeSmart; 69% NSA.",
+          "numeric_extraction_confidence": 0.99,
+          "chart_parse_status": "success",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        },
+        {
+          "figure_id": "p7_f4",
+          "page_num": 7,
+          "bbox": [],
+          "caption_text": "Core FFO/share Growth",
+          "nearby_text": "",
+          "section_path": "Performance Review",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [
+            {
+              "ref": "1",
+              "text": "Comparability note as shown."
+            }
+          ],
+          "confidence": 0.95,
+          "figure_type": "chart",
+          "chart_type": "grouped_bar",
+          "chart_title": "Core FFO/share Growth",
+          "x_axis_label": "",
+          "y_axis_label": "%",
+          "x_categories": [
+            "Public Storage",
+            "CubeSmart",
+            "Extra Space",
+            "National Storage Affiliates"
+          ],
+          "units": [
+            "%"
+          ],
+          "as_of_date": null,
+          "data_source_label": "",
+          "series": [
+            {
+              "series_name": "Core FFO/share Growth",
+              "data_points": [
+                {
+                  "label": "Public Storage",
+                  "value": 2.2,
+                  "approximate": false
+                },
+                {
+                  "label": "CubeSmart",
+                  "value": 0.8,
+                  "approximate": false
+                },
+                {
+                  "label": "Extra Space",
+                  "value": -0.9,
+                  "approximate": false
+                },
+                {
+                  "label": "National Storage Affiliates",
+                  "value": -7.7,
+                  "approximate": false
+                }
+              ]
+            }
+          ],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [],
+          "trend_summary": "PS leads peers in Core FFO/share growth.",
+          "key_chart_facts": [
+            "PS 2.2% vs NSA -7.7%"
+          ],
+          "visual_proxy_text": "Bar chart: PS 2.2%; CubeSmart 0.8%; Extra Space -0.9%; NSA -7.7%.",
+          "numeric_extraction_confidence": 0.99,
+          "chart_parse_status": "success",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        },
+        {
+          "figure_id": "p7_f5",
+          "page_num": 7,
+          "bbox": [],
+          "caption_text": "Total Shareholder Returns (cumulative) as of Feb 26, 2026",
+          "nearby_text": "",
+          "section_path": "Performance Review",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [
+            {
+              "ref": "1",
+              "text": "Returns over the past 1-, 3-, and 5-years as of Feb 26, 2026."
+            }
+          ],
+          "confidence": 0.95,
+          "figure_type": "chart",
+          "chart_type": "grouped_bar",
+          "chart_title": "Total Shareholder Returns",
+          "x_axis_label": "",
+          "y_axis_label": "%",
+          "x_categories": [
+            "1Y",
+            "3Y",
+            "5Y"
+          ],
+          "units": [
+            "%"
+          ],
+          "as_of_date": "February 26, 2026",
+          "data_source_label": "FactSet",
+          "series": [
+            {
+              "series_name": "Public Storage",
+              "data_points": [
+                {
+                  "label": "1Y",
+                  "value": 4.1,
+                  "approximate": false
+                },
+                {
+                  "label": "3Y",
+                  "value": 17.2,
+                  "approximate": false
+                },
+                {
+                  "label": "5Y",
+                  "value": 61.0,
+                  "approximate": false
+                }
+              ]
+            },
+            {
+              "series_name": "Extra Space",
+              "data_points": [
+                {
+                  "label": "1Y",
+                  "value": 0.4,
+                  "approximate": false
+                },
+                {
+                  "label": "3Y",
+                  "value": 4.5,
+                  "approximate": false
+                },
+                {
+                  "label": "5Y",
+                  "value": 42.1,
+                  "approximate": false
+                }
+              ]
+            },
+            {
+              "series_name": "CubeSmart",
+              "data_points": [
+                {
+                  "label": "1Y",
+                  "value": 0.1,
+                  "approximate": false
+                },
+                {
+                  "label": "3Y",
+                  "value": 1.4,
+                  "approximate": false
+                },
+                {
+                  "label": "5Y",
+                  "value": 34.7,
+                  "approximate": false
+                }
+              ]
+            },
+            {
+              "series_name": "National Storage Affiliates",
+              "data_points": [
+                {
+                  "label": "1Y",
+                  "value": -3.3,
+                  "approximate": false
+                },
+                {
+                  "label": "3Y",
+                  "value": -0.1,
+                  "approximate": false
+                },
+                {
+                  "label": "5Y",
+                  "value": 15.9,
+                  "approximate": false
+                }
+              ]
+            }
+          ],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [],
+          "trend_summary": "PS outperformed peers across 1-, 3-, and 5-year TSR windows.",
+          "key_chart_facts": [
+            "1Y TSR: PS 4.1%",
+            "3Y TSR: PS 17.2%",
+            "5Y TSR: PS 61.0%"
+          ],
+          "visual_proxy_text": "Grouped bars for TSR across 1Y, 3Y, 5Y for PS, Extra Space, CubeSmart, NSA with values listed above.",
+          "numeric_extraction_confidence": 0.99,
+          "chart_parse_status": "success",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        }
+      ],
+      "has_table": false,
+      "has_figure": true,
+      "has_image": false,
+      "ocr_confidence": 0.98,
+      "is_scanned": false,
+      "extraction_notes": []
+    },
+    {
+      "page_number": 8,
+      "extracted_text_blob": "Transformation Is Enhancing Our Leading Performance\nCompany-wide advantages and transformation drive operational and financial outperformance\nHighest Revenues Per Square Foot1: Public Storage $21; CubeSmart $20; Extra Space $19; National Storage Affiliates $18; SmartStop $13\nMost Optimized Labor Hours1 (payroll costs per square foot): Public Storage $0.76; National Storage Affiliates $0.94; Extra Space $1.24; CubeSmart $1.30; SmartStop $1.37\nMost Profitable NOI Margin1: Public Storage 78%; Extra Space 71%; CubeSmart 71%; National Storage Affiliates 69%; SmartStop 67%\nMost Controlled Utility Usage1 (utility costs per square foot): Public Storage $0.26; National Storage Affiliates $0.36; SmartStop $0.41; Extra Space $0.47; CubeSmart $0.49\nHighest Free Cash Flow Conversion2: Public Storage 87%; CubeSmart 80%; Extra Space 69%; National Storage Affiliates 61%; SmartStop 44%\nSource: Company filings\n1. Same store pools for the quarter ended 12/31/25.\n2. Free cash flow relative to EBITDA for twelve months ended 9/30/25.",
+      "company_name": "Public Storage",
+      "timeline": {
+        "start": "",
+        "end": ""
+      },
+      "section_path": "Transformation Metrics",
+      "tables": [],
+      "figures": [
+        {
+          "figure_id": "p8_f1",
+          "page_num": 8,
+          "bbox": [],
+          "caption_text": "Highest Revenues Per Square Foot",
+          "nearby_text": "",
+          "section_path": "Transformation Metrics",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [
+            {
+              "ref": "1",
+              "text": "Same store pools for the quarter ended 12/31/25."
+            }
+          ],
+          "confidence": 0.96,
+          "figure_type": "chart",
+          "chart_type": "grouped_bar",
+          "chart_title": "Highest Revenues Per Square Foot",
+          "x_axis_label": "",
+          "y_axis_label": "USD per sq ft",
+          "x_categories": [
+            "Public Storage",
+            "CubeSmart",
+            "Extra Space",
+            "National Storage Affiliates",
+            "SmartStop"
+          ],
+          "units": [
+            "USD",
+            "per sq ft"
+          ],
+          "as_of_date": null,
+          "data_source_label": "",
+          "series": [
+            {
+              "series_name": "Revenue/ft²",
+              "data_points": [
+                {
+                  "label": "Public Storage",
+                  "value": 21,
+                  "approximate": false
+                },
+                {
+                  "label": "CubeSmart",
+                  "value": 20,
+                  "approximate": false
+                },
+                {
+                  "label": "Extra Space",
+                  "value": 19,
+                  "approximate": false
+                },
+                {
+                  "label": "National Storage Affiliates",
+                  "value": 18,
+                  "approximate": false
+                },
+                {
+                  "label": "SmartStop",
+                  "value": 13,
+                  "approximate": false
+                }
+              ]
+            }
+          ],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [],
+          "trend_summary": "PS leads peers in revenue per square foot.",
+          "key_chart_facts": [
+            "PS $21/ft² highest."
+          ],
+          "visual_proxy_text": "Bar chart with values: PS $21; CubeSmart $20; Extra Space $19; NSA $18; SmartStop $13.",
+          "numeric_extraction_confidence": 0.99,
+          "chart_parse_status": "success",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        },
+        {
+          "figure_id": "p8_f2",
+          "page_num": 8,
+          "bbox": [],
+          "caption_text": "Most Optimized Labor Hours (payroll costs per square foot)",
+          "nearby_text": "",
+          "section_path": "Transformation Metrics",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [
+            {
+              "ref": "1",
+              "text": "Same store pools for the quarter ended 12/31/25."
+            }
+          ],
+          "confidence": 0.96,
+          "figure_type": "chart",
+          "chart_type": "grouped_bar",
+          "chart_title": "Most Optimized Labor Hours (payroll costs per square foot)",
+          "x_axis_label": "",
+          "y_axis_label": "USD per sq ft",
+          "x_categories": [
+            "Public Storage",
+            "National Storage Affiliates",
+            "Extra Space",
+            "CubeSmart",
+            "SmartStop"
+          ],
+          "units": [
+            "USD",
+            "per sq ft"
+          ],
+          "as_of_date": null,
+          "data_source_label": "",
+          "series": [
+            {
+              "series_name": "Payroll cost/ft²",
+              "data_points": [
+                {
+                  "label": "Public Storage",
+                  "value": 0.76,
+                  "approximate": false
+                },
+                {
+                  "label": "National Storage Affiliates",
+                  "value": 0.94,
+                  "approximate": false
+                },
+                {
+                  "label": "Extra Space",
+                  "value": 1.24,
+                  "approximate": false
+                },
+                {
+                  "label": "CubeSmart",
+                  "value": 1.3,
+                  "approximate": false
+                },
+                {
+                  "label": "SmartStop",
+                  "value": 1.37,
+                  "approximate": false
+                }
+              ]
+            }
+          ],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [],
+          "trend_summary": "PS shows the lowest payroll cost per square foot.",
+          "key_chart_facts": [
+            "PS $0.76/ft² lowest."
+          ],
+          "visual_proxy_text": "Bar chart with payroll costs/ft²: PS $0.76; NSA $0.94; Extra Space $1.24; CubeSmart $1.30; SmartStop $1.37.",
+          "numeric_extraction_confidence": 0.99,
+          "chart_parse_status": "success",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        },
+        {
+          "figure_id": "p8_f3",
+          "page_num": 8,
+          "bbox": [],
+          "caption_text": "Most Profitable NOI Margin",
+          "nearby_text": "",
+          "section_path": "Transformation Metrics",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [
+            {
+              "ref": "1",
+              "text": "Same store pools for the quarter ended 12/31/25."
+            }
+          ],
+          "confidence": 0.96,
+          "figure_type": "chart",
+          "chart_type": "grouped_bar",
+          "chart_title": "Most Profitable NOI Margin",
+          "x_axis_label": "",
+          "y_axis_label": "%",
+          "x_categories": [
+            "Public Storage",
+            "Extra Space",
+            "CubeSmart",
+            "National Storage Affiliates",
+            "SmartStop"
+          ],
+          "units": [
+            "%"
+          ],
+          "as_of_date": null,
+          "data_source_label": "",
+          "series": [
+            {
+              "series_name": "NOI Margin",
+              "data_points": [
+                {
+                  "label": "Public Storage",
+                  "value": 78,
+                  "approximate": false
+                },
+                {
+                  "label": "Extra Space",
+                  "value": 71,
+                  "approximate": false
+                },
+                {
+                  "label": "CubeSmart",
+                  "value": 71,
+                  "approximate": false
+                },
+                {
+                  "label": "National Storage Affiliates",
+                  "value": 69,
+                  "approximate": false
+                },
+                {
+                  "label": "SmartStop",
+                  "value": 67,
+                  "approximate": false
+                }
+              ]
+            }
+          ],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [],
+          "trend_summary": "PS has the highest NOI margin among listed peers shown.",
+          "key_chart_facts": [
+            "PS NOI margin 78% highest."
+          ],
+          "visual_proxy_text": "Bar chart: 78% PS; 71% Extra Space; 71% CubeSmart; 69% NSA; 67% SmartStop.",
+          "numeric_extraction_confidence": 0.99,
+          "chart_parse_status": "success",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        },
+        {
+          "figure_id": "p8_f4",
+          "page_num": 8,
+          "bbox": [],
+          "caption_text": "Most Controlled Utility Usage (utility costs per square foot)",
+          "nearby_text": "",
+          "section_path": "Transformation Metrics",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [
+            {
+              "ref": "1",
+              "text": "Same store pools for the quarter ended 12/31/25."
+            }
+          ],
+          "confidence": 0.96,
+          "figure_type": "chart",
+          "chart_type": "grouped_bar",
+          "chart_title": "Most Controlled Utility Usage",
+          "x_axis_label": "",
+          "y_axis_label": "USD per sq ft",
+          "x_categories": [
+            "Public Storage",
+            "National Storage Affiliates",
+            "SmartStop",
+            "Extra Space",
+            "CubeSmart"
+          ],
+          "units": [
+            "USD",
+            "per sq ft"
+          ],
+          "as_of_date": null,
+          "data_source_label": "",
+          "series": [
+            {
+              "series_name": "Utility cost/ft²",
+              "data_points": [
+                {
+                  "label": "Public Storage",
+                  "value": 0.26,
+                  "approximate": false
+                },
+                {
+                  "label": "National Storage Affiliates",
+                  "value": 0.36,
+                  "approximate": false
+                },
+                {
+                  "label": "SmartStop",
+                  "value": 0.41,
+                  "approximate": false
+                },
+                {
+                  "label": "Extra Space",
+                  "value": 0.47,
+                  "approximate": false
+                },
+                {
+                  "label": "CubeSmart",
+                  "value": 0.49,
+                  "approximate": false
+                }
+              ]
+            }
+          ],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [],
+          "trend_summary": "PS has the lowest utility costs per square foot.",
+          "key_chart_facts": [
+            "PS $0.26/ft² lowest."
+          ],
+          "visual_proxy_text": "Bar chart utility costs/ft²: PS $0.26; NSA $0.36; SmartStop $0.41; Extra Space $0.47; CubeSmart $0.49.",
+          "numeric_extraction_confidence": 0.99,
+          "chart_parse_status": "success",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        },
+        {
+          "figure_id": "p8_f5",
+          "page_num": 8,
+          "bbox": [],
+          "caption_text": "Highest Free Cash Flow Conversion",
+          "nearby_text": "",
+          "section_path": "Transformation Metrics",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [
+            {
+              "ref": "2",
+              "text": "Free cash flow relative to EBITDA for twelve months ended 9/30/25."
+            }
+          ],
+          "confidence": 0.96,
+          "figure_type": "chart",
+          "chart_type": "grouped_bar",
+          "chart_title": "Highest Free Cash Flow Conversion",
+          "x_axis_label": "",
+          "y_axis_label": "%",
+          "x_categories": [
+            "Public Storage",
+            "CubeSmart",
+            "Extra Space",
+            "National Storage Affiliates",
+            "SmartStop"
+          ],
+          "units": [
+            "%"
+          ],
+          "as_of_date": "September 30, 2025",
+          "data_source_label": "",
+          "series": [
+            {
+              "series_name": "FCF Conversion",
+              "data_points": [
+                {
+                  "label": "Public Storage",
+                  "value": 87,
+                  "approximate": false
+                },
+                {
+                  "label": "CubeSmart",
+                  "value": 80,
+                  "approximate": false
+                },
+                {
+                  "label": "Extra Space",
+                  "value": 69,
+                  "approximate": false
+                },
+                {
+                  "label": "National Storage Affiliates",
+                  "value": 61,
+                  "approximate": false
+                },
+                {
+                  "label": "SmartStop",
+                  "value": 44,
+                  "approximate": false
+                }
+              ]
+            }
+          ],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [],
+          "trend_summary": "PS leads peers in free cash flow conversion.",
+          "key_chart_facts": [
+            "PS 87% highest."
+          ],
+          "visual_proxy_text": "Bar chart with FCF conversion: PS 87%; CubeSmart 80%; Extra Space 69%; NSA 61%; SmartStop 44%.",
+          "numeric_extraction_confidence": 0.99,
+          "chart_parse_status": "success",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        }
+      ],
+      "has_table": false,
+      "has_figure": true,
+      "has_image": false,
+      "ocr_confidence": 0.98,
+      "is_scanned": false,
+      "extraction_notes": []
+    },
+    {
+      "page_number": 9,
+      "extracted_text_blob": "PS4.0 — Strategic Pillars to Drive Shareholder Value Creation\nPS Next — Win the Customer and Drive Organic Growth\n• Exceptional Brand and Customer Experience\n• Data Science and AI Enhanced Pricing Model\n• Transformative Operating Platform\nTarget: Organic Growth Acceleration\nValue Creation Engine — Capture the External Growth Opportunity\n• Deployment accelerated and targeted through people and process enhancements\n• + Welltower data science partnership\n• Value creation fueled by PS Next\n• Offensive Oriented Balance Sheet Utilized\nTarget: Accretive Portfolio Growth\nOwn It Culture — A High-Performance Leadership & Talent Platform\n• Incentive Redesign Aligned with Shareholders\n• New & Existing Talent to raise the bar\n• Empowerment with Accountability\nTarget: Drivers of PS4.0 Performance\nSource: Company filings",
+      "company_name": "Public Storage",
+      "timeline": {
+        "start": "",
+        "end": ""
+      },
+      "section_path": "Strategy - PS4.0 Pillars",
+      "tables": [],
+      "figures": [],
+      "has_table": false,
+      "has_figure": false,
+      "has_image": false,
+      "ocr_confidence": 0.98,
+      "is_scanned": false,
+      "extraction_notes": []
+    },
+    {
+      "page_number": 10,
+      "extracted_text_blob": "PS4.0 — PS Next\nStorage has evolved from paper lease analog to digital engagements and transactions and is now accelerating to AI-enhanced customer and employee experience\nOmnichannel eRental — Property of Tomorrow — Revenue Conversion\nDigital Transactions — 2016: 16% — Today: 85% — PS Next: 95%\nSource: Company filings",
+      "company_name": "Public Storage",
+      "timeline": {
+        "start": "",
+        "end": ""
+      },
+      "section_path": "Strategy - PS Next",
+      "tables": [],
+      "figures": [
+        {
+          "figure_id": "p10_f1",
+          "page_num": 10,
+          "bbox": [],
+          "caption_text": "Digital Transactions progression",
+          "nearby_text": "2016 16%; Today 85%; PS Next 95%",
+          "section_path": "Strategy - PS Next",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [],
+          "confidence": 0.95,
+          "figure_type": "diagram",
+          "chart_type": "unknown",
+          "chart_title": "Digital Transactions",
+          "x_axis_label": "",
+          "y_axis_label": "",
+          "x_categories": [],
+          "units": [
+            "%"
+          ],
+          "as_of_date": null,
+          "data_source_label": "",
+          "series": [],
+          "pie_segments": [],
+          "matrix_cells": [
+            {
+              "row": "Milestone",
+              "col": "Share",
+              "value": "2016"
+            },
+            {
+              "row": "Share",
+              "col": "Value",
+              "value": "16%"
+            },
+            {
+              "row": "Milestone",
+              "col": "Share",
+              "value": "Today"
+            },
+            {
+              "row": "Share",
+              "col": "Value",
+              "value": "85%"
+            },
+            {
+              "row": "Milestone",
+              "col": "Share",
+              "value": "PS Next"
+            },
+            {
+              "row": "Share",
+              "col": "Value",
+              "value": "95%"
+            }
+          ],
+          "stat_box_values": [
+            "2016: 16%",
+            "Today: 85%",
+            "PS Next: 95%"
+          ],
+          "trend_summary": "Digital transactions expected to increase from 16% (2016) to 95% under PS Next.",
+          "key_chart_facts": [
+            "Today at 85% digital; PS Next target 95%"
+          ],
+          "visual_proxy_text": "Infographic funnel and timeline indicating digital transactions: 16% in 2016, 85% today, and 95% under PS Next.",
+          "numeric_extraction_confidence": 0.95,
+          "chart_parse_status": "not_applicable",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        }
+      ],
+      "has_table": false,
+      "has_figure": true,
+      "has_image": true,
+      "ocr_confidence": 0.97,
+      "is_scanned": false,
+      "extraction_notes": []
+    },
+    {
+      "page_number": 11,
+      "extracted_text_blob": "PS4.0 — Value Creation Engine\nExpertise across the operational and external growth spectrum drive superior returns\nUnique Multi-Factor External Growth: Acquisition; Development; Redevelopment & Expansion; Lending\nWhy?\n✓ Best brand recognition\n✓ Revenue leadership\n✓ Operating efficiency\n✓ Site selection\n✓ Tenant insurance platform\n✓ Longest Standing Data Sets\nWhat’s Next?\n• Data Science-infused Underwriting and Targeting + Welltower Data Science Partnership\n• Team investments to build relationships and increase deal flow\n• New Investment Committee of Board\nSource: Company filings",
+      "company_name": "Public Storage",
+      "timeline": {
+        "start": "",
+        "end": ""
+      },
+      "section_path": "Strategy - Value Creation Engine",
+      "tables": [],
+      "figures": [],
+      "has_table": false,
+      "has_figure": false,
+      "has_image": true,
+      "ocr_confidence": 0.98,
+      "is_scanned": false,
+      "extraction_notes": []
+    },
+    {
+      "page_number": 12,
+      "extracted_text_blob": "Acquisition & Development Yields\nPS Next Operating Platform helps drive outsized accretion and returns\n2025 Acquisitions — Cap Rates: Going-in Cap Rate (bar), Stabilized Cap Rate (bar)\n$953 million dollars deployed — 5.2% T12M Yield — High 6% Stabilized Yield\n2025 Development Deliveries — Yields: Current (bar), Underwritten (bar)\n$409 million dollars deployed — 0.6% T12M Yield — 8.0% Stabilized Yield\n2026 Non-Same Store growth — $345 million in NOI — +16% growth — + $70 million of NOI upside beyond 2026 — = $415 million of Total NOI — Superior Value Creation\nSource: Company filings\n1. Based on NOI for the trailing twelve months, ended 12/31/25.",
+      "company_name": "Public Storage",
+      "timeline": {
+        "start": "",
+        "end": ""
+      },
+      "section_path": "Acquisition & Development Yields",
+      "tables": [],
+      "figures": [
+        {
+          "figure_id": "p12_f1",
+          "page_num": 12,
+          "bbox": [],
+          "caption_text": "2025 Acquisitions metrics",
+          "nearby_text": "",
+          "section_path": "Acquisition & Development Yields",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [
+            {
+              "ref": "1",
+              "text": "Based on NOI for the trailing twelve months, ended 12/31/25."
+            }
+          ],
+          "confidence": 0.94,
+          "figure_type": "stat_box",
+          "chart_type": "unknown",
+          "chart_title": "2025 Acquisitions",
+          "x_axis_label": "",
+          "y_axis_label": "",
+          "x_categories": [],
+          "units": [],
+          "as_of_date": "December 31, 2025",
+          "data_source_label": "",
+          "series": [],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [
+            "$953 million dollars deployed",
+            "5.2% T12M Yield",
+            "High 6% Stabilized Yield"
+          ],
+          "trend_summary": "",
+          "key_chart_facts": [
+            "$953M deployed for acquisitions in 2025",
+            "T12M yield 5.2%",
+            "Stabilized yield high-6%"
+          ],
+          "visual_proxy_text": "Callouts list: $953 million deployed; 5.2% T12M Yield; High 6% Stabilized Yield.",
+          "numeric_extraction_confidence": 0.99,
+          "chart_parse_status": "not_applicable",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        },
+        {
+          "figure_id": "p12_f2",
+          "page_num": 12,
+          "bbox": [],
+          "caption_text": "2025 Development Deliveries metrics",
+          "nearby_text": "",
+          "section_path": "Acquisition & Development Yields",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [
+            {
+              "ref": "1",
+              "text": "Based on NOI for the trailing twelve months, ended 12/31/25."
+            }
+          ],
+          "confidence": 0.94,
+          "figure_type": "stat_box",
+          "chart_type": "unknown",
+          "chart_title": "2025 Development Deliveries",
+          "x_axis_label": "",
+          "y_axis_label": "",
+          "x_categories": [],
+          "units": [],
+          "as_of_date": "December 31, 2025",
+          "data_source_label": "",
+          "series": [],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [
+            "$409 million dollars deployed",
+            "0.6% T12M Yield",
+            "8.0% Stabilized Yield"
+          ],
+          "trend_summary": "",
+          "key_chart_facts": [
+            "$409M deployed for development in 2025",
+            "T12M yield 0.6%",
+            "Stabilized yield 8.0%"
+          ],
+          "visual_proxy_text": "Callouts list: $409 million deployed; 0.6% T12M Yield; 8.0% Stabilized Yield.",
+          "numeric_extraction_confidence": 0.99,
+          "chart_parse_status": "not_applicable",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        },
+        {
+          "figure_id": "p12_f3",
+          "page_num": 12,
+          "bbox": [],
+          "caption_text": "2026 Non-Same Store growth",
+          "nearby_text": "",
+          "section_path": "Acquisition & Development Yields",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [],
+          "confidence": 0.94,
+          "figure_type": "stat_box",
+          "chart_type": "unknown",
+          "chart_title": "2026 Non-Same Store growth",
+          "x_axis_label": "",
+          "y_axis_label": "",
+          "x_categories": [],
+          "units": [
+            "USD",
+            "%"
+          ],
+          "as_of_date": "2026",
+          "data_source_label": "",
+          "series": [],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [
+            "$345 million in NOI",
+            "+16% growth",
+            "+ $70 million of NOI upside beyond 2026",
+            "= $415 million of Total NOI",
+            "Superior Value Creation"
+          ],
+          "trend_summary": "",
+          "key_chart_facts": [
+            "2026 non-same store NOI $345M (+16%)",
+            "Additional $70M NOI upside beyond 2026",
+            "Total NOI impact $415M"
+          ],
+          "visual_proxy_text": "Large callouts: $345M NOI in 2026 at +16% growth plus $70M upside beyond 2026 equals $415M of total NOI; labeled Superior Value Creation.",
+          "numeric_extraction_confidence": 0.99,
+          "chart_parse_status": "not_applicable",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        }
+      ],
+      "has_table": false,
+      "has_figure": true,
+      "has_image": false,
+      "ocr_confidence": 0.98,
+      "is_scanned": false,
+      "extraction_notes": []
+    },
+    {
+      "page_number": 13,
+      "extracted_text_blob": "A Growth-Oriented Balance Sheet\nAccretive external growth to be funded with debt capacity, significant retained cash flow, and other capital sources\nMaturity Schedule ($ millions) — legend: Unsecured (grey), Preferred (orange)\nBars labeled: 2026 $1,150; 2027 $1,200; 2028 $1,200; 2029 $1,000; 2030 $1,297; 2031 $1,200; 2032 $587; 2033 $700; 2034 $499; 2035 $400; 2036 $0; 2037 $0; 2038 $0; 2039 $176; 2053 $900; Perpetual $4,350 (Preferred)\nBadges/callouts:\n$1.8B near-term available liquidity2\nA2 / A Credit rating (Moody’s / S&P)\n$600M+ Retained cash flow expected in 2026\n2.9x Net debt to EBITDA1\n4.2x Net debt + preferred equity to EBITDA1\n90% Fixed rate debt\n3.5% Cost of in-place debt & preferred equity\nSource: Company filings. See appendix for definition of EBITDA, a non-GAAP metric, and a reconciliation of EBITDA to net income in accordance to GAAP.\n1. Current figure based on EBITDA for the trailing twelve months, ending 12/31/25.\n2. Includes cash and line of credit capacity as of 12/31/25.",
+      "company_name": "Public Storage",
+      "timeline": {
+        "start": "",
+        "end": ""
+      },
+      "section_path": "Balance Sheet",
+      "tables": [],
+      "figures": [
+        {
+          "figure_id": "p13_f1",
+          "page_num": 13,
+          "bbox": [],
+          "caption_text": "Maturity Schedule ($ millions)",
+          "nearby_text": "Unsecured vs Preferred",
+          "section_path": "Balance Sheet",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [
+            {
+              "ref": "1",
+              "text": "EBITDA based on TTM ending 12/31/25."
+            },
+            {
+              "ref": "2",
+              "text": "Includes cash and line of credit capacity as of 12/31/25."
+            }
+          ],
+          "confidence": 0.95,
+          "figure_type": "chart",
+          "chart_type": "grouped_bar",
+          "chart_title": "Maturity Schedule ($ millions)",
+          "x_axis_label": "Year",
+          "y_axis_label": "$ millions",
+          "x_categories": [
+            "2026",
+            "2027",
+            "2028",
+            "2029",
+            "2030",
+            "2031",
+            "2032",
+            "2033",
+            "2034",
+            "2035",
+            "2036",
+            "2037",
+            "2038",
+            "2039",
+            "2053",
+            "Perpetual"
+          ],
+          "units": [
+            "USD",
+            "millions"
+          ],
+          "as_of_date": "December 31, 2025",
+          "data_source_label": "Company filings",
+          "series": [
+            {
+              "series_name": "Unsecured",
+              "data_points": [
+                {
+                  "label": "2026",
+                  "value": 1150,
+                  "approximate": false
+                },
+                {
+                  "label": "2027",
+                  "value": 1200,
+                  "approximate": false
+                },
+                {
+                  "label": "2028",
+                  "value": 1200,
+                  "approximate": false
+                },
+                {
+                  "label": "2029",
+                  "value": 1000,
+                  "approximate": false
+                },
+                {
+                  "label": "2030",
+                  "value": 1297,
+                  "approximate": false
+                },
+                {
+                  "label": "2031",
+                  "value": 1200,
+                  "approximate": false
+                },
+                {
+                  "label": "2032",
+                  "value": 587,
+                  "approximate": false
+                },
+                {
+                  "label": "2033",
+                  "value": 700,
+                  "approximate": false
+                },
+                {
+                  "label": "2034",
+                  "value": 499,
+                  "approximate": false
+                },
+                {
+                  "label": "2035",
+                  "value": 400,
+                  "approximate": false
+                },
+                {
+                  "label": "2036",
+                  "value": 0,
+                  "approximate": false
+                },
+                {
+                  "label": "2037",
+                  "value": 0,
+                  "approximate": false
+                },
+                {
+                  "label": "2038",
+                  "value": 0,
+                  "approximate": false
+                },
+                {
+                  "label": "2039",
+                  "value": 176,
+                  "approximate": false
+                },
+                {
+                  "label": "2053",
+                  "value": 900,
+                  "approximate": false
+                },
+                {
+                  "label": "Perpetual",
+                  "value": 0,
+                  "approximate": false
+                }
+              ]
+            },
+            {
+              "series_name": "Preferred",
+              "data_points": [
+                {
+                  "label": "2026",
+                  "value": 0,
+                  "approximate": false
+                },
+                {
+                  "label": "2027",
+                  "value": 0,
+                  "approximate": false
+                },
+                {
+                  "label": "2028",
+                  "value": 0,
+                  "approximate": false
+                },
+                {
+                  "label": "2029",
+                  "value": 0,
+                  "approximate": false
+                },
+                {
+                  "label": "2030",
+                  "value": 0,
+                  "approximate": false
+                },
+                {
+                  "label": "2031",
+                  "value": 0,
+                  "approximate": false
+                },
+                {
+                  "label": "2032",
+                  "value": 0,
+                  "approximate": false
+                },
+                {
+                  "label": "2033",
+                  "value": 0,
+                  "approximate": false
+                },
+                {
+                  "label": "2034",
+                  "value": 0,
+                  "approximate": false
+                },
+                {
+                  "label": "2035",
+                  "value": 0,
+                  "approximate": false
+                },
+                {
+                  "label": "2036",
+                  "value": 0,
+                  "approximate": false
+                },
+                {
+                  "label": "2037",
+                  "value": 0,
+                  "approximate": false
+                },
+                {
+                  "label": "2038",
+                  "value": 0,
+                  "approximate": false
+                },
+                {
+                  "label": "2039",
+                  "value": 0,
+                  "approximate": false
+                },
+                {
+                  "label": "2053",
+                  "value": 0,
+                  "approximate": false
+                },
+                {
+                  "label": "Perpetual",
+                  "value": 4350,
+                  "approximate": false
+                }
+              ]
+            }
+          ],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [],
+          "trend_summary": "Largest single maturity item is perpetual preferred at $4,350 million; unsecured maturities are spread across 2026–2053.",
+          "key_chart_facts": [
+            "Unsecured peaks in 2030 at $1,297M",
+            "Perpetual preferred = $4,350M",
+            "2053 unsecured = $900M"
+          ],
+          "visual_proxy_text": "Bar chart listing unsecured maturities by year with labeled values and a large preferred perpetual bar of $4,350 million; unsecured 2053 bar of $900 million.",
+          "numeric_extraction_confidence": 0.98,
+          "chart_parse_status": "success",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        },
+        {
+          "figure_id": "p13_f2",
+          "page_num": 13,
+          "bbox": [],
+          "caption_text": "Balance sheet metrics",
+          "nearby_text": "",
+          "section_path": "Balance Sheet",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [
+            {
+              "ref": "1",
+              "text": "EBITDA based on TTM ending 12/31/25."
+            },
+            {
+              "ref": "2",
+              "text": "Includes cash and line of credit capacity as of 12/31/25."
+            }
+          ],
+          "confidence": 0.95,
+          "figure_type": "stat_box",
+          "chart_type": "unknown",
+          "chart_title": "Balance Sheet Highlights",
+          "x_axis_label": "",
+          "y_axis_label": "",
+          "x_categories": [],
+          "units": [],
+          "as_of_date": "December 31, 2025",
+          "data_source_label": "Company filings",
+          "series": [],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [
+            "$1.8B near-term available liquidity",
+            "A2 / A credit rating (Moody’s / S&P)",
+            "$600M+ retained cash flow expected in 2026",
+            "2.9x Net debt to EBITDA",
+            "4.2x Net debt + preferred equity to EBITDA",
+            "90% fixed rate debt",
+            "3.5% cost of in-place debt & preferred equity"
+          ],
+          "trend_summary": "",
+          "key_chart_facts": [
+            "Liquidity $1.8B near-term",
+            "Net debt/EBITDA 2.9x; Net debt + preferred/EBITDA 4.2x",
+            "Fixed-rate debt = 90%",
+            "Cost of debt & preferred = 3.5%"
+          ],
+          "visual_proxy_text": "Hexagon callouts listing: $1.8B liquidity; A2/A ratings; 2.9x Net debt/EBITDA; 4.2x Net debt + preferred/EBITDA; 90% fixed rate; 3.5% cost; $600M+ retained cash flow expected in 2026.",
+          "numeric_extraction_confidence": 0.99,
+          "chart_parse_status": "not_applicable",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        }
+      ],
+      "has_table": false,
+      "has_figure": true,
+      "has_image": false,
+      "ocr_confidence": 0.98,
+      "is_scanned": false,
+      "extraction_notes": []
+    },
+    {
+      "page_number": 14,
+      "extracted_text_blob": "Sustainability and Awards\nPublic Storage strives to remain among the highest rated on both Sustainability and Human Capital\nSustainability Snapshot\nSustainalytics — Top 7% Globally; Highest Rated U.S. Self-Storage REIT\nMSCI — Highest Rated U.S. Self-Storage REIT\nGRESB Real Estate sector leader 2023 — Highest Rated U.S. Self-Storage REIT — “A” Public Disclosure Rating\nAwards & Recognition\nGreat Place to Work Certified SEP 2025–SEP 2026 (USA) — Great Place to Work\n4 years of recognition as a Great Place to Work\n2025 Comparably Best Awards — Best Company Work-Life Balance; Best Company Culture\nSource: Company filings",
+      "company_name": "Public Storage",
+      "timeline": {
+        "start": "",
+        "end": ""
+      },
+      "section_path": "Sustainability & Awards",
+      "tables": [],
+      "figures": [
+        {
+          "figure_id": "p14_f1",
+          "page_num": 14,
+          "bbox": [],
+          "caption_text": "Awards & Certifications",
+          "nearby_text": "",
+          "section_path": "Sustainability & Awards",
+          "crop_path": "",
+          "page_screenshot_path": "",
+          "footnotes": [],
+          "confidence": 0.95,
+          "figure_type": "image",
+          "chart_type": "unknown",
+          "chart_title": "Awards and Certifications",
+          "x_axis_label": "",
+          "y_axis_label": "",
+          "x_categories": [],
+          "units": [],
+          "as_of_date": "2025-2026",
+          "data_source_label": "",
+          "series": [],
+          "pie_segments": [],
+          "matrix_cells": [],
+          "stat_box_values": [],
+          "trend_summary": "",
+          "key_chart_facts": [
+            "Great Place to Work Certified SEP 2025–SEP 2026",
+            "4 years recognition as Great Place to Work"
+          ],
+          "visual_proxy_text": "Graphic badges showing Sustainalytics, MSCI, GRESB ratings and Great Place to Work certification; text notes Top 7% globally and highest rated U.S. self-storage REIT across agencies.",
+          "numeric_extraction_confidence": null,
+          "chart_parse_status": "not_applicable",
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null,
+          "llm_caption_model": null,
+          "llm_caption_version": null,
+          "llm_caption_prompt_version": null,
+          "llm_caption_status": "success",
+          "llm_caption_error": null
+        }
+      ],
+      "has_table": false,
+      "has_figure": true,
+      "has_image": true,
+      "ocr_confidence": 0.98,
+      "is_scanned": false,
+      "extraction_notes": []
+    },
+    {
+      "page_number": 15,
+      "extracted_text_blob": "2026 Outlook: Key Metrics\nMetric | 2026 Outlook Range | Midpoint\nSame store:\nRevenue growth | (2.2)% to 0.0% | (1.1)%\nExpense growth | 1.5% to 2.8% | 2.2%\nNOI growth | (3.9)% to (0.5)% | (2.2)%\nNon-same store:\nNOI | $335 to $355 | $345\nNOI growth | 12.8% to 19.5% | 16.2%\nFunds from operations:\nCore FFO per share | $16.35 to $17.00 | $16.68\nCore FFO per share growth | (3.7)% to 0.2% | (1.7)%\nSource: Company filings",
+      "company_name": "Public Storage",
+      "timeline": {
+        "start": "",
+        "end": ""
+      },
+      "section_path": "Guidance - 2026 Outlook",
+      "tables": [
+        {
+          "table_id": "p15_t1",
+          "page_nums": [
+            15
+          ],
+          "bbox_list": [
+            []
+          ],
+          "caption_text": "2026 Outlook: Key Metrics",
+          "section_path": "Guidance - 2026 Outlook",
+          "html_table": "",
+          "json_table": [
+            [
+              "Metric",
+              "2026 Outlook Range",
+              "Midpoint"
+            ],
+            [
+              "Same store:",
+              "",
+              ""
+            ],
+            [
+              "Revenue growth",
+              "(2.2)% to 0.0%",
+              "(1.1)%"
+            ],
+            [
+              "Expense growth",
+              "1.5% to 2.8%",
+              "2.2%"
+            ],
+            [
+              "NOI growth",
+              "(3.9)% to (0.5)%",
+              "(2.2)%"
+            ],
+            [
+              "Non-same store:",
+              "",
+              ""
+            ],
+            [
+              "NOI",
+              "$335 to $355",
+              "$345"
+            ],
+            [
+              "NOI growth",
+              "12.8% to 19.5%",
+              "16.2%"
+            ],
+            [
+              "Funds from operations:",
+              "",
+              ""
+            ],
+            [
+              "Core FFO per share",
+              "$16.35 to $17.00",
+              "$16.68"
+            ],
+            [
+              "Core FFO per share growth",
+              "(3.7)% to 0.2%",
+              "(1.7)%"
+            ]
+          ],
+          "normalized_table_text": "2026 Outlook: Key Metrics\nMetric | 2026 Outlook Range | Midpoint\nSame store:\nRevenue growth | (2.2)% to 0.0% | (1.1)%\nExpense growth | 1.5% to 2.8% | 2.2%\nNOI growth | (3.9)% to (0.5)% | (2.2)%\nNon-same store:\nNOI | $335 to $355 | $345\nNOI growth | 12.8% to 19.5% | 16.2%\nFunds from operations:\nCore FFO per share | $16.35 to $17.00 | $16.68\nCore FFO per share growth | (3.7)% to 0.2% | (1.7)%",
+          "header_rows": [
+            "Metric",
+            "2026 > Outlook Range",
+            "Midpoint"
+          ],
+          "units": [
+            "%",
+            "USD",
+            "per share"
+          ],
+          "footnotes": [
+            {
+              "ref": "Source",
+              "text": "Company filings"
+            }
+          ],
+          "table_type": "guidance",
+          "gaap_or_non_gaap": "mixed",
+          "period_labels": [
+            "2026"
+          ],
+          "continuation_flag": false,
+          "continuation_of": null,
+          "confidence": 0.98,
+          "footing_verified": null,
+          "footing_discrepancies": [],
+          "llm_enriched": false,
+          "llm_enrichment_confidence": null
+        }
+      ],
+      "figures": [],
+      "has_table": true,
+      "has_figure": false,
+      "has_image": false,
+      "ocr_confidence": 0.99,
+      "is_scanned": false,
+      "extraction_notes": []
+    },
+    {
+      "page_number": 16,
+      "extracted_text_blob": "Why Public Storage\n• Favorable industry trends emerging\n• Premier investor-aligned leadership team\n• PS4.0 Strategic vision to drive value creation and growth\n– PS Next\n– Value Creation Engine\n– Own It Culture",
+      "company_name": "Public Storage",
+      "timeline": {
+        "start": "",
+        "end": ""
+      },
+      "section_path": "Why Public Storage",
+      "tables": [],
+      "figures": [],
+      "has_table": false,
+      "has_figure": false,
+      "has_image": false,
+      "ocr_confidence": 0.99,
+      "is_scanned": false,
+      "extraction_notes": []
+    },
+    {
+      "page_number": 17,
+      "extracted_text_blob": "Important Information\nFORWARD-LOOKING STATEMENTS: This presentation contains forward-looking statements within the meaning of the Private Securities Litigation Reform Act of 1995. Forward-looking statements include statements relating to our 2026 guidance and all underlying assumptions, PS4.0, PS Next, and our associated plans and strategies, our expected acquisition, disposition, development, and redevelopment activity, supply and demand for our self-storage facilities, information relating to operating trends in our markets, expectations regarding operating expenses, including property tax changes, expectations regarding the impacts from inflation and changes in macroeconomic conditions, our strategic priorities, expectations with respect to financing activities, rental rates, zoning, cap rates, and yields, leasing expectations, our credit ratings, and all other statements other than statements of historical fact. Such statements are based on management’s beliefs and assumptions made based on information currently available to management and may be identified by the use of the words “outlook,” “guidance,” “expects,” “believes,” “anticipates,” “should,” “estimates,” and similar expressions. These forward-looking statements involve known and unknown risks and uncertainties, which may cause our actual results and performance to be materially different from those expressed or implied in the forward-looking statements. Risks and uncertainties that may impact future results and performance include, but are not limited to those risks and uncertainties described in Part 1, Item 1A, “Risk Factors” in our most recent Annual Report on Form 10-K for the year ended December 31, 2025 filed with the Securities and Exchange Commission (the “SEC”) on February 12, 2026 and in our other filings with the SEC. These include changes in demand for our facilities, changes in macroeconomic conditions, changes in national self-storage supply development activity, impacts from our strategic corporate transformation initiative, impacts of natural disasters, adverse changes in laws and regulations including governing property tax, evictions, rental rates, zoning, cap rates, and yields, leasing expectations, our credit ratings, and all other statements other than statements of historical fact. Such statements are based on management’s beliefs and assumptions based on information currently available to management and may be identified by the use of the words “outlook,” “guidance,” “expects,” “believes,” “anticipates,” “should,” “estimates,” and similar expressions. These forward-looking statements involve known and unknown risks and uncertainties, which may cause our actual results and performance to be materially different from those expressed or implied in the forward-looking statements. Risks and uncertainties that may impact future results and performance include, but are not limited to those risks and uncertainties described in Part 1, Item 1A, “Risk Factors” in our most recent Annual Report on Form 10-K for the year ended December 31, 2025 filed with the SEC and in our other filings with the SEC. All of our forward-looking statements, including those in this report, are qualified in their entirety by this cautionary statement. We expressly disclaim any obligation to update publicly or otherwise revise any forward-looking statements, whether as a result of new information, new estimates, or other factors, events or circumstances after the date of these forward-looking statements, except when expressly required by law. Given these risks and uncertainties, you should not rely on any forward-looking statements in this report, or which management may make orally or in writing from time to time, neither as predictions of future events nor guarantees of future performance.\nNON-GAAP MEASURES: This presentation contains non-GAAP measures, including FFO, NOI, and EBITDA. Non-GAAP measures should not be considered as an alternative to, or more meaningful than, net income (determined in accordance with GAAP) or other GAAP financial measures, as an indicator of financial performance and are not an alternative to, or more meaningful than, cash flow from operating activities (determined in accordance with GAAP) as a measure of liquidity. Non-GAAP measures have limitations as they do not include all items of income and expense that affect operations and, accordingly, should always be considered as presentational financial results to those presented in accordance with GAAP. In addition, other REITs may compute these measures differently, so comparisons among REITs may not be helpful. Please refer to our SEC periodic reports and the reconciliations attached to this presentation for definitions of our non-GAAP measures and reconciliations to the nearest GAAP measures.\nSource: Company filings",
+      "company_name": "Public Storage",
+      "timeline": {
+        "start": "",
+        "end": ""
+      },
+      "section_path": "Important Information",
+      "tables": [],
+      "figures": [],
+      "has_table": false,
+      "has_figure": false,
+      "has_image": false,
+      "ocr_confidence": 0.92,
+      "is_scanned": false,
+      "extraction_notes": [
+        "Long legal text transcribed to the extent legible; minor formatting differences may exist."
+      ]
+    }
+  ],
+  "overall_confidence": 0.94,
+  "extraction_issues": [],
+  "assumptions_made": [
+    "Document treated as multi-page investor presentation based on slide numbering and content.",
+    "Currency interpreted as USD due to use of \"$\" symbol; no explicit ISO code shown.",
+    "For charts without labeled datapoints (e.g., some line charts), only annotated values were captured and chart_parse_status set to partial."
+  ]
+}

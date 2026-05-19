@@ -7,6 +7,7 @@ import app.retrieval.retriever as retriever_module
 from app.retrieval.citation_builder import build_citations
 from app.retrieval.query_expansion import should_expand_query
 from app.retrieval.retriever import (
+    CROSS_DOCUMENT_EVIDENCE_LIMIT,
     RAGRetriever,
     _build_conversation_context_block,
     _build_retrieval_diagnostics,
@@ -207,7 +208,8 @@ def test_citations_are_bounded_subset_of_ranked_candidates():
     citations = build_citations(evidence_nodes)
 
     assert len(ranked) == 10
-    assert len(citations) <= retriever.evidence_limit
+    # 10 distinct document_ids → cross-document cap (14) applies, not default (7)
+    assert len(citations) <= CROSS_DOCUMENT_EVIDENCE_LIMIT
 
     ranked_ids = {node.node.node_id for node in ranked}
     citation_ids = {citation["vector_node_id"] for citation in citations}
@@ -560,13 +562,15 @@ def test_collect_image_evidence_paths_respects_max_images(tmp_path):
 
 def test_visual_query_injects_image_evidence_when_top_evidence_has_no_images():
     retriever = RAGRetriever("client-1", top_k=10)
+    # All text nodes share one document_id so cross-doc cap doesn't fire;
+    # evidence_limit (7) is the binding cap for this test.
     ranked = [
         _node(
             f"text-{i}",
             1.0 - (i * 0.01),
             {
                 "chunk_type": "body_text",
-                "document_id": f"doc-{i}",
+                "document_id": "single-doc",
             },
         )
         for i in range(7)
@@ -578,7 +582,7 @@ def test_visual_query_injects_image_evidence_when_top_evidence_has_no_images():
                 0.5,
                 {
                     "chunk_type": "figure_artifact",
-                    "document_id": "img-doc-1",
+                    "document_id": "single-doc",
                     "asset_refs": ["/tmp/figure-1.png"],
                 },
             ),
@@ -587,7 +591,7 @@ def test_visual_query_injects_image_evidence_when_top_evidence_has_no_images():
                 0.49,
                 {
                     "chunk_type": "chart_context",
-                    "document_id": "img-doc-2",
+                    "document_id": "single-doc",
                     "asset_refs": ["/tmp/figure-2.png"],
                 },
             ),
@@ -776,8 +780,24 @@ def test_numeric_intent_triggers_structured_evidence_without_table_keyword():
     assert "full_table" in chunk_types
 
 
-def test_version_consistency_penalty_applied_for_single_version_query():
+def _patch_cross_encoder(monkeypatch):
+    """Patch the cross-encoder singleton to return a uniform 0.5 score.
+
+    This lets version/temporal tests run without downloading the ONNX model.
+    Ordering is then determined entirely by semantic score + metadata adjustments.
+    """
+    import app.retrieval.reranker as reranker_module
+
+    class _FakeEncoder:
+        def rerank(self, query, texts):
+            return [0.0] * len(texts)  # sigmoid(0.0) = 0.5
+
+    monkeypatch.setattr(reranker_module, "_get_cross_encoder", lambda: _FakeEncoder())
+
+
+def test_version_consistency_penalty_applied_for_single_version_query(monkeypatch):
     """Phase 4: non-comparison queries should penalize non-dominant versions."""
+    _patch_cross_encoder(monkeypatch)
     from app.retrieval.reranker import rerank_nodes
 
     nodes = [
@@ -819,8 +839,9 @@ def test_version_consistency_penalty_applied_for_single_version_query():
     assert v1_node.score < v2_node1.score
 
 
-def test_version_consistency_penalty_skipped_for_comparison_query():
+def test_version_consistency_penalty_skipped_for_comparison_query(monkeypatch):
     """Phase 4: comparison queries should NOT apply version penalty."""
+    _patch_cross_encoder(monkeypatch)
     from app.retrieval.reranker import rerank_nodes
 
     nodes = [
@@ -845,5 +866,8 @@ def test_version_consistency_penalty_skipped_for_comparison_query():
     ranked = rerank_nodes(nodes, top_k=2, query="Compare v1 versus v2 changes")
 
     v1_node = next(n for n in ranked if n.node.node_id == "v1-chunk")
-    # v1 should NOT be penalized (comparison query), so its score should be >= original 0.88
-    assert v1_node.score >= 0.85
+    v2_node = next(n for n in ranked if n.node.node_id == "v2-chunk")
+    # v1 should NOT be penalized (comparison query) — score gap should reflect only
+    # the semantic difference (0.88 vs 0.90), not an additional version penalty.
+    semantic_gap = (0.9 - 0.88) * 0.4  # expected gap from semantic weights alone
+    assert (v2_node.score - v1_node.score) <= semantic_gap + 0.01

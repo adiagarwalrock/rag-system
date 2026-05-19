@@ -221,12 +221,6 @@ class OpenAIProviderFactory(BaseAIProviderFactory):
             kwargs["truncation"] = "disabled"
             if max_output_tokens is not None:
                 kwargs["max_output_tokens"] = max_output_tokens
-            if prompt_cache_key:
-                kwargs["prompt_cache_key"] = prompt_cache_key
-            if prompt_cache_retention:
-                kwargs["prompt_cache_retention"] = prompt_cache_retention
-            if safety_identifier:
-                kwargs["safety_identifier"] = safety_identifier
             return kwargs
 
         if max_output_tokens is not None:

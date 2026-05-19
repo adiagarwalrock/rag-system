@@ -239,6 +239,42 @@ class VectorStoreManager:
             )
             return False
 
+    def update_document_payload(
+        self, document_id: str, client_id: str, payload: dict
+    ) -> None:
+        """Overwrite specific payload fields on all Qdrant points for a document."""
+        try:
+            client = self._get_qdrant_client()
+            if not client.collection_exists(COLLECTION_NAME):
+                return
+            client.set_payload(
+                collection_name=COLLECTION_NAME,
+                payload=payload,
+                points=qdrant_models.Filter(
+                    must=[
+                        qdrant_models.FieldCondition(
+                            key="document_id",
+                            match=qdrant_models.MatchValue(value=document_id),
+                        ),
+                        qdrant_models.FieldCondition(
+                            key="client_id",
+                            match=qdrant_models.MatchValue(value=client_id),
+                        ),
+                    ]
+                ),
+            )
+            logger.info(
+                "Updated Qdrant payload for document_id='%s': %s",
+                document_id,
+                list(payload.keys()),
+            )
+        except Exception as exc:
+            logger.exception(
+                "Failed to update Qdrant payload for document_id='%s': %s",
+                document_id,
+                exc,
+            )
+
     def get_qdrant_point_count(self) -> int | None:
         """Return approximate point count for the configured collection."""
         try:

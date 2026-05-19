@@ -74,6 +74,10 @@ def configure_logging(
         console_handler.setFormatter(formatter)
         root_logger.addHandler(console_handler)
 
+    # Suppress noisy INFO-level redirect logs from HuggingFace model downloads.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("hpack").setLevel(logging.WARNING)
+
     # Uvicorn and Streamlit can run with non-propagating loggers. Attach the
     # same file sink directly so API access/error logs are persisted.
     for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access", "streamlit"):

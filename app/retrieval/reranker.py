@@ -1,113 +1,109 @@
 """
-Reranker: deterministic metadata-aware ranking for retrieved nodes.
+Reranker: cross-encoder-based ranking with metadata-aware adjustments.
+
+Scoring formula:
+  combined = 0.4 * semantic_score + 0.5 * ce_score_norm + temporal + authority
+
+where ce_score_norm = sigmoid(raw cross-encoder logit), mapping to [0, 1].
+Temporal and version-consistency adjustments encode business rules (recency,
+document supersession) that a general cross-encoder doesn't know about.
 """
 
 import logging
+import math
 from collections import defaultdict
 from datetime import datetime, timezone
+from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
-TABLE_QUERY_TERMS = (
-    "table",
-    "row",
-    "rows",
-    "column",
-    "columns",
-    "matrix",
-    "tabular",
-    "breakdown",
-    "top ",
-    "top-",
-    "portfolio composition",
-    "market mix",
+# Terms that indicate a comparison query — used by version-consistency logic only.
+_COMPARISON_TERMS = (
+    "compare",
+    "comparison",
+    "difference",
+    "versus",
+    "vs",
+    "between",
+    "changed",
+    "changes",
 )
-CHART_QUERY_TERMS = (
-    "chart",
-    "graph",
-    "plot",
-    "trend",
-    "map",
-    "diagram",
-    "figure",
-    "legend",
-    "infographic",
-    "pie",
-    "bar",
-    "line",
-)
-IMAGE_QUERY_TERMS = ("image", "images", "screenshot", "screenshots", "visual")
-NUMERIC_QUERY_TERMS = (
-    "number",
-    "numbers",
-    "metric",
-    "metrics",
-    "percentage",
-    "percent",
-    "value",
-    "values",
-)
-# Terms that indicate a question is asking for headline / overview statistics
-_FACTUAL_LOOKUP_TERMS = (
-    "quick facts",
-    "fast facts",
-    "headline stats",
-    "at a glance",
-    "key stats",
-    "key facts",
-    "what are",
-    "how many",
-    "what is",
-    "what was",
-    "what does",
-    "how much",
-    "overview",
-    "summary",
-)
+_VERSION_PENALTY = 0.03
+
+# Score weights
+_SEMANTIC_WEIGHT = 0.4
+_CE_WEIGHT = 0.5
+
+
+@lru_cache(maxsize=1)
+def _get_cross_encoder():
+    from fastembed.rerank.cross_encoder import TextCrossEncoder
+
+    from app.core.config import settings
+
+    logger.info("Loading cross-encoder model: %s", settings.RERANKER_MODEL)
+    return TextCrossEncoder(model_name=settings.RERANKER_MODEL)
+
+
+def _cross_encoder_scores(query: str, nodes: list) -> list[float]:
+    encoder = _get_cross_encoder()
+    texts = [node.node.get_content() or "" for node in nodes]
+    raw_scores = list(encoder.rerank(query, texts))
+    return [1.0 / (1.0 + math.exp(-s)) for s in raw_scores]
 
 
 def rerank_nodes(
     source_nodes: list,
-    top_k: int = 10,
+    top_k: int = 15,
     prefer_latest: bool = True,
     query: str | None = None,
 ) -> list:
     """
-    Rank retrieved nodes by combining semantic similarity with one temporal pass.
+    Rank retrieved nodes by combining semantic similarity, cross-encoder
+    relevance, and metadata-based temporal/authority adjustments.
 
     Args:
         source_nodes: LlamaIndex NodeWithScore objects
         top_k: Number of top results to return
         prefer_latest: If True, apply stronger recency/current-version preference
-        query: Optional user query for intent-aware structural boosts
+        query: Optional user query for cross-encoder scoring
 
     Returns:
         Reranked list of source nodes.
     """
     now = datetime.now(timezone.utc)
+
+    ce_scores = (
+        _cross_encoder_scores(query, source_nodes)
+        if query and source_nodes
+        else [0.5] * len(source_nodes)
+    )
+
     scored = []
-    for node in source_nodes:
+    for node, ce_score in zip(source_nodes, ce_scores):
         semantic_score = _safe_float(node.score, 0.0)
         metadata = node.node.metadata or {}
-
-        temporal_adjustment = _temporal_adjustment(metadata, now, prefer_latest)
-        authority_adjustment = _authority_adjustment(metadata)
-        structural_adjustment = _structural_adjustment(metadata, query)
-        combined_score = (
-            semantic_score
-            + temporal_adjustment
-            + authority_adjustment
-            + structural_adjustment
+        temporal = _temporal_adjustment(metadata, now, prefer_latest)
+        authority = _authority_adjustment(metadata)
+        combined = (
+            _SEMANTIC_WEIGHT * semantic_score
+            + _CE_WEIGHT * ce_score
+            + temporal
+            + authority
         )
-        node.score = combined_score
-        scored.append((combined_score, node))
+        node.score = combined
+        scored.append((combined, node))
 
     scored.sort(key=lambda x: x[0], reverse=True)
     result = [node for _, node in scored[:top_k]]
 
     _apply_version_consistency_adjustment(result, query or "")
 
-    logger.info("Reranked %d nodes, returning top %d", len(source_nodes), len(result))
+    logger.info(
+        "Reranked %d nodes via cross-encoder, returning top %d",
+        len(source_nodes),
+        len(result),
+    )
     return result
 
 
@@ -163,64 +159,6 @@ def _authority_adjustment(metadata: dict) -> float:
     return normalized * 0.05
 
 
-def _structural_adjustment(metadata: dict, query: str | None) -> float:
-    if not query:
-        return 0.0
-
-    normalized_query = query.lower()
-    chunk_type = str(metadata.get("chunk_type") or "")
-    figure_type = str(metadata.get("figure_type") or "")
-
-    wants_table = any(term in normalized_query for term in TABLE_QUERY_TERMS)
-    wants_chart = any(term in normalized_query for term in CHART_QUERY_TERMS)
-    wants_image = any(term in normalized_query for term in IMAGE_QUERY_TERMS)
-    wants_numeric = any(term in normalized_query for term in NUMERIC_QUERY_TERMS)
-    wants_structured = wants_table or wants_chart or "legend" in normalized_query
-
-    is_table_chunk = chunk_type in {
-        "full_table",
-        "table_segment",
-        "table_summary_text",
-    } or _safe_bool(metadata.get("table_detected"), False)
-    is_chart_chunk = (
-        chunk_type
-        in {
-            "figure_artifact",
-            "chart_context",
-            "chart_data_points",
-            "visual_proxy_text",
-        }
-        or _safe_bool(metadata.get("chart_detected"), False)
-        or figure_type in {"chart", "diagram", "infographic"}
-    )
-    is_reasoning_chunk = chunk_type.startswith("reasoning_")
-
-    adjustment = 0.0
-    if wants_table and is_table_chunk:
-        adjustment += 0.12
-    if wants_chart and is_chart_chunk:
-        adjustment += 0.12
-    if (wants_table or wants_chart) and is_reasoning_chunk:
-        adjustment += 0.05
-    if wants_image and bool(metadata.get("asset_refs")):
-        adjustment += 0.06
-    if wants_numeric and _safe_bool(metadata.get("contains_numeric_data"), False):
-        adjustment += 0.03
-    if wants_structured and (is_table_chunk or is_chart_chunk):
-        adjustment += 0.06
-
-    # Boost overview/summary slides for factual lookup queries
-    slide_purpose = str(metadata.get("slide_purpose") or "")
-    if slide_purpose == "overview_stats":
-        is_factual_lookup = any(
-            term in normalized_query for term in _FACTUAL_LOOKUP_TERMS
-        )
-        if is_factual_lookup:
-            adjustment += 0.06
-
-    return min(adjustment, 0.26)
-
-
 def _parse_date(val) -> datetime | None:
     if val is None:
         return None
@@ -265,24 +203,11 @@ def _safe_bool(value, default: bool) -> bool:
     return default
 
 
-_COMPARISON_TERMS = (
-    "compare",
-    "comparison",
-    "difference",
-    "versus",
-    "vs",
-    "between",
-    "changed",
-    "changes",
-)
-_VERSION_PENALTY = 0.03
-
-
 def _apply_version_consistency_adjustment(
     nodes: list,
     query: str,
 ) -> None:
-    """Penalize non-dominant versions of the same document for non-comparison queries."""
+    """Penalize non-dominant versions of the same document for non-comparison queries."""  # noqa: E501
     if not nodes or not query:
         return
     normalized = query.lower()
@@ -308,6 +233,13 @@ def _apply_version_consistency_adjustment(
     if not dominant_version:
         return
 
+    doc_chunk_counts: dict[str, int] = {}
+    for node in nodes:
+        meta = node.node.metadata or {}
+        doc_id = meta.get("document_id") or meta.get("document_name") or ""
+        if doc_id:
+            doc_chunk_counts[doc_id] = doc_chunk_counts.get(doc_id, 0) + 1
+
     for node in nodes:
         metadata = node.node.metadata or {}
         doc_id = metadata.get("document_id") or metadata.get("document_name") or ""
@@ -317,4 +249,6 @@ def _apply_version_consistency_adjustment(
             and version
             and version != dominant_version[doc_id]
         ):
+            if doc_chunk_counts.get(doc_id, 0) <= 1:
+                continue
             node.score = (_safe_float(node.score, 0.0) or 0.0) - _VERSION_PENALTY

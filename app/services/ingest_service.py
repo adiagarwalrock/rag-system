@@ -16,7 +16,7 @@ from llama_index.core.extractors import (
 from llama_index.core.ingestion import IngestionPipeline
 from llama_index.core.node_parser import SemanticSplitterNodeParser
 from llama_index.core.schema import BaseNode
-from sqlalchemy import true
+from sqlalchemy import func, true
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -447,6 +447,14 @@ class IngestionPipelineExecutor:
             return
 
         self.db_doc.document_family = version_group
+
+        # Auto-promote to is_current if this doc has the highest version_rank in the group.
+        if not version_info.get("is_current"):
+            incoming_rank = version_info.get("version_rank") or 0
+            if incoming_rank and incoming_rank >= self._highest_version_rank_in_group(version_group):
+                version_record.is_current = True
+                version_info["is_current"] = True
+
         if version_info.get("is_current"):
             _supersede_older_versions(
                 self.db,
@@ -454,6 +462,20 @@ class IngestionPipelineExecutor:
                 self.doc_id,
                 version_group,
             )
+
+    def _highest_version_rank_in_group(self, version_group: str) -> int:
+        """Return the max version_rank already in DB for this group, excluding the current doc."""
+        result = (
+            self.db.query(func.max(DocumentVersion.version_rank))
+            .join(Document, Document.id == DocumentVersion.document_id)
+            .filter(
+                Document.client_id == self.client_id,
+                Document.document_family == version_group,
+                DocumentVersion.document_id != self.doc_id,
+            )
+            .scalar()
+        )
+        return result or 0
 
     def _apply_document_metadata(
         self,
@@ -659,7 +681,7 @@ def _handle_ingestion_failure(
 
 
 def _supersede_older_versions(db: Session, client_id: str, doc_id: str, group: str):
-    """Mark older versions in the same family as non-current."""
+    """Mark older versions in the same family as non-current in DB and Qdrant."""
     older_versions = (
         db.query(DocumentVersion)
         .join(Document, Document.id == DocumentVersion.document_id)
@@ -673,9 +695,15 @@ def _supersede_older_versions(db: Session, client_id: str, doc_id: str, group: s
     )
     for old_ver in older_versions:
         old_ver.is_current = False
+        vector_store_manager.update_document_payload(
+            old_ver.document_id, client_id, {"is_current": False}
+        )
         logger.info(
             "Marked version %s (doc %s) as non-current, superseded by %s",
             old_ver.version_label,
             old_ver.document_id,
             doc_id,
         )
+
+    # Patch the newly-promoted document in Qdrant
+    vector_store_manager.update_document_payload(doc_id, client_id, {"is_current": True})

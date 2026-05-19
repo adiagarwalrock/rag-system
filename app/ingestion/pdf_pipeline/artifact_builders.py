@@ -39,6 +39,7 @@ from app.core.prompts import (
 )
 from app.core.token_budget import truncate_text_by_tokens
 from app.indexing.vector_store import vector_store_manager
+from app.ingestion.pdf_pipeline.chunk_builder import _classify_slide_purpose
 from app.ingestion.pdf_pipeline.contracts import ArtifactResult, ArtifactStage
 from app.ingestion.pdf_pipeline.helpers import (
     bbox_area,
@@ -1601,7 +1602,10 @@ def analyze_page_screenshots(page_manifests: list[PageManifest]) -> None:
     eligible = [
         m
         for m in page_manifests
-        if m.page_class in {"visual_heavy_page", "table_heavy_page", "hard_page"}
+        if (
+            m.page_class in {"visual_heavy_page", "table_heavy_page", "hard_page"}
+            or _classify_slide_purpose(m) == "overview_stats"
+        )
         and m.screenshot_path
     ]
     if not eligible:

@@ -254,9 +254,9 @@ def test_invoke_llm_chat_forwards_openai_responses_runtime_kwargs(monkeypatch):
     assert messages[0].role == MessageRole.DEVELOPER
     chat_kwargs = captured["chat_kwargs"]
     assert chat_kwargs["max_output_tokens"] == 256
-    assert chat_kwargs["prompt_cache_key"] == "cache-key"
-    assert chat_kwargs["prompt_cache_retention"] == "24h"
-    assert chat_kwargs["safety_identifier"] == "safe-id"
+    assert "prompt_cache_key" not in chat_kwargs
+    assert "prompt_cache_retention" not in chat_kwargs
+    assert "safety_identifier" not in chat_kwargs
     assert chat_kwargs["user"] == "user-1"
     assert chat_kwargs["timeout"] == 9.5
     assert chat_kwargs["truncation"] == "disabled"

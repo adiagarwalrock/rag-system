@@ -344,6 +344,25 @@ class RAGCore:
                 )
             return {"rows": rows, "total": payload["total"]}
 
+    # --- Debug / Retrieval Inspection ---
+    def retrieve_only(
+        self, client_id: str, question: str, top_k: int = 15, rerank: bool = True
+    ) -> List[Dict[str, Any]]:
+        from app.retrieval.retriever import RAGRetriever
+
+        retriever = RAGRetriever(client_id=client_id, top_k=top_k)
+        nodes = retriever.retrieve_only(question, rerank=rerank)
+        return [
+            {
+                "rank": i + 1,
+                "score": n.score,
+                "node_id": n.node.node_id,
+                "text": n.node.text,
+                "metadata": n.node.metadata,
+            }
+            for i, n in enumerate(nodes)
+        ]
+
     # --- Health ---
     def health(self) -> dict:
         try:

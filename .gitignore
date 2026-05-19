@@ -16,9 +16,11 @@ venv/
 node_modules/*
 data/qdrant_storage*
 data/raw*
-# 
+#
 plan/*
 artifacts/*
 .codex
 logs/
 .coverage
+docs/drive-download*
+coverage.xml
