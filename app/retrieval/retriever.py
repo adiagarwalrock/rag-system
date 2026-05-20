@@ -42,9 +42,9 @@ from app.retrieval.reranker import rerank_nodes
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_EVIDENCE_LIMIT = 7
-COMPARATIVE_EVIDENCE_LIMIT = 10
-CONFLICT_EVIDENCE_LIMIT = 8
+DEFAULT_EVIDENCE_LIMIT = 15
+COMPARATIVE_EVIDENCE_LIMIT = 20
+CONFLICT_EVIDENCE_LIMIT = 20
 MAX_MULTIMODAL_IMAGES = 6
 SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 REASONING_CHUNK_TYPES = {
@@ -359,7 +359,7 @@ class VecteraRetriever:
         self.top_k = top_k
         self.reasoning_effort = normalize_reasoning_effort(reasoning_effort)
         self.conversation_context = conversation_context or {}
-        self.prefetch_top_k = top_k + 5
+        self.prefetch_top_k = top_k * 5
         self.evidence_limit = DEFAULT_EVIDENCE_LIMIT
         self.comparative_evidence_limit = COMPARATIVE_EVIDENCE_LIMIT
         self.conflict_evidence_limit = CONFLICT_EVIDENCE_LIMIT

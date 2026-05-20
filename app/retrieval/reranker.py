@@ -3,9 +3,17 @@ Reranker: deterministic metadata-aware ranking for retrieved nodes.
 """
 
 import logging
+import re
+from collections import defaultdict
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
+
+# version_rank is month-encoded as year*100+month (e.g. 202603) or
+# quarter-encoded as year*10+quarter (e.g. 20261). RANK_SCALE is the upper
+# bound so we can normalize all encoding schemes to [0, 1].
+_RANK_SCALE = 203012
+_MAX_RANK_CONTRIBUTION = 0.15
 
 TABLE_QUERY_TERMS = (
     "table",
@@ -37,7 +45,11 @@ CHART_QUERY_TERMS = (
 )
 IMAGE_QUERY_TERMS = ("image", "images", "screenshot", "screenshots", "visual")
 NUMERIC_QUERY_TERMS = (
+    "how many",
+    "how much",
     "number",
+    "number of",
+    "count",
     "numbers",
     "metric",
     "metrics",
@@ -45,6 +57,27 @@ NUMERIC_QUERY_TERMS = (
     "percent",
     "value",
     "values",
+)
+COUNT_QUERY_TERMS = ("how many", "number of", "count", "total")
+METRIC_STOPWORDS = {
+    "does",
+    "have",
+    "has",
+    "many",
+    "much",
+    "what",
+    "which",
+    "with",
+    "from",
+    "that",
+    "this",
+    "digital",
+    "realty",
+}
+METRIC_VALUE_PATTERN = re.compile(
+    r"\b\$?\d[\d,]*(?:\.\d+)?\s*(?:[+%x]|bn|m|billion|million)?\s+"
+    r"(?:global\s+)?(?P<subject>[a-z][a-z-]+)s?\b",
+    re.IGNORECASE,
 )
 
 
@@ -67,14 +100,24 @@ def rerank_nodes(
         Reranked list of source nodes.
     """
     now = datetime.now(timezone.utc)
+    temporal_context = _resolve_temporal_context(source_nodes)
     scored = []
     for node in source_nodes:
         semantic_score = _safe_float(node.score, 0.0)
         metadata = node.node.metadata or {}
+        node_id = str(getattr(node.node, "node_id", None) or id(node))
 
-        temporal_adjustment = _temporal_adjustment(metadata, now, prefer_latest)
+        temporal_adjustment = _temporal_adjustment(
+            metadata,
+            now,
+            prefer_latest,
+            node_id in temporal_context.implicit_current,
+            node_id in temporal_context.superseded,
+        )
         authority_adjustment = _authority_adjustment(metadata)
-        structural_adjustment = _structural_adjustment(metadata, query)
+        structural_adjustment = _structural_adjustment(
+            metadata, query, node.node.text or ""
+        )
         combined_score = (
             semantic_score
             + temporal_adjustment
@@ -91,21 +134,97 @@ def rerank_nodes(
     return result
 
 
+class _TemporalContext:
+    def __init__(self) -> None:
+        self.implicit_current: set[str] = set()
+        self.superseded: set[str] = set()
+
+
+def _resolve_temporal_context(nodes: list) -> _TemporalContext:
+    """Return candidate-local version signals for latest-version ranking.
+
+    When a version group has no explicit is_current=True document (e.g. neither
+    filename contains 'final'/'latest'), every node from the highest-ranked
+    version in that group is promoted to implicit current so recency preference
+    works across the whole document, not just one arbitrary chunk.
+    """
+    context = _TemporalContext()
+    groups: dict[str, list] = defaultdict(list)
+    for node in nodes:
+        meta = node.node.metadata or {}
+        group = meta.get("document_version_group")
+        if group:
+            groups[group].append(node)
+
+    for group_nodes in groups.values():
+        ranked_nodes = [
+            node
+            for node in group_nodes
+            if _safe_int((node.node.metadata or {}).get("version_rank"), 0) > 0
+        ]
+        if not ranked_nodes:
+            continue
+
+        explicit_current_nodes = [
+            node
+            for node in group_nodes
+            if _safe_bool((node.node.metadata or {}).get("is_current"), False)
+            is True
+        ]
+        if explicit_current_nodes:
+            current_rank = max(
+                _safe_int((node.node.metadata or {}).get("version_rank"), 0)
+                for node in explicit_current_nodes
+            )
+            for node in ranked_nodes:
+                node_id = str(getattr(node.node, "node_id", None) or id(node))
+                rank = _safe_int((node.node.metadata or {}).get("version_rank"), 0)
+                if rank < current_rank:
+                    context.superseded.add(node_id)
+            continue
+
+        max_rank = max(
+            _safe_int((node.node.metadata or {}).get("version_rank"), 0)
+            for node in ranked_nodes
+        )
+        for node in ranked_nodes:
+            node_id = str(getattr(node.node, "node_id", None) or id(node))
+            rank = _safe_int((node.node.metadata or {}).get("version_rank"), 0)
+            if rank == max_rank:
+                context.implicit_current.add(node_id)
+            elif rank < max_rank:
+                context.superseded.add(node_id)
+
+    return context
+
+
 def _temporal_adjustment(
-    metadata: dict, now: datetime, prefer_latest: bool = True
+    metadata: dict,
+    now: datetime,
+    prefer_latest: bool = True,
+    is_implicit_current: bool = False,
+    is_superseded: bool = False,
 ) -> float:
     adjustment = 0.0
 
+    # Explicit is_current wins; fall back to implicit promotion from version group.
     is_current = _safe_bool(metadata.get("is_current"), None)
-    if is_current is True:
+    if is_current is True or is_implicit_current:
         adjustment += 0.1 if prefer_latest else 0.01
     elif is_current is False and prefer_latest:
         adjustment -= 0.05
 
+    if is_superseded and prefer_latest:
+        adjustment -= 0.12
+
+    # Normalize version_rank to [0, 1] before scaling so month-encoded ranks
+    # (e.g. 202512, 202603) retain their relative ordering instead of all being
+    # clamped to the same cap.
     version_rank = _safe_int(metadata.get("version_rank"), 0)
     if version_rank > 0:
-        weight = 0.001 if prefer_latest else 0.00025
-        adjustment += min(version_rank, 100) * weight
+        normalized = min(version_rank / _RANK_SCALE, 1.0)
+        scale = 1.0 if prefer_latest else 0.25
+        adjustment += normalized * _MAX_RANK_CONTRIBUTION * scale
 
     effective_from = _parse_date(metadata.get("effective_from"))
     effective_to = _parse_date(metadata.get("effective_to"))
@@ -113,7 +232,9 @@ def _temporal_adjustment(
         if effective_from <= now <= effective_to:
             adjustment += 0.08
         elif now > effective_to and prefer_latest:
-            adjustment -= 0.05
+            # Graduated penalty: older expiry = larger penalty, capped at -0.10.
+            months_overdue = (now - effective_to).days / 30.0
+            adjustment -= min(months_overdue * 0.02, 0.10)
         elif now < effective_from and prefer_latest:
             adjustment -= 0.03
 
@@ -143,7 +264,7 @@ def _authority_adjustment(metadata: dict) -> float:
     return normalized * 0.05
 
 
-def _structural_adjustment(metadata: dict, query: str | None) -> float:
+def _structural_adjustment(metadata: dict, query: str | None, text: str = "") -> float:
     if not query:
         return 0.0
 
@@ -186,10 +307,64 @@ def _structural_adjustment(metadata: dict, query: str | None) -> float:
         adjustment += 0.06
     if wants_numeric and _safe_bool(metadata.get("contains_numeric_data"), False):
         adjustment += 0.03
+    if _is_count_metric_query(normalized_query):
+        adjustment += _count_metric_adjustment(normalized_query, text)
     if wants_structured and (is_table_chunk or is_chart_chunk):
         adjustment += 0.06
 
-    return min(adjustment, 0.2)
+    return max(min(adjustment, 0.28), -0.1)
+
+
+def _is_count_metric_query(normalized_query: str) -> bool:
+    return any(term in normalized_query for term in COUNT_QUERY_TERMS)
+
+
+def _count_metric_adjustment(normalized_query: str, text: str) -> float:
+    if not text:
+        return 0.0
+
+    query_subjects = _metric_query_subjects(normalized_query)
+    if not query_subjects:
+        return 0.0
+
+    normalized_text = text.lower()
+    direct_subject_match = any(
+        _normalize_metric_subject(match.group("subject")) in query_subjects
+        for match in METRIC_VALUE_PATTERN.finditer(normalized_text)
+    )
+    if not direct_subject_match:
+        return 0.0
+
+    adjustment = 0.16
+    if any(
+        phrase in normalized_text
+        for phrase in (
+            "top customers",
+            "top 20 customers",
+            "customer type",
+            "% by arr",
+        )
+    ):
+        adjustment -= 0.08
+    return adjustment
+
+
+def _metric_query_subjects(normalized_query: str) -> set[str]:
+    subjects: set[str] = set()
+    for token in re.findall(r"[a-z][a-z-]+", normalized_query):
+        if len(token) < 4 or token in METRIC_STOPWORDS:
+            continue
+        subjects.add(_normalize_metric_subject(token))
+    return subjects
+
+
+def _normalize_metric_subject(token: str) -> str:
+    normalized = token.lower().strip("-")
+    if normalized.endswith("ies") and len(normalized) > 4:
+        return f"{normalized[:-3]}y"
+    if normalized.endswith("s") and len(normalized) > 3:
+        return normalized[:-1]
+    return normalized
 
 
 def _parse_date(val) -> datetime | None:

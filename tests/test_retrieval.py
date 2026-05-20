@@ -186,6 +186,55 @@ def test_latest_query_prefers_current_version_nodes():
     assert ranked[0].node.node_id == "current"
 
 
+def test_latest_query_promotes_all_chunks_from_newest_version_group():
+    retriever = VecteraRetriever("client-1", top_k=5)
+
+    old_exact = _node(
+        "dec-customers",
+        0.52,
+        {
+            "version_rank": "202512",
+            "is_current": "false",
+            "version_label": "December 2025",
+            "document_version_group": "digital-realty-investor-presentation",
+            "document_id": "doc-dec",
+        },
+    )
+    newest_other = _node(
+        "mar-other",
+        0.9,
+        {
+            "version_rank": "202603",
+            "is_current": "false",
+            "version_label": "March 2026",
+            "document_version_group": "digital-realty-investor-presentation",
+            "document_id": "doc-mar",
+        },
+    )
+    newest_exact = _node(
+        "mar-customers",
+        0.35,
+        {
+            "version_rank": "202603",
+            "is_current": "false",
+            "version_label": "March 2026",
+            "document_version_group": "digital-realty-investor-presentation",
+            "document_id": "doc-mar",
+        },
+    )
+    old_exact.node.text = "5,000+ Customers"
+    newest_other.node.text = "Customer type (% by ARR). Top customers by revenue."
+    newest_exact.node.text = "5,500+ Customers"
+
+    ranked = retriever._rank_nodes(
+        "How many customers does Digital Realty have?",
+        [old_exact, newest_other, newest_exact],
+    )
+    ranked_ids = [node.node.node_id for node in ranked]
+
+    assert ranked_ids.index("mar-customers") < ranked_ids.index("dec-customers")
+
+
 def test_citations_are_bounded_subset_of_ranked_candidates():
     retriever = VecteraRetriever("client-1", top_k=10)
     ranked = [
@@ -599,7 +648,8 @@ def test_visual_query_injects_image_evidence_when_top_evidence_has_no_images():
     )
     image_evidence = [node for node in evidence if node.node.metadata.get("asset_refs")]
 
-    assert len(evidence) == retriever.evidence_limit
+    # 9 input nodes < evidence_limit, so all should be selected
+    assert len(evidence) == len(ranked)
     assert len(image_evidence) >= 2
 
 

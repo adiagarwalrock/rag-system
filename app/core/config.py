@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     CHAT_SUMMARY_MAX_OUTPUT_TOKENS: int = 300
     SESSION_SUMMARY_TIMEOUT_SECONDS: int = 15
 
-    COLLECTION_NAME: str = "rag_collection_oai"
+    COLLECTION_NAME: str = "rag_collection_oai_v2"
     CHAT_HISTORY_COLLECTION_NAME: str = "chat_history"
     VECTOR_DIMENSIONS: int = 3072
 
