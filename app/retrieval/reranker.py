@@ -6,6 +6,10 @@ import logging
 import re
 from collections import defaultdict
 from datetime import datetime, timezone
+from functools import lru_cache
+
+from app.core.config import settings
+from app.retrieval.cross_encoder_reranker import CrossEncoderSemanticReranker
 
 logger = logging.getLogger(__name__)
 
@@ -128,10 +132,38 @@ def rerank_nodes(
         scored.append((combined_score, node))
 
     scored.sort(key=lambda x: x[0], reverse=True)
-    result = [node for _, node in scored[:top_k]]
+    metadata_ranked_nodes = [node for _, node in scored]
+
+    if settings.ENABLE_CROSS_ENCODER_RERANKING and query:
+        semantic_reranker = _get_cross_encoder_reranker()
+        result = semantic_reranker.rerank(
+            query=query,
+            nodes=metadata_ranked_nodes,
+            top_k=top_k,
+        )
+        logger.info(
+            "Reranked %d nodes with cross-encoder %s, returning top %d",
+            len(source_nodes),
+            semantic_reranker.model_name,
+            len(result),
+        )
+        return result
+
+    result = metadata_ranked_nodes[:top_k]
 
     logger.info("Reranked %d nodes, returning top %d", len(source_nodes), len(result))
     return result
+
+
+@lru_cache(maxsize=1)
+def _get_cross_encoder_reranker() -> CrossEncoderSemanticReranker:
+    return CrossEncoderSemanticReranker(
+        model_name=settings.CROSS_ENCODER_RERANK_MODEL,
+        fallback_model_name=settings.CROSS_ENCODER_RERANK_FALLBACK_MODEL,
+        hf_api_token=settings.hf_api_token,
+        device=settings.CROSS_ENCODER_RERANK_DEVICE,
+        trust_remote_code=settings.CROSS_ENCODER_RERANK_TRUST_REMOTE_CODE,
+    )
 
 
 class _TemporalContext:

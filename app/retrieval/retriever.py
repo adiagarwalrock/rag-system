@@ -261,6 +261,11 @@ class GroundedAnswerSynthesizer:
                 metrics.evidence_tokens,
                 metrics.conflict_tokens,
             )
+            input_messages, used_image_paths = _append_image_inputs(
+                input_messages=input_messages,
+                image_paths=image_paths,
+            )
+
             response = invoke_llm_chat(
                 model=settings.LLM_MODEL,
                 input_messages=input_messages,
@@ -278,7 +283,7 @@ class GroundedAnswerSynthesizer:
             return GroundedAnswerResult(
                 answer=answer,
                 reasoning=reasoning,
-                images_used=image_paths,
+                images_used=used_image_paths,
                 reasoning_effort_applied=effort_applied,
             )
         except Exception:
@@ -1283,30 +1288,47 @@ def _append_image_inputs(
     *,
     input_messages: list[dict[str, Any]],
     image_paths: list[str],
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[str]]:
     if not image_paths:
-        return input_messages
+        return input_messages, []
 
-    messages = [*input_messages]
-    if not messages:
-        return messages
+    if not input_messages:
+        return input_messages, []
 
-    user_message = messages[-1]
+    user_message = input_messages[-1]
+    if not isinstance(user_message, dict):
+        return input_messages, []
     if user_message.get("role") != "user":
-        return messages
+        return input_messages, []
 
-    user_text = str(user_message.get("content") or "")
-    multimodal_content: list[dict[str, Any]] = [
-        {"type": "input_text", "text": user_text}
-    ]
+    used_image_paths: list[str] = []
+    image_inputs: list[dict[str, Any]] = []
     for path in image_paths:
         data_url = _image_path_to_data_url(path)
         if not data_url:
             continue
-        multimodal_content.append({"type": "input_image", "image_url": data_url})
+        image_inputs.append({"type": "input_image", "image_url": data_url})
+        used_image_paths.append(path)
 
+    if not image_inputs:
+        return input_messages, []
+
+    messages = [*input_messages]
+    user_message = {**user_message}
+    user_content = user_message.get("content")
+    if isinstance(user_content, list):
+        multimodal_content = [
+            {**item} if isinstance(item, dict) else item for item in user_content
+        ]
+    else:
+        multimodal_content = [
+            {"type": "input_text", "text": str(user_content or "")}
+        ]
+
+    multimodal_content.extend(image_inputs)
     user_message["content"] = multimodal_content
-    return messages
+    messages[-1] = user_message
+    return messages, used_image_paths
 
 
 def _collect_image_evidence_paths(

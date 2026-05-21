@@ -226,3 +226,43 @@ def test_invoke_llm_chat_ignores_responses_only_kwargs_when_disabled(monkeypatch
     assert "safety_identifier" not in chat_kwargs
     assert "max_output_tokens" not in chat_kwargs
     assert "truncation" not in chat_kwargs
+
+
+def test_extract_chat_response_text_reads_raw_responses_output_text():
+    response = SimpleNamespace(
+        message=SimpleNamespace(blocks=[], content=""),
+        raw=SimpleNamespace(output_text="Raw Responses answer."),
+    )
+
+    assert ai_provider.extract_chat_response_text(response) == "Raw Responses answer."
+
+
+def test_extract_chat_response_text_reads_raw_responses_output_items():
+    response = SimpleNamespace(
+        message=SimpleNamespace(blocks=[], content=""),
+        raw=SimpleNamespace(
+            output=[
+                SimpleNamespace(
+                    type="message",
+                    content=[SimpleNamespace(text="Object-shaped answer.")],
+                )
+            ]
+        ),
+    )
+
+    assert (
+        ai_provider.extract_chat_response_text(response) == "Object-shaped answer."
+    )
+
+
+def test_extract_chat_response_text_reads_dict_responses_output_items():
+    response = {
+        "output": [
+            {
+                "type": "message",
+                "content": [{"text": "Dict-shaped answer."}],
+            }
+        ]
+    }
+
+    assert ai_provider.extract_chat_response_text(response) == "Dict-shaped answer."

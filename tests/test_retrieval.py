@@ -1,10 +1,14 @@
-import app.retrieval.retriever as retriever_module
 from types import SimpleNamespace
 
+import pytest
 from llama_index.core.base.llms.types import TextBlock, ThinkingBlock
 from llama_index.core.schema import NodeWithScore, TextNode
 
+import app.retrieval.reranker as reranker_module
+import app.retrieval.retriever as retriever_module
+from app.core.config import settings
 from app.retrieval.citation_builder import build_citations
+from app.retrieval.cross_encoder_reranker import CrossEncoderSemanticReranker
 from app.retrieval.query_expansion import should_expand_query
 from app.retrieval.retriever import (
     VecteraRetriever,
@@ -15,6 +19,12 @@ from app.retrieval.retriever import (
     _fuse_node_batches,
     _split_reasoning_from_text,
 )
+
+
+@pytest.fixture(autouse=True)
+def _disable_cross_encoder_reranking(monkeypatch):
+    monkeypatch.setattr(settings, "ENABLE_CROSS_ENCODER_RERANKING", False)
+    reranker_module._get_cross_encoder_reranker.cache_clear()
 
 
 def _node(node_id: str, score: float, metadata: dict | None = None) -> NodeWithScore:
@@ -184,6 +194,56 @@ def test_latest_query_prefers_current_version_nodes():
 
     ranked = retriever._rank_nodes("What is the latest policy version?", [old, current])
     assert ranked[0].node.node_id == "current"
+
+
+def test_rerank_nodes_passes_all_scored_candidates_to_cross_encoder(monkeypatch):
+    monkeypatch.setattr(settings, "ENABLE_CROSS_ENCODER_RERANKING", True)
+    captured: dict[str, object] = {}
+
+    class FakeCrossEncoderReranker:
+        model_name = "fake-cross-encoder"
+
+        def rerank(self, *, query, nodes, top_k):
+            captured["query"] = query
+            captured["top_k"] = top_k
+            captured["node_ids"] = [node.node.node_id for node in nodes]
+            return list(nodes[:top_k])
+
+    monkeypatch.setattr(
+        reranker_module,
+        "_get_cross_encoder_reranker",
+        lambda: FakeCrossEncoderReranker(),
+    )
+    nodes = [_node("low", 0.2), _node("high", 0.9), _node("mid", 0.5)]
+
+    ranked = reranker_module.rerank_nodes(nodes, top_k=1, query="find the answer")
+
+    assert [node.node.node_id for node in ranked] == ["high"]
+    assert captured == {
+        "query": "find the answer",
+        "top_k": 1,
+        "node_ids": ["high", "mid", "low"],
+    }
+
+
+def test_cross_encoder_uses_fallback_model_without_hf_token():
+    reranker = CrossEncoderSemanticReranker(
+        model_name="BAAI/bge-reranker-base",
+        fallback_model_name="cross-encoder/ms-marco-MiniLM-L-6-v2",
+        hf_api_token="",
+    )
+
+    assert reranker.model_name == "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+
+def test_cross_encoder_uses_configured_hf_model_with_hf_token():
+    reranker = CrossEncoderSemanticReranker(
+        model_name="BAAI/bge-reranker-base",
+        fallback_model_name="cross-encoder/ms-marco-MiniLM-L-6-v2",
+        hf_api_token="hf_test_token",
+    )
+
+    assert reranker.model_name == "BAAI/bge-reranker-base"
 
 
 def test_latest_query_promotes_all_chunks_from_newest_version_group():
@@ -653,6 +713,92 @@ def test_visual_query_injects_image_evidence_when_top_evidence_has_no_images():
     assert len(image_evidence) >= 2
 
 
+def test_query_responses_uses_image_from_reranked_top_k_evidence(
+    monkeypatch, tmp_path
+):
+    class _FakeBudgeter:
+        def __init__(self, model: str):
+            self.model = model
+
+        def build_budgeted_sections(self, **_kwargs):
+            class _Metrics:
+                model = "gpt-test"
+                total_input_tokens = 100
+                input_budget_tokens = 200
+                history_tokens = 10
+                summary_tokens = 5
+                cross_session_tokens = 15
+                evidence_tokens = 60
+                conflict_tokens = 10
+
+            return (
+                [
+                    {"role": "developer", "content": "dev"},
+                    {"role": "user", "content": "ctx"},
+                ],
+                "ctx",
+                _Metrics(),
+            )
+
+    selected_image = tmp_path / "selected.png"
+    selected_image.write_bytes(b"selected")
+    excluded_image = tmp_path / "excluded.png"
+    excluded_image.write_bytes(b"excluded")
+    source_nodes = [
+        _node(
+            "lower-image",
+            0.7,
+            {
+                "chunk_type": "figure_artifact",
+                "document_id": "doc-lower",
+                "asset_refs": [str(excluded_image)],
+            },
+        ),
+        _node(
+            "top-image",
+            0.9,
+            {
+                "chunk_type": "figure_artifact",
+                "document_id": "doc-top",
+                "asset_refs": [str(selected_image)],
+            },
+        ),
+    ]
+    captured: dict[str, object] = {}
+
+    def _fake_invoke_llm_chat(**kwargs):
+        captured["input_messages"] = kwargs.get("input_messages")
+        return {"id": "resp-1"}
+
+    monkeypatch.setattr(settings, "OPENAI_USE_RESPONSES", True)
+    monkeypatch.setattr(retriever_module, "ResponsesInputBudgeter", _FakeBudgeter)
+    monkeypatch.setattr(
+        retriever_module,
+        "invoke_llm_chat",
+        _fake_invoke_llm_chat,
+    )
+    monkeypatch.setattr(
+        retriever_module,
+        "extract_chat_response_text",
+        lambda _response: "<answer>Grounded visual response.</answer>",
+    )
+    monkeypatch.setattr(
+        VecteraRetriever,
+        "_retrieve",
+        lambda self, question: (source_nodes, {"retrieval_mode": "test"}),
+    )
+
+    retriever = VecteraRetriever("client-1", top_k=1)
+    result = retriever.query("What does the image show?")
+
+    user_content = captured["input_messages"][-1]["content"]
+    assert user_content[1]["type"] == "input_image"
+    assert result["source_count"] == 1
+    assert result["evidence_count"] == 1
+    assert result["images_used"] == [str(selected_image.resolve())]
+    assert result["citations"][0]["vector_node_id"] == "top-image"
+
+
 def test_split_reasoning_from_text_extracts_thinking_and_answer():
     raw = (
         "<thinking>Check Source [1] and [2], compare figures, reconcile conflicts.</thinking>\n"
@@ -760,6 +906,140 @@ def test_synthesize_answer_prefers_responses_path(monkeypatch):
     assert captured["input_messages"] is not None
     assert result["answer"] == "Grounded response."
     assert result["reasoning"] is None
+    assert result["images_used"] == []
+
+
+def test_synthesize_answer_responses_attaches_image_evidence(monkeypatch, tmp_path):
+    class _FakeBudgeter:
+        def __init__(self, model: str):
+            self.model = model
+
+        def build_budgeted_sections(self, **_kwargs):
+            class _Metrics:
+                model = "gpt-test"
+                total_input_tokens = 100
+                input_budget_tokens = 200
+                history_tokens = 10
+                summary_tokens = 5
+                cross_session_tokens = 15
+                evidence_tokens = 60
+                conflict_tokens = 10
+
+            return (
+                [
+                    {"role": "developer", "content": "dev"},
+                    {"role": "user", "content": "ctx"},
+                ],
+                "ctx",
+                _Metrics(),
+            )
+
+    image_path = tmp_path / "figure.png"
+    image_path.write_bytes(b"fake image")
+    captured: dict[str, object] = {}
+
+    def _fake_invoke_llm_chat(**kwargs):
+        captured["input_messages"] = kwargs.get("input_messages")
+        return {"id": "resp-1"}
+
+    monkeypatch.setattr(retriever_module, "ResponsesInputBudgeter", _FakeBudgeter)
+    monkeypatch.setattr(
+        retriever_module,
+        "invoke_llm_chat",
+        _fake_invoke_llm_chat,
+    )
+    monkeypatch.setattr(
+        retriever_module,
+        "extract_chat_response_text",
+        lambda _response: "<answer>Grounded visual response.</answer>",
+    )
+
+    retriever = VecteraRetriever("client-1", top_k=5)
+    result = retriever._synthesize_answer(
+        question="What does the chart show?",
+        citations=[
+            {
+                "citation_label": "Figure 1",
+                "document_name": "Doc 1",
+                "chunk_type": "figure_artifact",
+                "text": "Chart evidence.",
+                "asset_refs": [str(image_path)],
+            }
+        ],
+        conflicts=[],
+    )
+
+    input_messages = captured["input_messages"]
+    assert isinstance(input_messages, list)
+    user_content = input_messages[-1]["content"]
+    assert user_content[0] == {"type": "input_text", "text": "ctx"}
+    assert user_content[1]["type"] == "input_image"
+    assert user_content[1]["image_url"].startswith("data:image/png;base64,")
+    assert result["answer"] == "Grounded visual response."
+    assert result["images_used"] == [str(image_path.resolve())]
+
+
+def test_synthesize_answer_responses_skips_missing_image_paths(monkeypatch, tmp_path):
+    class _FakeBudgeter:
+        def __init__(self, model: str):
+            self.model = model
+
+        def build_budgeted_sections(self, **_kwargs):
+            class _Metrics:
+                model = "gpt-test"
+                total_input_tokens = 100
+                input_budget_tokens = 200
+                history_tokens = 10
+                summary_tokens = 5
+                cross_session_tokens = 15
+                evidence_tokens = 60
+                conflict_tokens = 10
+
+            return (
+                [
+                    {"role": "developer", "content": "dev"},
+                    {"role": "user", "content": "ctx"},
+                ],
+                "ctx",
+                _Metrics(),
+            )
+
+    captured: dict[str, object] = {}
+
+    def _fake_invoke_llm_chat(**kwargs):
+        captured["input_messages"] = kwargs.get("input_messages")
+        return {"id": "resp-1"}
+
+    monkeypatch.setattr(retriever_module, "ResponsesInputBudgeter", _FakeBudgeter)
+    monkeypatch.setattr(
+        retriever_module,
+        "invoke_llm_chat",
+        _fake_invoke_llm_chat,
+    )
+    monkeypatch.setattr(
+        retriever_module,
+        "extract_chat_response_text",
+        lambda _response: "<answer>Grounded text response.</answer>",
+    )
+
+    missing_image_path = tmp_path / "missing.png"
+    retriever = VecteraRetriever("client-1", top_k=5)
+    result = retriever._synthesize_answer(
+        question="What does the chart show?",
+        citations=[
+            {
+                "citation_label": "Figure 1",
+                "document_name": "Doc 1",
+                "chunk_type": "figure_artifact",
+                "text": "Chart evidence.",
+                "asset_refs": [str(missing_image_path)],
+            }
+        ],
+        conflicts=[],
+    )
+
+    assert captured["input_messages"][-1]["content"] == "ctx"
+    assert result["answer"] == "Grounded text response."
     assert result["images_used"] == []
 
 

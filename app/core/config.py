@@ -37,6 +37,15 @@ class Settings(BaseSettings):
             "GOOGLE_API_KEY",
         ),
     )
+    HF_API_TOKEN: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "HF_API_TOKEN",
+            "HF_TOKEN",
+            "HUGGINGFACE_TOKEN",
+            "HUGGINGFACE_HUB_TOKEN",
+        ),
+    )
     LLM_MODEL: str = "gpt-5.2"
     QUERY_EXPANSION_MODEL: str = "gpt-5.4-mini"
     SESSION_SUMMARY_MODEL: str = "gpt-5.4-mini"
@@ -53,6 +62,13 @@ class Settings(BaseSettings):
     LLM_CONTEXT_WINDOW_TOKENS: int = 200000
     CHAT_SUMMARY_MAX_OUTPUT_TOKENS: int = 300
     SESSION_SUMMARY_TIMEOUT_SECONDS: int = 15
+
+    # Retrieval reranking
+    ENABLE_CROSS_ENCODER_RERANKING: bool = True
+    CROSS_ENCODER_RERANK_MODEL: str = "BAAI/bge-reranker-base"
+    CROSS_ENCODER_RERANK_FALLBACK_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    CROSS_ENCODER_RERANK_DEVICE: str | None = None
+    CROSS_ENCODER_RERANK_TRUST_REMOTE_CODE: bool = False
 
     COLLECTION_NAME: str = "rag_collection_oai_v2"
     CHAT_HISTORY_COLLECTION_NAME: str = "chat_history"
@@ -115,6 +131,10 @@ class Settings(BaseSettings):
     @property
     def ai_api_key(self) -> str:
         return self._normalize_secret(self.AI_API_KEY)
+
+    @property
+    def hf_api_token(self) -> str:
+        return self._normalize_secret(self.HF_API_TOKEN)
 
     @property
     def is_openai_api_key_placeholder(self) -> bool:

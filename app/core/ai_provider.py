@@ -117,20 +117,40 @@ def extract_chat_response_text(response: Any) -> str:
         if message_content:
             return str(message_content).strip()
 
-    output_text = getattr(response, "output_text", None)
+    text = _extract_response_output_text(response)
+    if text:
+        return text
+
+    raw_response = getattr(response, "raw", None)
+    if raw_response is not None:
+        text = _extract_response_output_text(raw_response)
+        if text:
+            return text
+
+    return ""
+
+
+def _extract_response_output_text(response: Any) -> str:
+    output_text = _read_field(response, "output_text")
     if output_text:
         return str(output_text).strip()
 
-    output_items = getattr(response, "output", None) or []
+    output_items = _read_field(response, "output") or []
     chunks: list[str] = []
     for item in output_items:
-        if getattr(item, "type", None) != "message":
+        if _read_field(item, "type") != "message":
             continue
-        for content_item in getattr(item, "content", None) or []:
-            text = getattr(content_item, "text", None)
+        for content_item in _read_field(item, "content") or []:
+            text = _read_field(content_item, "text")
             if text:
                 chunks.append(str(text))
     return "\n".join(chunks).strip()
+
+
+def _read_field(value: Any, field_name: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(field_name)
+    return getattr(value, field_name, None)
 
 
 def _to_chat_messages(input_messages: list[dict[str, Any]]) -> list[ChatMessage]:
