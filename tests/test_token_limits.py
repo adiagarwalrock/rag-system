@@ -2,8 +2,8 @@ from types import SimpleNamespace
 
 from app.core.config import settings
 from app.core.token_budget import count_tokens
-from app.ingestion.pdf_pipeline.chunk_builder import split_body_text
-from app.ingestion.pdf_pipeline.registry import PDFPipelineRegistry
+from app.ingestion.parser.custom.pdf_pipeline.chunk_builder import split_body_text
+from app.ingestion.parser.custom.pdf_pipeline.registry import PDFPipelineRegistry
 from app.services.chat_conversation_service import _heuristic_summary
 
 

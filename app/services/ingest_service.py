@@ -335,7 +335,7 @@ def get_ingestion_queue_manager() -> IngestionQueueManager:
 
 
 def _build_non_layout_node_parser() -> Any:
-    embed_model = getattr(LlamaSettings, "_embed_model", None)
+    embed_model: Any | None = getattr(LlamaSettings, "_embed_model", None)
     if embed_model is None and not settings.is_openai_api_key_placeholder:
         vector_store_manager.configure_llama_settings()
         embed_model = getattr(LlamaSettings, "_embed_model", None)
@@ -752,11 +752,7 @@ class IngestionPipelineExecutor:
             version_info=version_info,
         )
 
-        layout_aware_pdf = self._is_layout_aware_pdf(llama_docs)
-        nodes = self._run_ingestion_pipeline(
-            llama_docs=llama_docs,
-            layout_aware_pdf=layout_aware_pdf,
-        )
+        nodes = self._run_ingestion_pipeline(llama_docs=llama_docs)
 
         _apply_retrieval_metadata(
             nodes, filename=self.filename, version_info=version_info
@@ -875,32 +871,7 @@ class IngestionPipelineExecutor:
                 }
             )
 
-    def _is_layout_aware_pdf(self, llama_docs: List[Any]) -> bool:
-        return (
-            self.file_ext == ".pdf"
-            and bool(llama_docs)
-            and any((doc.metadata or {}).get("chunk_type") for doc in llama_docs)
-        )
-
-    def _run_ingestion_pipeline(
-        self,
-        *,
-        llama_docs: List[Any],
-        layout_aware_pdf: bool,
-    ) -> List[BaseNode]:
-        transformations = self._build_transformations(layout_aware_pdf)
-        pipeline = IngestionPipeline(transformations=transformations)
-        worker_count = 1 if layout_aware_pdf else 3
-        return pipeline.run(documents=llama_docs, num_workers=worker_count)
-
-    def _build_transformations(self, layout_aware_pdf: bool) -> list[Any]:
-        if layout_aware_pdf:
-            logger.info(
-                "Layout-aware PDF chunks detected for %s; skipping sentence splitting",
-                self.filename,
-            )
-            return []
-
+    def _run_ingestion_pipeline(self, *, llama_docs: List[Any]) -> List[BaseNode]:
         transformations: list[Any] = [_build_non_layout_node_parser()]
         logger.info("Using semantic splitter for %s", self.filename)
         try:
@@ -916,7 +887,8 @@ class IngestionPipelineExecutor:
             logger.info("Added LLM-based extractors (Title, Summary) to pipeline")
         except Exception as exc:
             logger.warning("Failed to initialize LLM extractors: %s. Skipping.", exc)
-        return transformations
+        pipeline = IngestionPipeline(transformations=transformations)
+        return pipeline.run(documents=llama_docs, num_workers=3)
 
     def _index_nodes(self, nodes: List[BaseNode]) -> None:
         vector_store_manager.index_nodes(nodes)

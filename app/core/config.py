@@ -70,8 +70,8 @@ class Settings(BaseSettings):
     CROSS_ENCODER_RERANK_DEVICE: str | None = None
     CROSS_ENCODER_RERANK_TRUST_REMOTE_CODE: bool = False
 
-    COLLECTION_NAME: str = "rag_collection_oai_v2"
-    CHAT_HISTORY_COLLECTION_NAME: str = "chat_history"
+    COLLECTION_NAME: str = "rag_collection_oai_reducto"
+    CHAT_HISTORY_COLLECTION_NAME: str = "chat_history_v1"
     VECTOR_DIMENSIONS: int = 3072
 
     # Layout-aware PDF ingestion
@@ -99,6 +99,19 @@ class Settings(BaseSettings):
     # Non-layout parsing strategy (semantic splitter only)
     SEMANTIC_SPLITTER_BREAKPOINT_PERCENTILE: int = 95
     SEMANTIC_SPLITTER_BUFFER_SIZE: int = 1
+
+    # External document parsers (Reducto / LlamaParse)
+    # Priority order: Reducto → LlamaParse → Layout-aware PDF → Legacy
+    # Each level is attempted only if its key is set; failure falls through to the next.
+    ENABLE_EXTERNAL_PARSER: bool = True
+    REDUCTO_API_KEY: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("REDUCTO_API_KEY"),
+    )
+    LLAMAPARSE_API_KEY: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("LLAMA_CLOUD_API_KEY", "LLAMAPARSE_API_KEY"),
+    )
 
     # Reasoning enrichment (artifact-first grounded analysis)
     ENABLE_LLM_REASONING_ENRICHMENT: bool = True

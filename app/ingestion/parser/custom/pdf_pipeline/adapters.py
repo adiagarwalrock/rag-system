@@ -9,13 +9,13 @@ import pymupdf as fitz
 from liteparse import LiteParse
 
 from app.core.config import settings
-from app.ingestion.pdf_pipeline.contracts import ExtractionResult, PDFExtractionStage
-from app.ingestion.pdf_pipeline.helpers import (
+from app.ingestion.parser.custom.pdf_pipeline.contracts import ExtractionResult, PDFExtractionStage
+from app.ingestion.parser.custom.pdf_pipeline.helpers import (
     normalize_block_text,
     normalize_whitespace,
     to_float_bbox,
 )
-from app.ingestion.pdf_pipeline.registry import PDFPipelineRegistry
+from app.ingestion.parser.custom.pdf_pipeline.registry import PDFPipelineRegistry
 
 logger = logging.getLogger(__name__)
 

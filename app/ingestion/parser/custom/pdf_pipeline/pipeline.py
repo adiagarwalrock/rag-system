@@ -11,18 +11,18 @@ import pymupdf as fitz
 from llama_index.core import Document as LlamaDocument
 
 from app.core.config import settings
-from app.ingestion.pdf_pipeline.adapters import DefaultPDFExtractionStage
-from app.ingestion.pdf_pipeline.artifact_builders import DefaultArtifactStage
-from app.ingestion.pdf_pipeline.chunk_builder import DefaultChunkStage
-from app.ingestion.pdf_pipeline.contracts import (
+from app.ingestion.parser.custom.pdf_pipeline.adapters import DefaultPDFExtractionStage
+from app.ingestion.parser.custom.pdf_pipeline.artifact_builders import DefaultArtifactStage
+from app.ingestion.parser.custom.pdf_pipeline.chunk_builder import DefaultChunkStage
+from app.ingestion.parser.custom.pdf_pipeline.contracts import (
     ArtifactStage,
     ChunkStage,
     PageStructureStage,
     PDFExtractionStage,
 )
-from app.ingestion.pdf_pipeline.page_structure import DefaultPageStructureStage
-from app.ingestion.pdf_pipeline.registry import PDFPipelineRegistry
-from app.ingestion.pdf_pipeline.repair import repair_pdf_path, suppress_mupdf_messages
+from app.ingestion.parser.custom.pdf_pipeline.page_structure import DefaultPageStructureStage
+from app.ingestion.parser.custom.pdf_pipeline.registry import PDFPipelineRegistry
+from app.ingestion.parser.custom.pdf_pipeline.repair import repair_pdf_path, suppress_mupdf_messages
 
 logger = logging.getLogger(__name__)
 

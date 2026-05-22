@@ -4,15 +4,15 @@ import re
 import uuid
 from typing import Any
 
-from app.ingestion.pdf_pipeline.contracts import PageStructureStage
-from app.ingestion.pdf_pipeline.helpers import (
+from app.ingestion.parser.custom.pdf_pipeline.contracts import PageStructureStage
+from app.ingestion.parser.custom.pdf_pipeline.helpers import (
     bbox_area,
     has_chart_signals,
     has_table_signals,
     normalize_whitespace,
     to_float_bbox,
 )
-from app.ingestion.pdf_pipeline.models import ZONE_ORDER, PageManifest, Region
+from app.ingestion.parser.custom.pdf_pipeline.models import ZONE_ORDER, PageManifest, Region
 
 
 class DefaultPageStructureStage(PageStructureStage):

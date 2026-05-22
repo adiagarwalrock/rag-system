@@ -3,11 +3,11 @@ from pathlib import Path
 import pymupdf as fitz
 import pytest
 
-from app.ingestion.parser import (
-    _has_chart_signals,
-    _has_numeric_data,
-    _has_table_signals,
-    parse_document,
+from app.ingestion.parser import parse_document
+from app.ingestion.parser.custom.pdf_pipeline.helpers import (
+    has_chart_signals as _has_chart_signals,
+    has_numeric_data as _has_numeric_data,
+    has_table_signals as _has_table_signals,
 )
 
 
@@ -95,6 +95,7 @@ def test_parse_document_pdf_layout_strict_mode_raises(monkeypatch, tmp_path, cap
     monkeypatch.setattr(
         "app.ingestion.parser.parse_pdf_layout_aware", _raise_layout_error
     )
+    monkeypatch.setattr("app.ingestion.parser.settings.ENABLE_EXTERNAL_PARSER", False)
     monkeypatch.setattr("app.ingestion.parser.settings.ENABLE_LAYOUT_AWARE_PDF", True)
     monkeypatch.setattr(
         "app.ingestion.parser.settings.STRICT_LAYOUT_AWARE_PDF_FAILURE", True
@@ -131,6 +132,7 @@ def test_parse_document_pdf_layout_non_strict_falls_back(
     monkeypatch.setattr(
         "app.ingestion.parser.parse_pdf_layout_aware", _raise_layout_error
     )
+    monkeypatch.setattr("app.ingestion.parser.settings.ENABLE_EXTERNAL_PARSER", False)
     monkeypatch.setattr("app.ingestion.parser.settings.ENABLE_LAYOUT_AWARE_PDF", True)
     monkeypatch.setattr(
         "app.ingestion.parser.settings.STRICT_LAYOUT_AWARE_PDF_FAILURE", False
@@ -150,7 +152,7 @@ def test_parse_document_pdf_layout_non_strict_falls_back(
     ]
     parser_errors = [record for record in parser_records if record.levelname == "ERROR"]
     assert parser_warnings
-    assert "Falling back to legacy parser" in parser_warnings[0].message
+    assert "Falling back to legacy" in parser_warnings[0].message
     assert not parser_errors
 
 

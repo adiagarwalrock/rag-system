@@ -1,4 +1,4 @@
-from app.ingestion.pdf_pipeline import artifact_builders as builders
+from app.ingestion.parser.custom.pdf_pipeline import artifact_builders as builders
 
 
 def test_run_reasoning_inference_passes_max_output_tokens(monkeypatch):

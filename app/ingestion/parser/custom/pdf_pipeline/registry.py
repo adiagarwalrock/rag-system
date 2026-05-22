@@ -5,7 +5,7 @@ import threading
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from app.ingestion.pdf_pipeline.contracts import (
+from app.ingestion.parser.custom.pdf_pipeline.contracts import (
     ArtifactStage,
     ChunkStage,
     PageStructureStage,

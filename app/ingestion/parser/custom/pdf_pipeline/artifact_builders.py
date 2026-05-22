@@ -39,8 +39,8 @@ from app.core.prompts import (
 )
 from app.core.token_budget import truncate_text_by_tokens
 from app.indexing.vector_store import vector_store_manager
-from app.ingestion.pdf_pipeline.contracts import ArtifactResult, ArtifactStage
-from app.ingestion.pdf_pipeline.helpers import (
+from app.ingestion.parser.custom.pdf_pipeline.contracts import ArtifactResult, ArtifactStage
+from app.ingestion.parser.custom.pdf_pipeline.helpers import (
     bbox_area,
     extract_units,
     header_signature,
@@ -52,7 +52,7 @@ from app.ingestion.pdf_pipeline.helpers import (
     to_float_bbox,
     union_bbox,
 )
-from app.ingestion.pdf_pipeline.models import (  # Artifacts; Response Models
+from app.ingestion.parser.custom.pdf_pipeline.models import (  # Artifacts; Response Models
     ArtifactEnrichmentResponse,
     ChartCaptionResponse,
     FigureArtifact,

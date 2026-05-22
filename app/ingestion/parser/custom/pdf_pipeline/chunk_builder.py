@@ -12,14 +12,14 @@ from llama_index.core import Document as LlamaDocument
 
 from app.core.config import settings
 from app.core.token_budget import count_tokens, get_token_encoding
-from app.ingestion.pdf_pipeline.contracts import ChunkStage
-from app.ingestion.pdf_pipeline.helpers import (
+from app.ingestion.parser.custom.pdf_pipeline.contracts import ChunkStage
+from app.ingestion.parser.custom.pdf_pipeline.helpers import (
     dump_json,
     has_numeric_data,
     numeric_density,
     table_to_markdown,
 )
-from app.ingestion.pdf_pipeline.models import (
+from app.ingestion.parser.custom.pdf_pipeline.models import (
     ChunkArtifact,
     FigureArtifact,
     PageManifest,
@@ -27,7 +27,7 @@ from app.ingestion.pdf_pipeline.models import (
     Region,
     TableArtifact,
 )
-from app.ingestion.pdf_pipeline.registry import PDFPipelineRegistry
+from app.ingestion.parser.custom.pdf_pipeline.registry import PDFPipelineRegistry
 
 logger = logging.getLogger(__name__)
 

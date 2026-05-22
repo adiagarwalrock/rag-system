@@ -8,7 +8,7 @@ from typing import Any
 import pymupdf as fitz
 from llama_index.core import Document as LlamaDocument
 
-from app.ingestion.pdf_pipeline.models import (
+from app.ingestion.parser.custom.pdf_pipeline.models import (
     ChunkArtifact,
     FigureArtifact,
     PageManifest,
