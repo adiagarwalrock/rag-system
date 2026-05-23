@@ -40,11 +40,29 @@ def test_resolve_version_detects_month_name_year_patterns():
     assert result["effective_to"] == datetime(2026, 3, 28)
 
 
+def test_resolve_version_detects_short_month_year_patterns():
+    result = resolve_version("PSA Company-Update-Mar-26-vF.pdf")
+
+    assert result["version_label"] == "March 2026"
+    assert result["version_rank"] == 202603
+    assert result["effective_from"] == datetime(2026, 3, 1)
+    assert result["effective_to"] == datetime(2026, 3, 28)
+
+
 def test_resolve_version_extracts_published_date_from_filename():
     result = resolve_version("policy_2024-01-15.pdf")
 
     assert result["published_at"] == datetime(2024, 1, 15)
     assert result["confidence_score"] >= 0.6
+
+
+def test_resolve_version_extracts_dotted_published_date_from_filename():
+    result = resolve_version("BXP Q4 2025 Investor Presentation with Appendix 3.20.2026.pdf")
+
+    assert result["version_label"] == "Q4 2025"
+    assert result["version_rank"] == 20254
+    assert result["published_at"] == datetime(2026, 3, 20)
+    assert result["confidence_score"] >= 0.7
 
 
 def test_resolve_version_normalizes_version_group_name():

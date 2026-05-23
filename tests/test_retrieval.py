@@ -246,6 +246,33 @@ def test_cross_encoder_uses_configured_hf_model_with_hf_token():
     assert reranker.model_name == "BAAI/bge-reranker-base"
 
 
+def test_cross_encoder_blends_metadata_rank_with_model_score():
+    reranker = CrossEncoderSemanticReranker(
+        model_name="remote",
+        fallback_model_name="fallback",
+        hf_api_token="",
+    )
+
+    class FakeModel:
+        def predict(self, _pairs):
+            return [0.0, 10.0]
+
+    reranker._model = FakeModel()
+    direct_metric = _node("direct-metric", 10.0, {"chunk_type": "body_text"})
+    semantic_favorite = _node("semantic-favorite", 0.0, {"chunk_type": "page_card"})
+
+    ranked = reranker.rerank(
+        query="How many customers does Digital Realty have?",
+        nodes=[direct_metric, semantic_favorite],
+        top_k=1,
+    )
+
+    assert ranked[0].node.node_id == "direct-metric"
+    assert direct_metric.node.metadata["retrieval_score"] == 10.0
+    assert direct_metric.node.metadata["cross_encoder_score"] == 0.0
+    assert semantic_favorite.node.metadata["cross_encoder_score"] == 10.0
+
+
 def test_latest_query_promotes_all_chunks_from_newest_version_group():
     retriever = VecteraRetriever("client-1", top_k=5)
 
@@ -293,6 +320,102 @@ def test_latest_query_promotes_all_chunks_from_newest_version_group():
     ranked_ids = [node.node.node_id for node in ranked]
 
     assert ranked_ids.index("mar-customers") < ranked_ids.index("dec-customers")
+
+
+def test_count_metric_query_prefers_latest_headline_body_text():
+    retriever = VecteraRetriever("client-1", top_k=5)
+
+    breakdown = _node(
+        "mar-breakdown",
+        0.78,
+        {
+            "chunk_type": "page_card",
+            "version_rank": "202603",
+            "version_label": "March 2026",
+            "document_version_group": "digital-realty-investor-presentation",
+            "document_id": "doc-mar",
+            "contains_numeric_data": True,
+        },
+    )
+    headline = _node(
+        "mar-headline",
+        0.45,
+        {
+            "chunk_type": "body_text",
+            "version_rank": "202603",
+            "version_label": "March 2026",
+            "document_version_group": "digital-realty-investor-presentation",
+            "document_id": "doc-mar",
+            "contains_numeric_data": True,
+        },
+    )
+    old_headline = _node(
+        "dec-headline",
+        0.54,
+        {
+            "chunk_type": "body_text",
+            "version_rank": "202512",
+            "version_label": "December 2025",
+            "document_version_group": "digital-realty-investor-presentation",
+            "document_id": "doc-dec",
+            "contains_numeric_data": True,
+        },
+    )
+    breakdown.node.text = (
+        "Page 23 summary. Customer Type (% by ARR). Top 20 Customers by rank. "
+        "5,000+ Global Customers. Average locations."
+    )
+    headline.node.text = "5,500+ Customers 232,500 Cross Connects 55+ Metros"
+    old_headline.node.text = "5,000+ Customers 231,000+ Cross Connects"
+
+    ranked = retriever._rank_nodes(
+        "How many customers does Digital Realty have?",
+        [breakdown, headline, old_headline],
+    )
+
+    assert ranked[0].node.node_id == "mar-headline"
+    assert [node.node.node_id for node in ranked].index("mar-headline") < [
+        node.node.node_id for node in ranked
+    ].index("mar-breakdown")
+
+
+def test_count_metric_evidence_injects_direct_latest_metric():
+    retriever = VecteraRetriever("client-1", top_k=2)
+    ranked = [
+        _node(
+            "breakdown",
+            0.9,
+            {
+                "chunk_type": "page_card",
+                "version_rank": 202603,
+                "document_id": "doc-mar",
+            },
+        ),
+        _node(
+            "headline",
+            0.7,
+            {
+                "chunk_type": "body_text",
+                "version_rank": 202603,
+                "document_id": "doc-mar",
+            },
+        ),
+        _node(
+            "other",
+            0.6,
+            {"chunk_type": "body_text", "version_rank": 202603, "document_id": "x"},
+        ),
+    ]
+    ranked[0].node.text = "Top 20 Customers by locations and % of ARR."
+    ranked[1].node.text = "5,500+ Customers 232,500 Cross Connects"
+    ranked[2].node.text = "Unrelated evidence"
+
+    evidence = retriever._select_evidence_nodes(
+        "How many customers does Digital Realty have?",
+        ranked,
+    )
+
+    assert evidence[0].node.node_id == "headline"
 
 
 def test_citations_are_bounded_subset_of_ranked_candidates():

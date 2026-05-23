@@ -120,7 +120,7 @@ class Settings(BaseSettings):
     REASONING_MAX_ARTIFACTS_PER_PAGE: int = 4
     REASONING_MAX_OUTPUT_TOKENS: int = 700
     REASONING_TIMEOUT_SECONDS: int = 30
-    REASONING_MODEL: str | None = None  # defaults to LLM_MODEL if None
+    REASONING_MODEL: str | None = "gpt-5.4-mini"  # use a non-reasoning model; gpt-5.2 burns hidden chain-of-thought tokens against max_output_tokens, leaving too little budget for visible JSON
 
     # Background ingestion
     INGESTION_MAX_WORKERS: int = 2

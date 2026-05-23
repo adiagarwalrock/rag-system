@@ -963,8 +963,12 @@ class IngestionPipelineExecutor:
 
             if llm_extractors:
                 pipeline = IngestionPipeline(transformations=llm_extractors)
+                # num_workers=1 keeps all nodes in a single sequential batch so
+                # SummaryExtractor can compute prev_section_summary for every node
+                # (multi-worker splits nodes across batches, breaking the i-1 window).
                 pre_chunked_nodes = pipeline.run(
-                    nodes=pre_chunked_nodes, num_workers=4
+                    nodes=pre_chunked_nodes,
+                    num_workers=1,
                 )
             nodes.extend(pre_chunked_nodes)
 

@@ -1872,6 +1872,11 @@ def _run_reasoning_inference(
 
     if not settings.is_openai_api_key_placeholder:
         for attempt in range(2):
+            # On the second attempt, double the token budget — reasoning models
+            # (e.g. gpt-5.2) burn hidden chain-of-thought tokens against
+            # max_output_tokens, leaving too little budget for visible JSON on
+            # the first attempt.
+            attempt_tokens = max_output_tokens if attempt == 0 else min(max_output_tokens * 2, 2000)
             try:
                 response = invoke_llm_chat(
                     model=resolved_model,
@@ -1880,7 +1885,7 @@ def _run_reasoning_inference(
                         {"role": "user", "content": prompt},
                     ],
                     reasoning_effort="low",
-                    max_output_tokens=max_output_tokens,
+                    max_output_tokens=attempt_tokens,
                     timeout_seconds=resolved_timeout,
                 )
                 text = extract_chat_response_text(response)
