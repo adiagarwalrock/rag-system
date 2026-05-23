@@ -28,6 +28,7 @@ from app.ingestion.parser.custom.pdf_pipeline.helpers import (
     has_numeric_data,
     has_table_signals,
 )
+from app.ingestion.retrieval_metadata import normalize_retrieval_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +191,13 @@ def to_llama_docs(
             "parser_name": parser_name,
             "parser_version": parser_version,
         }
+        meta = normalize_retrieval_metadata(
+            meta,
+            text=page_content,
+            document_metadata=document_metadata,
+            source_file=document_metadata.get("file_name")
+            or document_metadata.get("document_name"),
+        )
         docs.append(LlamaDocument(text=page_content, metadata=meta))
         units.append(
             {

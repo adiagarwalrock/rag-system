@@ -164,9 +164,14 @@ class LlamaParseParser:
                 parts.append(f"[[END OF PAGE {page_num}]]")
         markdown = "\n\n".join(parts)
 
-        # Extract parse job ID for LlamaCloud Extract
-        # LlamaCloud Extract accepts the parse job ID directly
-        parse_job_id = getattr(result, "id", None) or getattr(result, "job_id", None)
+        # Extract parse job ID for LlamaCloud Extract.
+        # ParsingGetResponse nests the job under result.job.id (not result.id).
+        job_obj = getattr(result, "job", None)
+        parse_job_id = (
+            getattr(job_obj, "id", None)
+            or getattr(result, "id", None)
+            or getattr(result, "job_id", None)
+        )
 
         # Build ParsedPageChunks from page-sectioned markdown
         page_sections = split_by_page_markers(markdown)

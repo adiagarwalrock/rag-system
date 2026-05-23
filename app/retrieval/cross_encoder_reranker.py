@@ -55,11 +55,27 @@ class CrossEncoderSemanticReranker:
             )
             return list(nodes[:top_k])
 
-        for node, cross_encoder_score in zip(nodes, cross_encoder_scores):
+        metadata_scores = [_safe_score(node.score, 0.0) or 0.0 for node in nodes]
+        semantic_scores = [
+            _safe_score(cross_encoder_score, metadata_scores[index]) or 0.0
+            for index, cross_encoder_score in enumerate(cross_encoder_scores)
+        ]
+        normalized_metadata_scores = _minmax(metadata_scores)
+        normalized_semantic_scores = _minmax(semantic_scores)
+
+        for index, (node, cross_encoder_score) in enumerate(
+            zip(nodes, cross_encoder_scores)
+        ):
             metadata = node.node.metadata or {}
-            metadata["retrieval_score"] = node.score
+            metadata_score = metadata_scores[index]
+            semantic_score = semantic_scores[index]
+            metadata["retrieval_score"] = metadata_score
+            metadata["cross_encoder_score"] = semantic_score
             node.node.metadata = metadata
-            node.score = _safe_score(cross_encoder_score, node.score)
+            node.score = (
+                normalized_semantic_scores[index] * 0.4
+                + normalized_metadata_scores[index] * 0.6
+            )
 
         ranked = sorted(nodes, key=lambda node: node.score or 0.0, reverse=True)
         return list(ranked[:top_k])
@@ -113,3 +129,14 @@ def _safe_score(value, default: float | None) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _minmax(values: Sequence[float]) -> list[float]:
+    if not values:
+        return []
+    min_value = min(values)
+    max_value = max(values)
+    if max_value == min_value:
+        return [1.0 for _ in values]
+    span = max_value - min_value
+    return [(value - min_value) / span for value in values]

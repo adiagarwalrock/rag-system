@@ -22,7 +22,7 @@ from llama_index.core.extractors import (
 )
 from llama_index.core.ingestion import IngestionPipeline
 from llama_index.core.node_parser import SemanticSplitterNodeParser
-from llama_index.core.schema import BaseNode, NodeRelationship, RelatedNodeInfo
+from llama_index.core.schema import BaseNode, NodeRelationship, RelatedNodeInfo, TextNode
 from sqlalchemy import true
 from sqlalchemy.orm import Session
 
@@ -43,6 +43,7 @@ from app.ingestion.validator import (
     validate_file_type,
 )
 from app.ingestion.version_resolver import resolve_version
+from app.ingestion.retrieval_metadata import normalize_retrieval_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -432,8 +433,14 @@ def _apply_retrieval_metadata(
                 "source_file": metadata.get("source_file") or filename,
                 "citation_label": metadata.get("citation_label")
                 or " - ".join(label_parts),
-                **_core_version_metadata(version_info),
             }
+        )
+        metadata = normalize_retrieval_metadata(
+            metadata,
+            text=getattr(node, "text", "") or "",
+            version_info=version_info,
+            source_file=filename,
+            chunk_index=index,
         )
         node.metadata = metadata
 
@@ -883,24 +890,98 @@ class IngestionPipelineExecutor:
                     ),
                 }
             )
+            doc.metadata = normalize_retrieval_metadata(
+                doc.metadata,
+                text=doc.text or "",
+                document_metadata=document_metadata,
+                version_info=version_info,
+                source_file=self.filename,
+                chunk_index=index + 1,
+            )
 
     def _run_ingestion_pipeline(self, *, llama_docs: List[Any]) -> List[BaseNode]:
-        transformations: list[Any] = [_build_non_layout_node_parser()]
-        logger.info("Using semantic splitter for %s", self.filename)
+        # External parsers (Reducto, LlamaParse) and the layout-aware PDF pipeline
+        # already produce intentionally-chunked LlamaDocuments — each doc is a
+        # typed chunk (full_table, body_text, figure_artifact …) with metadata
+        # bound to that exact text span.  Running SemanticSplitterNodeParser on
+        # pre-chunked docs re-slices the text on semantic boundaries, splits
+        # tables across nodes, and strips the chunk_type metadata association.
+        # Detect pre-chunked docs by the presence of "chunk_type" in metadata and
+        # skip the splitter for those, converting each doc directly to a TextNode.
+        pre_chunked = [
+            doc
+            for doc in llama_docs
+            if doc.metadata.get("chunk_type")
+            and doc.metadata.get("chunk_type") != "text"
+        ]
+        needs_splitting = [
+            doc
+            for doc in llama_docs
+            if not doc.metadata.get("chunk_type")
+            or doc.metadata.get("chunk_type") == "text"
+        ]
+
+        nodes: List[BaseNode] = []
+
+        # Build LLM extractors once — shared by both paths.
+        llm_extractors: list[Any] = []
         try:
-            transformations.extend(
-                [
-                    TitleExtractor(nodes=5),
-                    SummaryExtractor(summaries=["prev", "self"]),
-                    KeywordExtractor(keywords=10),
-                    QuestionsAnsweredExtractor(num_questions=3),
-                ]
+            llm_extractors = [
+                TitleExtractor(nodes=5),
+                SummaryExtractor(summaries=["prev", "self"]),
+                KeywordExtractor(keywords=10),
+                QuestionsAnsweredExtractor(num_questions=3),
+            ]
+            logger.info(
+                "Initialized LLM-based extractors (Title, Summary, Keyword, Questions)"
             )
-            logger.info("Added LLM-based extractors (Title, Summary, Keyword, Questions) to pipeline")
         except Exception as exc:
-            logger.warning("Failed to initialize LLM extractors: %s. Skipping.", exc)
-        pipeline = IngestionPipeline(transformations=transformations)
-        return pipeline.run(documents=llama_docs, num_workers=4)  # parallel LLM extractors
+            logger.warning(
+                "Failed to initialize LLM extractors: %s. Skipping.", exc
+            )
+
+        # ── Path A: pre-chunked docs — skip splitter, still run LLM extractors ──
+        if pre_chunked:
+            logger.info(
+                "Bypassing semantic splitter for %d pre-chunked docs (%s)",
+                len(pre_chunked),
+                self.filename,
+            )
+            pre_chunked_nodes: List[BaseNode] = []
+            for doc in pre_chunked:
+                node = TextNode(
+                    text=doc.text,
+                    metadata=dict(doc.metadata),
+                    excluded_embed_metadata_keys=list(
+                        doc.excluded_embed_metadata_keys or []
+                    ),
+                    excluded_llm_metadata_keys=list(
+                        doc.excluded_llm_metadata_keys or []
+                    ),
+                )
+                pre_chunked_nodes.append(node)
+
+            if llm_extractors:
+                pipeline = IngestionPipeline(transformations=llm_extractors)
+                pre_chunked_nodes = pipeline.run(
+                    nodes=pre_chunked_nodes, num_workers=4
+                )
+            nodes.extend(pre_chunked_nodes)
+
+        # ── Path B: legacy / un-chunked docs — run semantic splitter + extractors ─
+        if needs_splitting:
+            logger.info(
+                "Using semantic splitter for %d docs (%s)",
+                len(needs_splitting),
+                self.filename,
+            )
+            transformations: list[Any] = [_build_non_layout_node_parser()]
+            transformations.extend(llm_extractors)
+            pipeline = IngestionPipeline(transformations=transformations)
+            split_nodes = pipeline.run(documents=needs_splitting, num_workers=4)
+            nodes.extend(split_nodes)
+
+        return nodes
 
     def _index_nodes(self, nodes: List[BaseNode]) -> None:
         vector_store_manager.index_nodes(nodes)

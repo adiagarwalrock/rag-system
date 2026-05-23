@@ -28,6 +28,7 @@ from app.ingestion.parser.custom.pdf_pipeline.models import (
     TableArtifact,
 )
 from app.ingestion.parser.custom.pdf_pipeline.registry import PDFPipelineRegistry
+from app.ingestion.retrieval_metadata import normalize_retrieval_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -307,9 +308,11 @@ def artifact_chunks_to_llama_docs(
             },
             "contains_numeric_data": has_numeric_data(text),
         }
-        metadata["numeric_density"] = max(
-            float(metadata.get("numeric_density", 0.0) or 0.0),
-            numeric_density(text),
+        metadata = normalize_retrieval_metadata(
+            metadata,
+            text=text,
+            document_metadata=document_metadata,
+            source_file=source_file,
         )
 
         docs.append(LlamaDocument(text=text, metadata=metadata))

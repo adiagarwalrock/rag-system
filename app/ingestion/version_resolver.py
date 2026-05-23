@@ -24,9 +24,13 @@ MONTH_YEAR_PATTERN = (
     r"Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|"
     r"Dec(?:ember)?)\s+(\d{4})\b"
 )
+SHORT_MONTH_YEAR_PATTERN = (
+    r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[\-_ ]+(\d{2,4})\b"
+)
 FISCAL_YEAR_PATTERN = r"(?:FY|fy)\s*(\d{4})"
 YEAR_TOKEN_PATTERN = r"[_\-\s](\d{4})[_\-\s]"
 FILENAME_DATE_PATTERN = r"(\d{4})[\-_](\d{2})[\-_](\d{2})"
+DOTTED_DATE_PATTERN = r"\b(\d{1,2})\.(\d{1,2})\.(\d{2,4})\b"
 WHITESPACE_SEPARATOR_PATTERN = r"[_\-\s]+"
 FILE_EXTENSION_PATTERN = r"\.[^.]+$"
 
@@ -42,6 +46,7 @@ VERSION_PATTERNS = [
     r"(?:FY|fy)\s*(\d{2,4})",  # FY2024, FY24
     r"(?:rev|revision|version)\s*(\d+)",  # revision 3
     FILENAME_DATE_PATTERN,  # 2024-01-15 date
+    DOTTED_DATE_PATTERN,  # 3.20.2026 date
     r"(?:draft|final|updated|revised)",  # status labels
 ]
 
@@ -80,6 +85,21 @@ MONTH_MAP = {
     "november": 11,
     "dec": 12,
     "december": 12,
+}
+MONTH_DISPLAY = {
+    "jan": "January",
+    "feb": "February",
+    "mar": "March",
+    "apr": "April",
+    "may": "May",
+    "jun": "June",
+    "jul": "July",
+    "aug": "August",
+    "sep": "September",
+    "sept": "September",
+    "oct": "October",
+    "nov": "November",
+    "dec": "December",
 }
 
 
@@ -149,6 +169,35 @@ def _apply_month_year(combined: str, result: dict) -> bool:
     return True
 
 
+def _apply_short_month_year(combined: str, result: dict) -> bool:
+    if not (m_match := re.search(SHORT_MONTH_YEAR_PATTERN, combined, re.IGNORECASE)):
+        return False
+
+    month_token = m_match.group(1).lower()
+    year = _normalize_year(int(m_match.group(2)))
+    month = MONTH_MAP.get(month_token)
+    if not month or not (YEAR_MIN <= year <= YEAR_MAX):
+        return False
+
+    display_month = MONTH_DISPLAY.get(month_token, m_match.group(1).strip())
+    result.update(
+        {
+            "version_label": result["version_label"] or f"{display_month} {year}",
+            "version_rank": year * MONTH_RANK_MULTIPLIER + month,
+            "effective_from": datetime(year, month, FIRST_DAY_OF_PERIOD),
+            "effective_to": datetime(year, month, LAST_DAY_OF_PERIOD),
+            "confidence_score": max(result["confidence_score"], 0.65),
+        }
+    )
+    return True
+
+
+def _normalize_year(year: int) -> int:
+    if year < 100:
+        return 2000 + year
+    return year
+
+
 def _apply_year_only(filename: str, combined: str, result: dict) -> None:
     y_match = re.search(FISCAL_YEAR_PATTERN, combined) or re.search(
         YEAR_TOKEN_PATTERN, filename
@@ -172,14 +221,25 @@ def _apply_year_only(filename: str, combined: str, result: dict) -> None:
 
 
 def _apply_filename_date(filename: str, result: dict) -> None:
-    if not (d_match := re.search(FILENAME_DATE_PATTERN, filename)):
+    if d_match := re.search(FILENAME_DATE_PATTERN, filename):
+        try:
+            result["published_at"] = datetime(
+                *(int(d_match.group(i)) for i in (1, 2, 3))
+            )
+            result["confidence_score"] = max(result["confidence_score"], 0.6)
+        except ValueError:
+            pass
         return
 
-    try:
-        result["published_at"] = datetime(*(int(d_match.group(i)) for i in (1, 2, 3)))
-        result["confidence_score"] = max(result["confidence_score"], 0.6)
-    except ValueError:
-        pass
+    if d_match := re.search(DOTTED_DATE_PATTERN, filename):
+        try:
+            month = int(d_match.group(1))
+            day = int(d_match.group(2))
+            year = _normalize_year(int(d_match.group(3)))
+            result["published_at"] = datetime(year, month, day)
+            result["confidence_score"] = max(result["confidence_score"], 0.6)
+        except ValueError:
+            pass
 
 
 def _apply_status_signals(lower_combined: str, result: dict) -> None:
@@ -197,7 +257,9 @@ def _build_version_group(filename: str) -> str:
         VERSION_NUMBER_PATTERN,
         QUARTER_YEAR_PATTERN,
         MONTH_YEAR_PATTERN,
+        SHORT_MONTH_YEAR_PATTERN,
         FILENAME_DATE_PATTERN,
+        DOTTED_DATE_PATTERN,
     ]:
         base = re.sub(pattern, "", base, flags=re.IGNORECASE)
 
@@ -225,7 +287,9 @@ def resolve_version(filename: str, content_preview: str = "") -> dict:
     if not has_quarter:
         has_month = _apply_month_year(combined, result)
         if not has_month:
-            _apply_year_only(filename, combined, result)
+            has_short_month = _apply_short_month_year(combined, result)
+            if not has_short_month:
+                _apply_year_only(filename, combined, result)
 
     _apply_filename_date(filename, result)
     _apply_status_signals(lower, result)

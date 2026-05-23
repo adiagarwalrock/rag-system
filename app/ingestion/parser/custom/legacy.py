@@ -9,6 +9,7 @@ from app.ingestion.parser.custom.pdf_pipeline.helpers import (
     has_numeric_data,
     has_table_signals,
 )
+from app.ingestion.retrieval_metadata import normalize_retrieval_metadata
 
 PARSER_NAME = "rag_parser"
 LEGACY_PARSER_VERSION = "1.0.0"
@@ -36,6 +37,12 @@ def run(
             "parser_name": PARSER_NAME,
             "parser_version": LEGACY_PARSER_VERSION,
         }
+        meta = normalize_retrieval_metadata(
+            meta,
+            text=text,
+            document_metadata=document_metadata,
+            source_file=path.name,
+        )
         docs.append(LlamaDocument(text=text, metadata=meta))
         units.append(
             {

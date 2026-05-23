@@ -63,6 +63,26 @@ NUMERIC_QUERY_TERMS = (
     "values",
 )
 COUNT_QUERY_TERMS = ("how many", "number of", "count", "total")
+COUNT_BREAKDOWN_TERMS = (
+    "top customers",
+    "customer type",
+    "% by arr",
+    "annualized recurring revenue",
+    "locations",
+    "location",
+    "rank",
+    "investment grade",
+)
+COUNT_SUMMARY_CHUNK_TYPES = {
+    "page_card",
+    "visual_proxy_text",
+    "chart_context",
+    "chart_data_points",
+    "figure_artifact",
+    "full_table",
+    "table_segment",
+    "table_summary_text",
+}
 METRIC_STOPWORDS = {
     "does",
     "have",
@@ -263,7 +283,11 @@ def _temporal_adjustment(
     if effective_from and effective_to:
         if effective_from <= now <= effective_to:
             adjustment += 0.08
-        elif now > effective_to and prefer_latest:
+        elif (
+            now > effective_to
+            and prefer_latest
+            and not (is_current is True or is_implicit_current)
+        ):
             # Graduated penalty: older expiry = larger penalty, capped at -0.10.
             months_overdue = (now - effective_to).days / 30.0
             adjustment -= min(months_overdue * 0.02, 0.10)
@@ -340,18 +364,18 @@ def _structural_adjustment(metadata: dict, query: str | None, text: str = "") ->
     if wants_numeric and _safe_bool(metadata.get("contains_numeric_data"), False):
         adjustment += 0.03
     if _is_count_metric_query(normalized_query):
-        adjustment += _count_metric_adjustment(normalized_query, text)
+        adjustment += _count_metric_adjustment(metadata, normalized_query, text)
     if wants_structured and (is_table_chunk or is_chart_chunk):
         adjustment += 0.06
 
-    return max(min(adjustment, 0.28), -0.1)
+    return max(min(adjustment, 0.6), -0.25)
 
 
 def _is_count_metric_query(normalized_query: str) -> bool:
     return any(term in normalized_query for term in COUNT_QUERY_TERMS)
 
 
-def _count_metric_adjustment(normalized_query: str, text: str) -> float:
+def _count_metric_adjustment(metadata: dict, normalized_query: str, text: str) -> float:
     if not text:
         return 0.0
 
@@ -364,20 +388,21 @@ def _count_metric_adjustment(normalized_query: str, text: str) -> float:
         _normalize_metric_subject(match.group("subject")) in query_subjects
         for match in METRIC_VALUE_PATTERN.finditer(normalized_text)
     )
-    if not direct_subject_match:
-        return 0.0
 
-    adjustment = 0.16
-    if any(
-        phrase in normalized_text
-        for phrase in (
-            "top customers",
-            "top 20 customers",
-            "customer type",
-            "% by arr",
-        )
+    chunk_type = str(metadata.get("chunk_type") or "")
+    adjustment = 0.0
+    if direct_subject_match:
+        adjustment += 0.34
+        if chunk_type == "body_text":
+            adjustment += 0.12
+        if "global customers" in normalized_text:
+            adjustment -= 0.06
+    if chunk_type in COUNT_SUMMARY_CHUNK_TYPES and any(
+        phrase in normalized_text for phrase in COUNT_BREAKDOWN_TERMS
     ):
-        adjustment -= 0.08
+        adjustment -= 0.22
+    elif any(phrase in normalized_text for phrase in COUNT_BREAKDOWN_TERMS):
+        adjustment -= 0.12
     return adjustment
 
 

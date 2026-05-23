@@ -556,6 +556,12 @@ class VecteraRetriever:
             ranked_nodes=ranked_nodes,
             evidence_cap=evidence_cap,
         )
+        selected = _ensure_direct_metric_evidence(
+            question=question,
+            selected_nodes=selected,
+            ranked_nodes=ranked_nodes,
+            evidence_cap=evidence_cap,
+        )
 
         selected = _ensure_image_evidence(
             question=question,
@@ -795,6 +801,13 @@ def _safe_bool(value: Any, default: bool) -> bool:
     return default
 
 
+def _safe_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _is_reasoning_chunk(node: Any) -> bool:
     metadata = node.node.metadata or {}
     return str(metadata.get("chunk_type") or "") in REASONING_CHUNK_TYPES
@@ -967,6 +980,109 @@ def _ensure_image_evidence(
         image_node_count += 1
 
     return selected
+
+
+METRIC_VALUE_PATTERN = re.compile(
+    r"\b\$?\d[\d,]*(?:\.\d+)?\s*(?:[+%x]|bn|m|billion|million)?\s+"
+    r"(?:global\s+)?(?P<subject>[a-z][a-z-]+)s?\b",
+    re.IGNORECASE,
+)
+METRIC_STOPWORDS = {
+    "does",
+    "have",
+    "has",
+    "many",
+    "much",
+    "what",
+    "which",
+    "with",
+    "from",
+    "that",
+    "this",
+    "digital",
+    "realty",
+}
+
+
+def _ensure_direct_metric_evidence(
+    *,
+    question: str,
+    selected_nodes: list[Any],
+    ranked_nodes: list[Any],
+    evidence_cap: int,
+) -> list[Any]:
+    normalized_question = question.lower()
+    if not any(term in normalized_question for term in ("how many", "number of", "count")):
+        return selected_nodes
+
+    candidates = [
+        node for node in ranked_nodes if _is_direct_metric_node(node, normalized_question)
+    ]
+    if not candidates:
+        return selected_nodes
+
+    best = max(candidates, key=_direct_metric_priority)
+    best_key = _node_unique_key(best)
+    selected = list(selected_nodes)
+    selected_keys = {_node_unique_key(node) for node in selected}
+    if best_key in selected_keys:
+        return [best] + [node for node in selected if _node_unique_key(node) != best_key]
+
+    if len(selected) < evidence_cap:
+        selected.insert(0, best)
+        return selected
+
+    replace_idx = next(
+        (
+            idx
+            for idx in range(len(selected) - 1, -1, -1)
+            if not _is_direct_metric_node(selected[idx], normalized_question)
+        ),
+        None,
+    )
+    if replace_idx is None:
+        return selected
+    selected[replace_idx] = best
+    return selected
+
+
+def _is_direct_metric_node(node: Any, normalized_question: str) -> bool:
+    subjects = _metric_query_subjects(normalized_question)
+    if not subjects:
+        return False
+    text = (node.node.text or "").lower()
+    return any(
+        _normalize_metric_subject(match.group("subject")) in subjects
+        for match in METRIC_VALUE_PATTERN.finditer(text)
+    )
+
+
+def _direct_metric_priority(node: Any) -> tuple[int, int, float]:
+    metadata = node.node.metadata or {}
+    chunk_type = str(metadata.get("chunk_type") or "")
+    return (
+        _safe_int(metadata.get("version_rank"), 0),
+        1 if chunk_type == "body_text" else 0,
+        float(node.score or 0.0),
+    )
+
+
+def _metric_query_subjects(normalized_query: str) -> set[str]:
+    subjects: set[str] = set()
+    for token in re.findall(r"[a-z][a-z-]+", normalized_query):
+        if len(token) < 4 or token in METRIC_STOPWORDS:
+            continue
+        subjects.add(_normalize_metric_subject(token))
+    return subjects
+
+
+def _normalize_metric_subject(token: str) -> str:
+    normalized = token.lower().strip("-")
+    if normalized.endswith("ies") and len(normalized) > 4:
+        return f"{normalized[:-3]}y"
+    if normalized.endswith("s") and len(normalized) > 3:
+        return normalized[:-1]
+    return normalized
 
 
 def _build_retrieval_diagnostics(
