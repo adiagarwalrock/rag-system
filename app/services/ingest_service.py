@@ -15,7 +15,6 @@ from typing import Any, List
 
 from llama_index.core import Settings as LlamaSettings
 from llama_index.core.extractors import (
-    DocumentContextExtractor,
     KeywordExtractor,
     QuestionsAnsweredExtractor,
     SummaryExtractor,
@@ -881,14 +880,13 @@ class IngestionPipelineExecutor:
                     SummaryExtractor(summaries=["prev", "self"]),
                     KeywordExtractor(keywords=10),
                     QuestionsAnsweredExtractor(num_questions=3),
-                    DocumentContextExtractor(llm=LlamaSettings.llm, num_workers=3),
                 ]
             )
-            logger.info("Added LLM-based extractors (Title, Summary) to pipeline")
+            logger.info("Added LLM-based extractors (Title, Summary, Keyword, Questions) to pipeline")
         except Exception as exc:
             logger.warning("Failed to initialize LLM extractors: %s. Skipping.", exc)
         pipeline = IngestionPipeline(transformations=transformations)
-        return pipeline.run(documents=llama_docs, num_workers=3)
+        return pipeline.run(documents=llama_docs, num_workers=1)
 
     def _index_nodes(self, nodes: List[BaseNode]) -> None:
         vector_store_manager.index_nodes(nodes)

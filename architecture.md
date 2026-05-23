@@ -53,9 +53,14 @@ Both paths call the same orchestration classes/functions in `app/services/*`.
 1. Upload request creates `Document` + `IngestionJob` in queued state.
 2. Raw file is persisted to `data/raw`.
 3. `IngestionQueueManager` workers process jobs asynchronously.
-4. Parser path:
-   - PDF -> layout-aware pipeline (`app/ingestion/pdf_pipeline/*`) by default.
-   - Non-PDF (or fallback) -> legacy parser + semantic splitter path.
+4. Parser path — 4-level fallback chain (`app/ingestion/parser/`):
+   1. **Reducto** (`external/reducto.py`) — if `ENABLE_EXTERNAL_PARSER` and `REDUCTO_API_KEY` set.
+   2. **LlamaParse** (`external/llamacloud.py`) — if `ENABLE_EXTERNAL_PARSER` and `LLAMA_CLOUD_API_KEY` set.
+   3. **Layout-aware PDF** (`custom/pdf_pipeline/`) — PDFs with `ENABLE_LAYOUT_AWARE_PDF`.
+   4. **Legacy** (`custom/legacy.py`) — always available.
+   - External parsers (1, 2) return page-delimited markdown; `to_llama_docs()` splits on
+     `[[START OF PAGE n]]` / `[[END OF PAGE n]]` markers into one `LlamaDocument` per page.
+   - All paths feed a single `SemanticSplitterNodeParser` + LLM enrichment pass in `ingest_service.py`.
 5. Version metadata is resolved and stored in `DocumentVersion`.
 6. Nodes are indexed to Qdrant; SQL mapping rows are stored in `VectorNodeRegistry`.
 7. Status transitions complete (`queued` -> `processing` -> `indexed` / `failed`).

@@ -6,8 +6,8 @@ Public API:
   save_upload_file(file_content, filename, dest_folder) -> str
 
 Routing (priority order, each falls through on failure or missing key):
-  1. Reducto         — if ENABLE_EXTERNAL_PARSER and REDUCTO_API_KEY is set
-  2. LlamaParse      — if ENABLE_EXTERNAL_PARSER and LLAMAPARSE_API_KEY is set
+  1. Reducto          — if ENABLE_EXTERNAL_PARSER and REDUCTO_API_KEY is set
+  2. LlamaParse       — if ENABLE_EXTERNAL_PARSER and LLAMAPARSE_API_KEY is set
   3. Layout-aware PDF — if PDF and ENABLE_LAYOUT_AWARE_PDF
   4. Legacy           — always available (LlamaIndex readers)
 """

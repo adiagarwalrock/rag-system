@@ -31,7 +31,8 @@ def test_has_numeric_data_requires_at_least_three_numbers():
     assert _has_numeric_data("values: 10 and 20") is False
 
 
-def test_parse_document_fallback_text_path_emits_unit_metadata(tmp_path):
+def test_parse_document_fallback_text_path_emits_unit_metadata(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.ingestion.parser.settings.ENABLE_EXTERNAL_PARSER", False)
     file_path = tmp_path / "sample.txt"
     file_path.write_text(
         "Revenue was 10 in Q1, 20 in Q2, and 30 in Q3.", encoding="utf-8"
@@ -55,7 +56,8 @@ def test_parse_document_fallback_text_path_emits_unit_metadata(tmp_path):
     assert units[0]["contains_numeric_data"] is True
 
 
-def test_parse_document_pdf_layout_path_emits_artifact_chunks(tmp_path):
+def test_parse_document_pdf_layout_path_emits_artifact_chunks(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.ingestion.parser.settings.ENABLE_EXTERNAL_PARSER", False)
     file_path = tmp_path / "financial.pdf"
     _create_sample_financial_pdf(file_path)
 

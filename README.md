@@ -132,12 +132,32 @@ Configuration is loaded from `.env` via `pydantic-settings` (`app/core/config.py
 1. Upload is validated and persisted (`Document`, `IngestionJob`) in queued state.
 2. Raw file is saved to `data/raw`.
 3. Background workers process queued ingestion tasks.
-4. Parsing:
-   - PDF uses layout-aware pipeline by default (with legacy fallback unless strict mode is enabled).
-   - DOCX/PPTX and fallback paths use the legacy parser.
-5. Version metadata is resolved and persisted (`DocumentVersion` + supersession logic).
-6. Nodes are indexed into Qdrant and mapped in `VectorNodeRegistry`.
-7. Document/job statuses are updated (`queued` -> `processing` -> `indexed`/`failed`).
+4. Parsing — 4-level fallback chain (each level is skipped if its key is absent or it fails):
+   1. **Reducto** — if `ENABLE_EXTERNAL_PARSER=true` and `REDUCTO_API_KEY` is set. VLM-powered agentic table and figure extraction; returns page-delimited markdown.
+   2. **LlamaParse** — if `ENABLE_EXTERNAL_PARSER=true` and `LLAMA_CLOUD_API_KEY` / `LLAMAPARSE_API_KEY` is set. Returns page-delimited markdown.
+   3. **Layout-aware PDF** — custom pipeline (`app/ingestion/parser/custom/pdf_pipeline/`) for PDFs when `ENABLE_LAYOUT_AWARE_PDF=true`.
+   4. **Legacy** — LlamaIndex readers; always available as final fallback.
+5. All parsed output goes through a single `SemanticSplitterNodeParser` pass followed by LLM enrichment (title, summary, keywords, questions answered).
+6. Version metadata is resolved and persisted (`DocumentVersion` + supersession logic).
+7. Nodes are indexed into Qdrant and mapped in `VectorNodeRegistry`.
+8. Document/job statuses are updated (`queued` -> `processing` -> `indexed`/`failed`).
+
+### External parser configuration
+
+```bash
+# Enable/disable the external parser tier (default: true)
+ENABLE_EXTERNAL_PARSER=true
+
+# Reducto (priority 1) — https://reducto.ai
+REDUCTO_API_KEY=...
+
+# LlamaParse (priority 2) — https://cloud.llamaindex.ai
+LLAMA_CLOUD_API_KEY=...
+```
+
+External parsers emit `[[START OF PAGE n]]` / `[[END OF PAGE n]]` markers in their output.
+The parser layer splits on these markers so each page becomes one `LlamaDocument` with a
+correct `page_num` before the semantic splitter runs.
 
 ## Retrieval and Chat Flow (Current)
 
