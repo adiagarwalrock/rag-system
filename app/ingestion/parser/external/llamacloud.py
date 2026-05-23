@@ -1,218 +1,317 @@
+"""
+LlamaParse external parser.
+
+Provides LlamaParseParser — a class with parse / extract / run methods:
+  parse()   → ParsedDocument  (page chunks with text + base metadata from MarkdownPageAnalyzer)
+  extract() → DocumentExtraction  (same chunks with provider-enriched ChunkMetadata)
+  run()     → tuple[list[LlamaDocument], list[dict]]  (same shape as parse_pdf_layout_aware())
+
+The module-level run() shim preserves backward-compatible call sites.
+"""
+
+from __future__ import annotations
+
 import time
 from pathlib import Path
+from typing import Any
+
+import time
+from typing import Any
+
+from app.core.config import settings
+from app.ingestion.parser.external.helper import (
+    DocumentExtraction,
+    MarkdownPageAnalyzer,
+    ParsedDocument,
+    ParsedPageChunk,
+    ProviderInfo,
+    build_metadata_association_prompt,
+    normalize_metadata_associations,
+    provider_metadata_association_schema,
+    provider_usage,
+    split_by_page_markers,
+    to_llama_docs_from_extraction,
+)
+from llama_index.core import Document as LlamaDocument
 
 
-def run(pdf_path: Path) -> tuple[str, float]:
-    """Parse a document with LlamaParse; return (markdown, elapsed_seconds)."""
-    from llama_cloud import LlamaCloud
+class LlamaParseParser:
+    """
+    Wraps the LlamaParse API: parse → extract → run.
+    Output is identical in structure to parse_pdf_layout_aware().
 
-    from app.core.config import settings
+    Class attributes
+    ----------------
+    PARSER_NAME       : str — "llamaparse"
+    LAYOUT_ENGINE     : str — "llamaparse_vlm"
+    PARSER_VERSION    : str — from settings.EXTERNAL_PARSER_VERSION
+    EXTRACT_TIER      : str — "agentic"
+    EXTRACT_TIMEOUT_S : int — 120
+    """
 
-    client = LlamaCloud(api_key=settings.LLAMAPARSE_API_KEY)
-    start = time.perf_counter()
+    PARSER_NAME:       str = "llamaparse"
+    LAYOUT_ENGINE:     str = "llamaparse_vlm"
+    PARSER_VERSION:    str = settings.EXTERNAL_PARSER_VERSION
+    EXTRACT_TIER:      str = "agentic"
+    EXTRACT_TIMEOUT_S: int = 120
 
-    # Step 1: upload the file
-    print(f"  [llamaparse] uploading {pdf_path.name} ...")
-    file = client.files.create(file=str(pdf_path), purpose="parse")
+    def __init__(self) -> None:
+        from llama_cloud import LlamaCloud
 
-    # Step 2: parse (SDK blocks until the job finishes)
-    print(f"  [llamaparse] parsing (agentic_plus, blocking) ...")
-    result = client.parsing.parse(
-        file_id=file.id,
-        # ── TIER ─────────────────────────────────────────────────────────
-        # "fast"           — rule-based, cheapest, NO markdown output
-        # "cost_effective" — balanced speed/quality, supports custom_prompt
-        # "agentic"        — AI-powered, handles complex layouts  ← default
-        # "agentic_plus"   — highest accuracy, ~4.5× cost of agentic
-        tier="agentic_plus",
-        # ── VERSION — pin for reproducibility, or use "latest" ───────────
-        # "latest" | "2026-05-13" | "2026-05-11" | "2026-04-09" | "2025-12-11"
-        version="latest",
-        # ── EXPAND — which result fields to return ────────────────────────
-        # "markdown"               — per-page markdown            ← always include
-        # "text"                   — per-page plain text
-        # "items"                  — structured layout tree with bounding boxes
-        # "metadata"               — per-page confidence scores, cost_optimized flag
-        # "images_content_metadata"— image list with presigned download URLs
-        # "xlsx_content_metadata"  — tables as downloadable XLSX file
-        expand=["markdown"],
-        # ── PAGE SELECTION ────────────────────────────────────────────────
-        # page_ranges={
-        #     "max_pages": None,        # int — cap total pages processed from page 1
-        #     "target_pages": None,     # str — e.g. "1,3,5-10" (1-based, inclusive)
-        # },
-        # ── CROP BOX — strip page margins (ratios 0.0–1.0 of page size) ──
-        # crop_box={
-        #     "top": 0.0,
-        #     "bottom": 0.0,
-        #     "left": 0.0,
-        #     "right": 0.0,
-        # },
-        # ── CACHE ─────────────────────────────────────────────────────────
-        # disable_cache=False,   # True = force re-parse, bypass result cache
-        # ── INPUT OPTIONS ─────────────────────────────────────────────────
-        # input_options={
-        #     # PDF has no sub-fields currently.
-        #     # "pdf": {},
-        #
-        #     # Presentation options — relevant if parsing PPTX files:
-        #     # "presentation": {
-        #     #     "out_of_bounds_content": False,  # extract content outside slide area
-        #     #     "skip_embedded_data": False,     # skip chart data tables in slides
-        #     # },
-        #
-        #     # Spreadsheet options — relevant if parsing XLSX/CSV files:
-        #     # "spreadsheet": {
-        #     #     "detect_sub_tables_in_sheets": False,         # find multiple tables per sheet
-        #     #     "force_formula_computation_in_sheets": False, # compute formulas, not formula text
-        #     #     "include_hidden_sheets": False,               # also parse hidden sheets
-        #     # },
-        #
-        #     # HTML options — relevant if parsing .html files:
-        #     # "html": {
-        #     #     "make_all_elements_visible": False,   # override CSS display/visibility
-        #     #     "remove_navigation_elements": False,  # strip nav bars, sidebars
-        #     #     "remove_fixed_elements": False,       # strip sticky headers/footers
-        #     # },
-        # },
-        # ── OUTPUT OPTIONS ────────────────────────────────────────────────
-        output_options={
-            "markdown": {
-                "tables": {
-                    "output_tables_as_markdown": True,  # False = HTML <table> tags
-                    "merge_continued_tables": True,  # stitch tables split across pages
-                    "compact_markdown_tables": True,  # remove whitespace padding in cells
-                    # "markdown_table_multiline_separator": " ",  # join multi-line cells; e.g. " " or "<br>"
-                },
-                "annotate_links": True,  # include [text](url) link destinations
-                "inline_images": True,  # transcribe figures/charts into md instead of ![...](img) refs
-            },
-            "spatial_text": {
-                "do_not_unroll_columns": True,  # keep multi-column layout intact
-                "preserve_very_small_text": True,  # capture footnotes, fine print, debt covenants, NAV assumptions
-                # "preserve_layout_alignment_across_pages": True,  # auto-on for agentic tier
-            },
-            # "extract_printed_page_number": False,   # capture "Page X of Y" printed labels
-            # "images_to_save": [],    # ["screenshot", "embedded", "layout"]
-            #                          # screenshot = full-page renders
-            #                          # embedded   = images inside the document
-            #                          # layout     = figure/diagram crops from layout detection
-            # "tables_as_spreadsheet": {
-            #     "enable": False,           # export each table as a sheet in an XLSX file
-            #     "guess_sheet_name": False, # auto-name sheets from surrounding table context
-            # },
-            # "additional_outputs": [],  # extra artifacts saved alongside markdown:
-            #                            # "stripped_md"              — formatting-stripped md per page (for search indexing)
-            #                            # "concatenated_stripped_txt" — all pages as one plain-text blob (for embedding)
-            #                            # "word_bbox"                 — word-level bounding boxes JSONL (for answer grounding)
-        },
-        # ── PROCESSING OPTIONS ────────────────────────────────────────────
-        processing_options={
-            # CHART PARSING
-            # "efficient"    — fast rule-based chart reading
-            # "agentic"      — AI-powered chart data extraction
-            # "agentic_plus" — highest accuracy chart extraction  ← our default
-            "specialized_chart_parsing": "agentic_plus",
-            "aggressive_table_extraction": True,  # detect borderless/implicit tables (may add false positives)
-            # "disable_heuristics": False,         # turn off outlined-table detection and adaptive long-table handling
-            # COST OPTIMIZER — incompatible with auto_mode_configuration; keep disabled.
-            # Re-enable only if auto_mode_configuration is removed.
-            # "cost_optimizer": {
-            #     "enable": True,
-            # },
-            # IGNORE — skip noisy content types
-            # "ignore": {
-            #     "ignore_diagonal_text": False,  # skip CONFIDENTIAL/DRAFT diagonal watermarks
-            #     "ignore_hidden_text": False,    # skip invisible/white-on-white text layers
-            #     "ignore_text_in_image": False,  # skip OCR on embedded raster images
-            # },
-            # OCR LANGUAGES — order matters; first language = primary
-            "ocr_parameters": {
-                "languages": ["en"],  # e.g. ["en", "fr", "de"]
-            },
-            # AUTO MODE CONFIGURATION — per-page conditional rules
-            # Apply different tiers, prompts, and settings per page based on page content.
-            # Each entry = one rule with triggers + a parsing_conf to apply when triggered.
-            # Available triggers (set trigger_mode to "and"/"or"):
-            #   "table_in_page": True,                        # page contains at least one table
-            #   "image_in_page": True,                        # page contains non-screenshot images
-            #   "full_page_image_in_page": True,              # page is a scanned image
-            #   "page_contains_at_least_n_charts": 1,
-            #   "page_contains_at_least_n_tables": 1,
-            #   "page_contains_at_least_n_numbers": 10,
-            #   "page_contains_at_least_n_percent_numbers": 3,
-            #   "page_contains_at_least_n_words": 50,
-            #   "page_contains_at_most_n_words": 200,
-            #   "page_longer_than_n_chars": 500,
-            #   "page_shorter_than_n_chars": 100,
-            #   "regexp_in_page": r"\$[\d,]+",               # regex match against page text
-            #   "text_in_page": "CONFIDENTIAL",              # substring match
-            #   "trigger_mode": "or",  # "and" = all conditions must match, "or" = any
-            # Available parsing_conf keys:
-            #   "tier", "version", "specialized_chart_parsing", "aggressive_table_extraction",
-            #   "custom_prompt", "high_res_ocr", "ignore", "spatial_text", "crop_box"
-            "auto_mode_configuration": [
-                {
-                    # Trigger on any page with at least one detected chart
-                    "page_contains_at_least_n_charts": 1,
-                    "parsing_conf": {
-                        "tier": "agentic_plus",
-                        "version": "latest",
-                        "specialized_chart_parsing": "agentic_plus",
-                        "custom_prompt": (
-                            "This page contains charts. For every chart, output a markdown table: "
-                            "axis labels and series names as column headers, all data points with exact values and units. "
-                            "For KPI tiles and summary boxes, output: metric | value | unit | period. "
-                            "Key REIT metrics: NOI, FFO, AFFO, NAV, Cap rate, Occupancy, ABR, WALT, Net debt/EBITDA, leasing spreads, guidance ranges. "
-                            "Append '(approx)' for values estimated from the visual. Never emit image placeholders."
-                        ),
+        self._client = LlamaCloud(api_key=settings.LLAMAPARSE_API_KEY)
+        self._analyzer = MarkdownPageAnalyzer(
+            parser_name=self.PARSER_NAME,
+            layout_engine=self.LAYOUT_ENGINE,
+        )
+
+    # ------------------------------------------------------------------
+    # parse
+    # ------------------------------------------------------------------
+
+    def parse(self, pdf_path: Path) -> ParsedDocument:
+        """Upload + parse via LlamaParse API; return a ParsedDocument with base metadata."""
+        start = time.perf_counter()
+
+        # Step 1: upload
+        print(f"  [llamaparse] uploading {pdf_path.name} ...")
+        file = self._client.files.create(file=str(pdf_path), purpose="parse")
+
+        # Step 2: parse (SDK blocks until the job finishes)
+        print("  [llamaparse] parsing (agentic_plus, blocking) ...")
+        result = self._client.parsing.parse(
+            file_id=file.id,
+            tier="agentic_plus",
+            version="latest",
+            expand=["markdown"],
+            output_options={
+                "markdown": {
+                    "tables": {
+                        "output_tables_as_markdown": True,
+                        "merge_continued_tables": True,
+                        "compact_markdown_tables": True,
                     },
+                    "annotate_links": True,
+                    "inline_images": True,
                 },
-            ],
-        },
-        # ── AGENTIC OPTIONS (cost_effective / agentic / agentic_plus only) ──
-        agentic_options={
-            "custom_prompt": (
-                "You are a specialized REIT document parser. "
-                "Extract all financial metrics, tables, charts, and visual data with precise attention to:\n\n"
-                "1. DATE NORMALIZATION: Convert all dates to ISO format (YYYY-MM-DD, YYYY-MM, YYYY, or YYYY-Q# for quarters). Preserve original labels alongside normalized dates.\n\n"
-                "2. TABLE PRESERVATION: Extract tables with full structure including headers, row labels, units, currencies, and footnotes. Do not flatten tables into prose.\n\n"
-                "3. VISUAL EXTRACTION: Convert all charts, graphs, maps, KPI tiles, and diagrams into structured data. For charts with visible values, extract exact numbers. For approximate values from visual estimation, mark is_approximate as true.\n\n"
-                "4. REIT METRICS: Pay special attention to: NOI, Same-store NOI, FFO, Core FFO, AFFO, NAV, Cap rate, Occupancy, Leasing spreads, Rent growth, ABR, WALT, Debt maturity, Net debt/EBITDA, Interest coverage, Development pipeline, Property count, GLA/square footage, Tenant concentration, Sector exposure, Geographic exposure, Dividend metrics, Guidance ranges.\n\n"
-                "5. VALUE TYPES: Distinguish between actuals, estimates, guidance, pro forma, and targets. Preserve units (thousands, millions, billions, per share, percentage, basis points, square feet).\n\n"
-                "6. DO NOT HALLUCINATE: Only extract values explicitly present in the document. Mark uncertain extractions appropriately."
+                "spatial_text": {
+                    "do_not_unroll_columns": True,
+                    "preserve_very_small_text": True,
+                },
+            },
+            processing_options={
+                "specialized_chart_parsing": "agentic_plus",
+                "aggressive_table_extraction": True,
+                "ocr_parameters": {
+                    "languages": ["en"],
+                },
+                "auto_mode_configuration": [
+                    {
+                        "page_contains_at_least_n_charts": 1,
+                        "parsing_conf": {
+                            "tier": "agentic_plus",
+                            "version": "latest",
+                            "specialized_chart_parsing": "agentic_plus",
+                            "custom_prompt": (
+                                "This page contains charts. For every chart, output a markdown table: "
+                                "axis labels and series names as column headers, all data points with exact values and units. "
+                                "For KPI tiles and summary boxes, output: metric | value | unit | period. "
+                                "Key REIT metrics: NOI, FFO, AFFO, NAV, Cap rate, Occupancy, ABR, WALT, "
+                                "Net debt/EBITDA, leasing spreads, guidance ranges. "
+                                "Append '(approx)' for values estimated from the visual. Never emit image placeholders."
+                            ),
+                        },
+                    },
+                ],
+            },
+            agentic_options={
+                "custom_prompt": (
+                    "You are a specialized REIT document parser. "
+                    "Extract all financial metrics, tables, charts, and visual data with precise attention to:\n\n"
+                    "1. DATE NORMALIZATION: Convert all dates to ISO format (YYYY-MM-DD, YYYY-MM, YYYY, or YYYY-Q# for quarters). "
+                    "Preserve original labels alongside normalized dates.\n\n"
+                    "2. TABLE PRESERVATION: Extract tables with full structure including headers, row labels, units, "
+                    "currencies, and footnotes. Do not flatten tables into prose.\n\n"
+                    "3. VISUAL EXTRACTION: Convert all charts, graphs, maps, KPI tiles, and diagrams into structured data. "
+                    "For charts with visible values, extract exact numbers. For approximate values from visual estimation, "
+                    "mark is_approximate as true.\n\n"
+                    "4. REIT METRICS: Pay special attention to: NOI, Same-store NOI, FFO, Core FFO, AFFO, NAV, Cap rate, "
+                    "Occupancy, Leasing spreads, Rent growth, ABR, WALT, Debt maturity, Net debt/EBITDA, Interest coverage, "
+                    "Development pipeline, Property count, GLA/square footage, Tenant concentration, Sector exposure, "
+                    "Geographic exposure, Dividend metrics, Guidance ranges.\n\n"
+                    "5. VALUE TYPES: Distinguish between actuals, estimates, guidance, pro forma, and targets. "
+                    "Preserve units (thousands, millions, billions, per share, percentage, basis points, square feet).\n\n"
+                    "6. DO NOT HALLUCINATE: Only extract values explicitly present in the document. "
+                    "Mark uncertain extractions appropriately."
+                ),
+            },
+        )
+
+        elapsed = time.perf_counter() - start
+
+        pages = result.markdown.pages if result.markdown else []
+        print(f"  [llamaparse] done — {len(pages)} pages extracted ({elapsed:.1f}s)")
+
+        # Build markdown with page markers
+        parts: list[str] = []
+        for p in pages:
+            if not (hasattr(p, "markdown") and p.markdown):
+                continue
+            page_num = p.page_number if hasattr(p, "page_number") else None
+            if page_num is not None:
+                parts.append(f"[[START OF PAGE {page_num}]]")
+            parts.append(p.markdown)
+            if page_num is not None:
+                parts.append(f"[[END OF PAGE {page_num}]]")
+        markdown = "\n\n".join(parts)
+
+        # Extract parse job ID for LlamaCloud Extract
+        # LlamaCloud Extract accepts the parse job ID directly
+        parse_job_id = getattr(result, "id", None) or getattr(result, "job_id", None)
+
+        # Build ParsedPageChunks from page-sectioned markdown
+        page_sections = split_by_page_markers(markdown)
+        page_chunks = self._build_page_chunks(page_sections)
+
+        return ParsedDocument(
+            source_file=str(pdf_path),
+            parser_name=self.PARSER_NAME,
+            parser_version=self.PARSER_VERSION,
+            parse_job_id=str(parse_job_id) if parse_job_id else None,
+            extract_input_id=None,
+            page_chunks=page_chunks,
+        )
+
+    def _build_page_chunks(
+        self, page_sections: list[tuple[int, str]]
+    ) -> list[ParsedPageChunk]:
+        chunks: list[ParsedPageChunk] = []
+        for page_num, content in page_sections:
+            if not content.strip():
+                continue
+            analyzed = self._analyzer.analyze(page_num, content)
+            analyzed.metadata["parser_version"] = self.PARSER_VERSION
+            chunks.append(
+                ParsedPageChunk(
+                    chunk_id=analyzed.chunk_id,
+                    page_nums=analyzed.page_nums,
+                    text=analyzed.text,
+                    chunk_type=analyzed.chunk_type,
+                    source_artifact_type=analyzed.source_artifact_type,
+                    source_artifact_id=analyzed.source_artifact_id,
+                    metadata=analyzed.metadata,
+                    asset_refs=analyzed.asset_refs,
+                )
+            )
+        return chunks
+
+    # ------------------------------------------------------------------
+    # extract
+    # ------------------------------------------------------------------
+
+    _EXTRACTION_PROMPT = """
+Associate structured metadata with the existing parser page chunks for downstream RAG
+ingestion. Return exactly one chunks item for each page chunk id listed below. Do not
+create new chunks and do not rewrite chunk text. Fill metadata, asset references,
+citations, and confidence values when available. Preserve page numbers and do not invent
+values. Use empty strings, empty arrays, or null for fields that are not present.
+
+For each chunk, populate these temporal/scope fields when present in the document:
+- document_date: ISO date of the presentation/document (YYYY-MM-DD, YYYY-MM, YYYY, or YYYY-Q#)
+- as_of_date: ISO as-of date for the metric snapshot
+- metric_basis: one of 'actual', 'guidance', 'pro_forma', 'estimate', 'target'
+"""
+
+    def extract(self, parsed_document: ParsedDocument) -> DocumentExtraction:
+        """Call LlamaCloud Extract API to enrich chunk metadata. Returns DocumentExtraction."""
+        if not parsed_document.parse_job_id:
+            raise ValueError(
+                "LlamaCloud Extract requires a LlamaParse parse_job_id. "
+                "Ensure parse() succeeded and stored the job ID."
+            )
+
+        start = time.perf_counter()
+        print(
+            f"  [llama extract] extracting metadata from "
+            f"{parsed_document.parse_job_id} ({len(parsed_document.page_chunks)} chunks) ..."
+        )
+
+        job = self._client.extract.run(
+            file_input=parsed_document.parse_job_id,
+            configuration={
+                "data_schema": provider_metadata_association_schema(),
+                "tier": self.EXTRACT_TIER,
+                "extract_version": "latest",
+                "extraction_target": "per_page",
+                "cite_sources": True,
+                "confidence_scores": True,
+                "system_prompt": build_metadata_association_prompt(
+                    self._EXTRACTION_PROMPT, parsed_document
+                ),
+            },
+            verbose=True,
+        )
+
+        elapsed = time.perf_counter() - start
+        extraction = normalize_metadata_associations(
+            job.extract_result,
+            ProviderInfo(
+                provider="llama",
+                elapsed_s=round(elapsed, 2),
+                job_id=getattr(job, "id", None),
+                usage=provider_usage(self._get_nested(job, "metadata", "usage")),
+                raw_citations=self._llama_citations(job),
             ),
-        },
-        # ── PROCESSING CONTROL ────────────────────────────────────────────
-        # processing_control={
-        #     "timeouts": {
-        #         "base_in_seconds": 300,               # base job timeout in seconds (max 1800)
-        #         "extra_time_per_page_in_seconds": 10, # added per page (max 300)
-        #         # total timeout = base + (extra_per_page × page_count)
-        #     },
-        #     "job_failure_conditions": {
-        #         "allowed_page_failure_ratio": 0.05,           # max ratio of failed pages (0–1)
-        #         "fail_on_buggy_font": False,                  # fail if problematic font detected
-        #         "fail_on_image_extraction_error": False,      # fail on image extraction errors
-        #         "fail_on_image_ocr_error": False,             # fail on OCR errors
-        #         "fail_on_markdown_reconstruction_error": False, # fail if markdown can't be built
-        #     },
-        # },
-    )
+            parsed_document,
+        )
+        print(f"  [llama extract] done — {len(extraction.chunks)} chunks enriched")
+        return extraction
 
-    elapsed = time.perf_counter() - start
+    @staticmethod
+    def _llama_citations(job: Any) -> list[Any]:
+        metadata = getattr(job, "extract_metadata", None)
+        if metadata is None:
+            return []
+        from app.ingestion.parser.external.helper import to_plain_data
+        plain = to_plain_data(metadata)
+        if isinstance(plain, dict):
+            citations = (
+                plain.get("citations")
+                or plain.get("sources")
+                or plain.get("field_metadata")
+            )
+            return citations if isinstance(citations, list) else ([citations] if citations else [])
+        return []
 
-    pages = result.markdown.pages if result.markdown else []
-    print(f"  [llamaparse] done — {len(pages)} pages extracted")
-    parts = []
-    for p in pages:
-        if not (hasattr(p, "markdown") and p.markdown):
-            continue
-        page_num = p.page_number if hasattr(p, "page_number") else None
-        if page_num is not None:
-            parts.append(f"[[START OF PAGE {page_num}]]")
-        parts.append(p.markdown)
-        if page_num is not None:
-            parts.append(f"[[END OF PAGE {page_num}]]")
-    markdown = "\n\n".join(parts)
-    return markdown, elapsed
+    @staticmethod
+    def _get_nested(value: Any, first: str, second: str) -> Any:
+        parent = getattr(value, first, None)
+        if isinstance(parent, dict):
+            return parent.get(second)
+        return getattr(parent, second, None)
+
+    # ------------------------------------------------------------------
+    # run
+    # ------------------------------------------------------------------
+
+    def run(
+        self,
+        pdf_path: Path,
+        document_metadata: dict[str, Any],
+    ) -> tuple[list[LlamaDocument], list[dict[str, Any]]]:
+        """Parse + extract + convert to (docs, units). Same shape as parse_pdf_layout_aware()."""
+        parsed = self.parse(pdf_path)
+        extracted = self.extract(parsed)
+        return to_llama_docs_from_extraction(extracted, document_metadata)
+
+
+# ---------------------------------------------------------------------------
+# Module-level shim — preserves existing call sites in parse_document()
+# ---------------------------------------------------------------------------
+
+
+def run(
+    pdf_path: Path,
+    document_metadata: dict[str, Any],
+) -> tuple[list[LlamaDocument], list[dict[str, Any]]]:
+    """Parse a PDF via LlamaParse and return (docs, units) with full metadata parity."""
+    return LlamaParseParser().run(pdf_path, document_metadata)

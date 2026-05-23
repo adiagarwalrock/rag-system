@@ -104,6 +104,7 @@ class Settings(BaseSettings):
     # Priority order: Reducto → LlamaParse → Layout-aware PDF → Legacy
     # Each level is attempted only if its key is set; failure falls through to the next.
     ENABLE_EXTERNAL_PARSER: bool = True
+    EXTERNAL_PARSER_VERSION: str = "1.0.0"
     REDUCTO_API_KEY: str | None = Field(
         default=None,
         validation_alias=AliasChoices("REDUCTO_API_KEY"),

@@ -69,12 +69,10 @@ def parse_document(
         try:
             from app.ingestion.parser.external.reducto import run
 
-            md, elapsed = run(path)
-            docs, units = to_llama_docs(md, document_metadata, parser_name="reducto")
+            docs, units = run(path, document_metadata)
             logger.info(
-                "Parsed %s via reducto in %.2fs: %d chunks",
+                "Parsed %s via reducto: %d chunks",
                 path.name,
-                elapsed,
                 len(docs),
             )
             return docs, units
@@ -91,12 +89,10 @@ def parse_document(
         try:
             from app.ingestion.parser.external.llamacloud import run
 
-            md, elapsed = run(path)
-            docs, units = to_llama_docs(md, document_metadata, parser_name="llamaparse")
+            docs, units = run(path, document_metadata)
             logger.info(
-                "Parsed %s via llamaparse in %.2fs: %d chunks",
+                "Parsed %s via llamaparse: %d chunks",
                 path.name,
-                elapsed,
                 len(docs),
             )
             return docs, units

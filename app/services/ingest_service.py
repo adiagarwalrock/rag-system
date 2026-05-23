@@ -120,6 +120,10 @@ NON_SEMANTIC_EMBED_METADATA_KEYS = (
     "reasoning_prompt_version",
     "claims",
     "llm_enriched",
+    # temporal / scope anchors — stay in LLM metadata, excluded from embeddings
+    "document_date",
+    "as_of_date",
+    "metric_basis",
 )
 
 NON_SEMANTIC_LLM_METADATA_KEYS = (
@@ -867,6 +871,16 @@ class IngestionPipelineExecutor:
                         doc.metadata.get("artifact_bundle_path"),
                     ),
                     "authority_score": 1.0,
+                    # temporal / scope anchors populated by external parser Extract API
+                    "document_date": unit.get(
+                        "document_date", doc.metadata.get("document_date")
+                    ),
+                    "as_of_date": unit.get(
+                        "as_of_date", doc.metadata.get("as_of_date")
+                    ),
+                    "metric_basis": unit.get(
+                        "metric_basis", doc.metadata.get("metric_basis")
+                    ),
                 }
             )
 
@@ -886,7 +900,7 @@ class IngestionPipelineExecutor:
         except Exception as exc:
             logger.warning("Failed to initialize LLM extractors: %s. Skipping.", exc)
         pipeline = IngestionPipeline(transformations=transformations)
-        return pipeline.run(documents=llama_docs, num_workers=1)
+        return pipeline.run(documents=llama_docs, num_workers=4)  # parallel LLM extractors
 
     def _index_nodes(self, nodes: List[BaseNode]) -> None:
         vector_store_manager.index_nodes(nodes)
