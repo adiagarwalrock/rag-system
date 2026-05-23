@@ -244,6 +244,95 @@ class ProviderDocumentMetadata(BaseModel):
     parser_version: str | None = Field(default=None)
 
 
+class ProviderExtractMetadata(BaseModel):
+    """Focused metadata schema sent to provider Extract APIs.
+
+    Contains ONLY the fields the provider LLM should fill — not the full
+    internal ChunkMetadata with 70+ pipeline-internal fields. Keeping the
+    schema small and well-described improves extraction accuracy.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # ── temporal / scope ─────────────────────────────────────────────────────
+    document_date: str | None = Field(
+        default=None,
+        description="ISO date of the presentation/document. Use YYYY-MM-DD, YYYY-MM, YYYY, or YYYY-Q# for quarters.",
+    )
+    as_of_date: str | None = Field(
+        default=None,
+        description="ISO as-of date for the metric snapshot in this chunk (may differ from document_date).",
+    )
+    metric_basis: str | None = Field(
+        default=None,
+        description="Value basis: one of 'actual', 'guidance', 'pro_forma', 'estimate', 'target'. Null if not determinable.",
+    )
+
+    # ── table metadata ────────────────────────────────────────────────────────
+    table_title: str | None = Field(
+        default=None,
+        description="Title or caption of the table in this chunk, if present. Null if no table.",
+    )
+    table_id: str | None = Field(
+        default=None,
+        description="Stable identifier for the table (e.g. from the document's table numbering). Null if absent.",
+    )
+
+    # ── chart / figure metadata ───────────────────────────────────────────────
+    chart_type: str | None = Field(
+        default=None,
+        description="Chart type: 'bar', 'line', 'pie', 'scatter', 'waterfall', 'area', 'combo', 'table', 'map', 'other'. Null if not a chart.",
+    )
+    chart_title: str | None = Field(
+        default=None,
+        description="Title of the chart or figure, if present. Null if not a chart/figure.",
+    )
+    x_axis_label: str | None = Field(
+        default=None,
+        description="X-axis label of the chart, if present.",
+    )
+    y_axis_label: str | None = Field(
+        default=None,
+        description="Y-axis label of the chart, if present.",
+    )
+    x_categories: list[str] = Field(
+        default_factory=list,
+        description="Ordered list of x-axis category labels (e.g. years, quarters, company names).",
+    )
+    series: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Each element: {name: str, values: list[number], unit: str|null}. "
+            "One entry per data series in the chart."
+        ),
+    )
+    approx_datapoints: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Individual data points: [{series: str, x: str, y: number, unit: str|null, approximate: bool}]. "
+            "Use approximate=true for values estimated from the visual."
+        ),
+    )
+    trend_summary: str | None = Field(
+        default=None,
+        description="One-sentence summary of the trend or key takeaway from the chart.",
+    )
+    key_chart_facts: list[str] = Field(
+        default_factory=list,
+        description="Key facts, annotations, CAGR labels, or callout values visible in the chart.",
+    )
+    numeric_extraction_confidence: float | None = Field(
+        default=None,
+        description="0.0–1.0 confidence in the numeric values extracted from this chunk.",
+    )
+
+    # ── enrichment quality ────────────────────────────────────────────────────
+    llm_enrichment_confidence: float | None = Field(
+        default=None,
+        description="0.0–1.0 overall confidence in the metadata extraction for this chunk.",
+    )
+
+
 class ChunkMetadataAssociation(BaseModel):
     """Provider-facing metadata association for an existing parser page chunk."""
 
@@ -254,7 +343,7 @@ class ChunkMetadataAssociation(BaseModel):
         description="Existing parser chunk id. Return the same id from the prompt.",
     )
     page_nums: list[int] = Field(default_factory=list)
-    metadata: ChunkMetadata = Field(default_factory=ChunkMetadata)
+    metadata: ProviderExtractMetadata = Field(default_factory=ProviderExtractMetadata)
     asset_refs: list[str] = Field(default_factory=list)
     citations: list[Citation] = Field(default_factory=list)
     extraction_confidence: float | None = Field(default=None)
@@ -404,10 +493,63 @@ def normalize_metadata_associations(
     )
 
 
+def _unwrap_reducto_envelope(data: dict[str, Any]) -> dict[str, Any]:
+    """Unwrap Reducto's response envelope format before model validation.
+
+    Reducto wraps each chunk as {"value": {...}} and each document_metadata field
+    as {"value": ..., "citations": [...]}. This function normalises both so that
+    _coerce_document can pass a clean dict to DocumentExtraction.model_validate().
+    """
+    result: dict[str, Any] = {}
+
+    # --- document_metadata: unwrap {"value": ..., "citations": [...]} fields ---
+    raw_doc_meta = data.get("document_metadata")
+    if isinstance(raw_doc_meta, dict):
+        unwrapped_doc_meta: dict[str, Any] = {}
+        for k, v in raw_doc_meta.items():
+            if isinstance(v, dict) and "value" in v and "citations" in v:
+                unwrapped_doc_meta[k] = v["value"]
+            else:
+                unwrapped_doc_meta[k] = v
+        result["document_metadata"] = unwrapped_doc_meta
+    elif raw_doc_meta is not None:
+        result["document_metadata"] = raw_doc_meta
+
+    # --- chunks: unwrap [{"value": {...}}, ...] items ---
+    raw_chunks = data.get("chunks")
+    if isinstance(raw_chunks, list):
+        unwrapped_chunks: list[Any] = []
+        for item in raw_chunks:
+            if isinstance(item, dict) and list(item.keys()) == ["value"] and isinstance(item["value"], dict):
+                # Pure {"value": {...}} wrapper — unwrap it
+                unwrapped_chunks.append(item["value"])
+            elif isinstance(item, dict) and "value" in item and isinstance(item["value"], dict):
+                # {"value": {...}, "citations": [...]} or similar — prefer value dict, merge extra
+                inner = dict(item["value"])
+                # If the inner dict also has citations at the chunk level, carry them over
+                if "citations" in item and "citations" not in inner:
+                    inner["citations"] = item["citations"]
+                unwrapped_chunks.append(inner)
+            else:
+                unwrapped_chunks.append(item)
+        result["chunks"] = unwrapped_chunks
+    elif raw_chunks is not None:
+        result["chunks"] = raw_chunks
+
+    # Copy any other top-level keys unchanged
+    for k, v in data.items():
+        if k not in ("document_metadata", "chunks"):
+            result[k] = v
+
+    return result
+
+
 def _coerce_document(data: Any) -> DocumentExtraction:
     if isinstance(data, dict):
         if "chunks" in data:
-            return DocumentExtraction.model_validate(data)
+            # Unwrap Reducto-style {"value": ...} envelopes before validation
+            clean = _unwrap_reducto_envelope(data)
+            return DocumentExtraction.model_validate(clean)
         if "document_metadata" in data and "chunks" not in data:
             return DocumentExtraction.model_validate({**data, "chunks": []})
         if _looks_like_chunk(data):
@@ -447,11 +589,30 @@ def _merge_page_chunk(
     citations: list[Any] = []
     confidences: list[float] = []
 
+    # Fields the provider is allowed to fill (matches ProviderExtractMetadata)
+    _PROVIDER_FIELDS = {
+        "document_date", "as_of_date", "metric_basis",
+        "table_title", "table_id",
+        "chart_type", "chart_title", "x_axis_label", "y_axis_label",
+        "x_categories", "series", "approx_datapoints", "trend_summary",
+        "key_chart_facts", "numeric_extraction_confidence", "llm_enrichment_confidence",
+    }
+
     for association in associations:
-        # Only merge non-empty provider metadata; preserve analyzer values
-        provider_meta = _clean_metadata(
-            association.metadata.model_dump(mode="json", exclude_unset=True)
-        )
+        # Primary source: nested metadata object (expected schema shape)
+        nested = association.metadata.model_dump(mode="json", exclude_unset=True)
+
+        # Fallback source: provider may return fields at the chunk top-level instead of
+        # under "metadata" — Reducto does this when returning flat extraction results.
+        # model_extra captures unknown top-level keys on ExtractedChunk (extra="allow").
+        flat_extra = {
+            k: v for k, v in (association.model_extra or {}).items()
+            if k in _PROVIDER_FIELDS
+        }
+
+        # Merge both sources; nested takes precedence over flat
+        raw_provider = {**flat_extra, **nested}
+        provider_meta = _clean_metadata(raw_provider)
         # Fields set by the analyzer must not be overwritten by the provider
         _ANALYZER_OWNED = {
             "chunk_type", "chunk_id", "source_artifact_type", "source_artifact_id",
