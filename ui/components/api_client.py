@@ -24,6 +24,7 @@ def get_api() -> "VecteraCore":
         "create_chat_session",
         "list_chat_messages",
         "clear_chat_session",
+        "get_runtime_status",
     )
     if not all(hasattr(api, method_name) for method_name in required_methods):
         _create_api.clear()

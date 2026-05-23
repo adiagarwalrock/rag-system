@@ -24,6 +24,7 @@ from app.services.ingest_service import (
     retry_ingestion,
 )
 from app.services.query_history_service import QueryHistoryFilters, QueryHistoryService
+from app.services.status_service import RuntimeStatusService
 
 logger = logging.getLogger(__name__)
 
@@ -337,6 +338,9 @@ class VecteraCore:
             return {"rows": rows, "total": payload["total"]}
 
     # --- Health ---
+    def get_runtime_status(self) -> dict:
+        return RuntimeStatusService().get_status()
+
     def health(self) -> dict:
         try:
             with SessionLocal() as db:
