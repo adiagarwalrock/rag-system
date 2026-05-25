@@ -206,14 +206,15 @@ def _predict_query_rewrites(
             recent_turns=recent_turns,
             max_rewrites=max_rewrites,
         ),
-        reasoning_effort="low",
-        max_output_tokens=220,
+        reasoning_effort="none",
+        max_output_tokens=500,
         prompt_cache_key="vectera:query-expansion:v2",
         prompt_cache_retention=settings.RESPONSE_PROMPT_CACHE_RETENTION,
         safety_identifier=(
             f"{settings.RESPONSE_SAFETY_IDENTIFIER_PREFIX}:query-expansion"
         ),
         user_tag=settings.RESPONSE_USER_TAG,
+        timeout_seconds=25,  # query expansion must be fast; failure falls back to no expansion
     )
     content = extract_chat_response_text(response)
     parsed = _parse_query_rewrite_response(content)

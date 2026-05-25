@@ -39,6 +39,7 @@ DEFAULT_MAX_RETRIES = 5
 DEFAULT_INITIAL_BACKOFF_SECONDS = 10.0
 DEFAULT_WORKERS = 4
 MAX_BACKOFF_SECONDS = 120.0
+DEFAULT_QUESTION_TIMEOUT_SECONDS = 360  # wall-clock timeout per question; must exceed RESPONSE_SYNTHESIS_TIMEOUT_SECONDS (240s) + reranking (~30s) + overhead
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,7 @@ class EvalRunnerConfig:
     workers: int
     timestamped_output: bool
     debug_output_path: Path | None
+    question_timeout_seconds: int
 
 
 @dataclass
@@ -85,6 +87,7 @@ class QuestionExecutionResult:
     query_id: str | None
     latency_ms: int | None
     error: str | None
+    diagnostics: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -142,10 +145,34 @@ class EnterpriseRAGEvalRunner:
                 "Output file exists and will be replaced: %s", output_paths.output_path
             )
 
-        results_by_line = self._run_parallel_queries(client_id, work_items, stats)
+        # Open streaming files before queries start — results are written as each
+        # question completes so no answers are lost if the run is interrupted.
+        output_paths.output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_paths.debug_path.parent.mkdir(parents=True, exist_ok=True)
+        self._safe_unlink(output_paths.output_tmp_path)
+        self._safe_unlink(output_paths.debug_tmp_path)
+
+        # Use a separate streaming file so completed answers survive any crash/interrupt.
+        stream_output = output_paths.output_tmp_path.with_suffix(".stream.jsonl")
+        stream_debug = output_paths.debug_tmp_path.with_suffix(".stream.jsonl")
+        self._safe_unlink(stream_output)
+        self._safe_unlink(stream_debug)
+
+        with (
+            stream_output.open("w", encoding="utf-8") as output_fp,
+            stream_debug.open("w", encoding="utf-8") as debug_fp,
+        ):
+            results_by_line = self._run_parallel_queries(
+                client_id, work_items, stats,
+                output_fp=output_fp, debug_fp=debug_fp,
+            )
+
         self._validate_completeness(stats)
 
+        # Re-write sorted by question ID and atomically rename to final paths.
         self._write_outputs(output_paths, results_by_line)
+        self._safe_unlink(stream_output)
+        self._safe_unlink(stream_debug)
 
         finished_at = datetime.now(timezone.utc)
         manifest = self._build_manifest(
@@ -239,6 +266,8 @@ class EnterpriseRAGEvalRunner:
         client_id: str,
         work_items: list[WorkItem],
         stats: EvalRunStats,
+        output_fp=None,
+        debug_fp=None,
     ) -> dict[int, QuestionExecutionResult]:
         if not work_items:
             return {}
@@ -256,7 +285,23 @@ class EnterpriseRAGEvalRunner:
             for future in as_completed(futures):
                 item = futures[future]
                 try:
-                    result = future.result()
+                    result = future.result(timeout=self.config.question_timeout_seconds)
+                except TimeoutError:
+                    timeout_msg = f"Question timed out after {self.config.question_timeout_seconds}s"
+                    logger.error("Question id=%s %s", item.question_id, timeout_msg)
+                    result = QuestionExecutionResult(
+                        line_no=item.line_no,
+                        question_id=item.question_id,
+                        question=item.question,
+                        answer=f"ERROR: {timeout_msg}",
+                        reasoning=None,
+                        status="failed",
+                        attempts=self.config.max_retries + 1,
+                        query_id=None,
+                        latency_ms=None,
+                        error=timeout_msg,
+                        diagnostics={},
+                    )
                 except Exception as exc:
                     result = QuestionExecutionResult(
                         line_no=item.line_no,
@@ -269,6 +314,7 @@ class EnterpriseRAGEvalRunner:
                         query_id=None,
                         latency_ms=None,
                         error=str(exc).strip() or repr(exc),
+                        diagnostics={},
                     )
 
                 results_by_line[result.line_no] = result
@@ -276,6 +322,30 @@ class EnterpriseRAGEvalRunner:
                     stats.succeeded += 1
                 else:
                     stats.failed += 1
+
+                # Stream result to disk immediately so no answers are lost on interrupt.
+                if output_fp is not None:
+                    output_row = {
+                        "id": result.question_id,
+                        "question": result.question,
+                        "answer": result.answer,
+                        "reasoning": result.reasoning,
+                    }
+                    output_fp.write(json.dumps(output_row, ensure_ascii=False) + "\n")
+                    output_fp.flush()
+                if debug_fp is not None:
+                    debug_row = {
+                        "id": result.question_id,
+                        "line_no": result.line_no,
+                        "status": result.status,
+                        "attempts": result.attempts,
+                        "query_id": result.query_id,
+                        "latency_ms": result.latency_ms,
+                        "error": result.error,
+                        **result.diagnostics,
+                    }
+                    debug_fp.write(json.dumps(debug_row, ensure_ascii=False) + "\n")
+                    debug_fp.flush()
 
                 completed += 1
                 logger.info(
@@ -322,6 +392,7 @@ class EnterpriseRAGEvalRunner:
                     query_id=result.get("query_id"),
                     latency_ms=result.get("latency_ms"),
                     error=None,
+                    diagnostics=self._build_result_diagnostics(result),
                 )
             except Exception as exc:
                 message = str(exc).strip() or repr(exc)
@@ -343,6 +414,7 @@ class EnterpriseRAGEvalRunner:
                         query_id=None,
                         latency_ms=None,
                         error=message,
+                        diagnostics={},
                     )
 
                 wait_seconds = min(
@@ -370,7 +442,41 @@ class EnterpriseRAGEvalRunner:
             query_id=None,
             latency_ms=None,
             error="unexpected retry flow",
+            diagnostics={},
         )
+
+    @staticmethod
+    def _build_result_diagnostics(result: dict[str, Any]) -> dict[str, Any]:
+        citations = result.get("citations") or []
+        top_citations = []
+        if isinstance(citations, list):
+            for citation in citations[:8]:
+                if not isinstance(citation, dict):
+                    continue
+                top_citations.append(
+                    {
+                        "rank": citation.get("rank"),
+                        "document_name": citation.get("document_name"),
+                        "citation_label": citation.get("citation_label"),
+                        "page_num": citation.get("page_num"),
+                        "chunk_type": citation.get("chunk_type"),
+                    }
+                )
+
+        return {
+            "evidence_count": result.get("evidence_count"),
+            "source_count": result.get("source_count"),
+            "retrieval_mode": result.get("retrieval_mode"),
+            "query_expanded": result.get("query_expanded"),
+            "retrieval_diagnostics": result.get("retrieval_diagnostics"),
+            "intent_labels": result.get("intent_labels"),
+            "companion_queries": result.get("companion_queries"),
+            "companion_counts_by_query": result.get("companion_counts_by_query"),
+            "evidence_by_document": result.get("evidence_by_document"),
+            "evidence_by_version_group": result.get("evidence_by_version_group"),
+            "evidence_by_entity": result.get("evidence_by_entity"),
+            "top_citations": top_citations,
+        }
 
     def _resolve_output_paths(self) -> OutputPaths:
         output_path = self._compute_final_output_path(self.config.output_path)
@@ -425,12 +531,7 @@ class EnterpriseRAGEvalRunner:
         output_paths: OutputPaths,
         results_by_line: dict[int, QuestionExecutionResult],
     ) -> None:
-        output_paths.output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_paths.debug_path.parent.mkdir(parents=True, exist_ok=True)
-
-        self._safe_unlink(output_paths.output_tmp_path)
-        self._safe_unlink(output_paths.debug_tmp_path)
-
+        """Re-write streaming files sorted by question ID and atomically replace."""
         sorted_line_numbers = sorted(results_by_line.keys())
 
         with output_paths.output_tmp_path.open("w", encoding="utf-8") as output_fp:
@@ -455,6 +556,7 @@ class EnterpriseRAGEvalRunner:
                     "query_id": result.query_id,
                     "latency_ms": result.latency_ms,
                     "error": result.error,
+                    **result.diagnostics,
                 }
                 debug_fp.write(json.dumps(debug_row, ensure_ascii=False) + "\n")
 
@@ -570,6 +672,15 @@ def _build_parser() -> argparse.ArgumentParser:
             "(id/query_id/status/attempts/error)."
         ),
     )
+    parser.add_argument(
+        "--question-timeout",
+        type=int,
+        default=DEFAULT_QUESTION_TIMEOUT_SECONDS,
+        help=(
+            "Wall-clock timeout in seconds per question (default: %(default)s). "
+            "Questions exceeding this limit are marked failed instead of hanging."
+        ),
+    )
     return parser
 
 
@@ -597,6 +708,8 @@ def _validate_args(args: argparse.Namespace) -> EvalRunnerConfig:
         raise ValueError("--initial-backoff-seconds must be > 0.")
     if args.workers < 1:
         raise ValueError("--workers must be >= 1.")
+    if args.question_timeout < 30:
+        raise ValueError("--question-timeout must be >= 30 seconds.")
 
     return EvalRunnerConfig(
         input_path=input_path,
@@ -608,6 +721,7 @@ def _validate_args(args: argparse.Namespace) -> EvalRunnerConfig:
         workers=int(args.workers),
         timestamped_output=bool(args.timestamped_output),
         debug_output_path=debug_output_path,
+        question_timeout_seconds=int(args.question_timeout),
     )
 
 

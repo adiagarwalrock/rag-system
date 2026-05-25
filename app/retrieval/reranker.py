@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 
 from app.core.config import settings
+from app.core.safe_coerce import normalize_metric_subject, safe_bool, safe_float, safe_int
 from app.retrieval.cross_encoder_reranker import CrossEncoderSemanticReranker
 
 logger = logging.getLogger(__name__)
@@ -127,7 +128,7 @@ def rerank_nodes(
     temporal_context = _resolve_temporal_context(source_nodes)
     scored = []
     for node in source_nodes:
-        semantic_score = _safe_float(node.score, 0.0)
+        semantic_score = safe_float(node.score, 0.0)
         metadata = node.node.metadata or {}
         node_id = str(getattr(node.node, "node_id", None) or id(node))
 
@@ -212,7 +213,7 @@ def _resolve_temporal_context(nodes: list) -> _TemporalContext:
         ranked_nodes = [
             node
             for node in group_nodes
-            if _safe_int((node.node.metadata or {}).get("version_rank"), 0) > 0
+            if safe_int((node.node.metadata or {}).get("version_rank"), 0) > 0
         ]
         if not ranked_nodes:
             continue
@@ -220,28 +221,28 @@ def _resolve_temporal_context(nodes: list) -> _TemporalContext:
         explicit_current_nodes = [
             node
             for node in group_nodes
-            if _safe_bool((node.node.metadata or {}).get("is_current"), False)
+            if safe_bool((node.node.metadata or {}).get("is_current"), False)
             is True
         ]
         if explicit_current_nodes:
             current_rank = max(
-                _safe_int((node.node.metadata or {}).get("version_rank"), 0)
+                safe_int((node.node.metadata or {}).get("version_rank"), 0)
                 for node in explicit_current_nodes
             )
             for node in ranked_nodes:
                 node_id = str(getattr(node.node, "node_id", None) or id(node))
-                rank = _safe_int((node.node.metadata or {}).get("version_rank"), 0)
+                rank = safe_int((node.node.metadata or {}).get("version_rank"), 0)
                 if rank < current_rank:
                     context.superseded.add(node_id)
             continue
 
         max_rank = max(
-            _safe_int((node.node.metadata or {}).get("version_rank"), 0)
+            safe_int((node.node.metadata or {}).get("version_rank"), 0)
             for node in ranked_nodes
         )
         for node in ranked_nodes:
             node_id = str(getattr(node.node, "node_id", None) or id(node))
-            rank = _safe_int((node.node.metadata or {}).get("version_rank"), 0)
+            rank = safe_int((node.node.metadata or {}).get("version_rank"), 0)
             if rank == max_rank:
                 context.implicit_current.add(node_id)
             elif rank < max_rank:
@@ -260,7 +261,7 @@ def _temporal_adjustment(
     adjustment = 0.0
 
     # Explicit is_current wins; fall back to implicit promotion from version group.
-    is_current = _safe_bool(metadata.get("is_current"), None)
+    is_current = safe_bool(metadata.get("is_current"), None)
     if is_current is True or is_implicit_current:
         adjustment += 0.1 if prefer_latest else 0.01
     elif is_current is False and prefer_latest:
@@ -272,7 +273,7 @@ def _temporal_adjustment(
     # Normalize version_rank to [0, 1] before scaling so month-encoded ranks
     # (e.g. 202512, 202603) retain their relative ordering instead of all being
     # clamped to the same cap.
-    version_rank = _safe_int(metadata.get("version_rank"), 0)
+    version_rank = safe_int(metadata.get("version_rank"), 0)
     if version_rank > 0:
         normalized = min(version_rank / _RANK_SCALE, 1.0)
         scale = 1.0 if prefer_latest else 0.25
@@ -312,7 +313,7 @@ def _authority_adjustment(metadata: dict) -> float:
     if "authority_score" not in metadata:
         return 0.0
 
-    authority = _safe_float(metadata.get("authority_score"), None)
+    authority = safe_float(metadata.get("authority_score"), None)
     if authority is None or authority == 1.0:
         return 0.0
 
@@ -338,7 +339,7 @@ def _structural_adjustment(metadata: dict, query: str | None, text: str = "") ->
         "full_table",
         "table_segment",
         "table_summary_text",
-    } or _safe_bool(metadata.get("table_detected"), False)
+    } or safe_bool(metadata.get("table_detected"), False)
     is_chart_chunk = (
         chunk_type
         in {
@@ -347,7 +348,7 @@ def _structural_adjustment(metadata: dict, query: str | None, text: str = "") ->
             "chart_data_points",
             "visual_proxy_text",
         }
-        or _safe_bool(metadata.get("chart_detected"), False)
+        or safe_bool(metadata.get("chart_detected"), False)
         or figure_type in {"chart", "diagram", "infographic"}
     )
     is_reasoning_chunk = chunk_type.startswith("reasoning_")
@@ -361,7 +362,7 @@ def _structural_adjustment(metadata: dict, query: str | None, text: str = "") ->
         adjustment += 0.05
     if wants_image and bool(metadata.get("asset_refs")):
         adjustment += 0.06
-    if wants_numeric and _safe_bool(metadata.get("contains_numeric_data"), False):
+    if wants_numeric and safe_bool(metadata.get("contains_numeric_data"), False):
         adjustment += 0.03
     if _is_count_metric_query(normalized_query):
         adjustment += _count_metric_adjustment(metadata, normalized_query, text)
@@ -385,7 +386,7 @@ def _count_metric_adjustment(metadata: dict, normalized_query: str, text: str) -
 
     normalized_text = text.lower()
     direct_subject_match = any(
-        _normalize_metric_subject(match.group("subject")) in query_subjects
+        normalize_metric_subject(match.group("subject")) in query_subjects
         for match in METRIC_VALUE_PATTERN.finditer(normalized_text)
     )
 
@@ -411,17 +412,8 @@ def _metric_query_subjects(normalized_query: str) -> set[str]:
     for token in re.findall(r"[a-z][a-z-]+", normalized_query):
         if len(token) < 4 or token in METRIC_STOPWORDS:
             continue
-        subjects.add(_normalize_metric_subject(token))
+        subjects.add(normalize_metric_subject(token))
     return subjects
-
-
-def _normalize_metric_subject(token: str) -> str:
-    normalized = token.lower().strip("-")
-    if normalized.endswith("ies") and len(normalized) > 4:
-        return f"{normalized[:-3]}y"
-    if normalized.endswith("s") and len(normalized) > 3:
-        return normalized[:-1]
-    return normalized
 
 
 def _parse_date(val) -> datetime | None:
@@ -442,27 +434,4 @@ def _parse_date(val) -> datetime | None:
     return None
 
 
-def _safe_float(value, default: float | None) -> float | None:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _safe_int(value, default: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _safe_bool(value, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.lower()
-        if lowered in {"true", "1", "yes"}:
-            return True
-        if lowered in {"false", "0", "no"}:
-            return False
-    return default
+# safe_float, safe_int, safe_bool, normalize_metric_subject imported from app.core.safe_coerce

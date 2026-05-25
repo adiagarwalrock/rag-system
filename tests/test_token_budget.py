@@ -1,4 +1,9 @@
+from app.core.config import settings
 from app.core.token_budget import ResponsesInputBudgeter
+
+
+def test_response_output_token_default_supports_multi_document_answers():
+    assert settings.RESPONSE_MAX_OUTPUT_TOKENS == 2500
 
 
 def test_budgeted_sections_fit_within_input_budget():

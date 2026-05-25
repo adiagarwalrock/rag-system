@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
+from app.core.safe_coerce import safe_bool, safe_float, safe_int
 from app.ingestion.parser.custom.pdf_pipeline.helpers import (
     has_chart_signals,
     has_numeric_data,
@@ -117,8 +118,8 @@ def build_citation_label(
     chunk_index: int | None = None,
 ) -> str:
     parts = [source_file]
-    page_num = _safe_int(metadata.get("page_num"))
-    slide_num = _safe_int(metadata.get("slide_num"))
+    page_num = safe_int(metadata.get("page_num"))
+    slide_num = safe_int(metadata.get("slide_num"))
     if page_num:
         parts.append(f"p.{page_num}")
     if slide_num:
@@ -145,8 +146,8 @@ def _apply_version_info(metadata: dict[str, Any], version_info: dict[str, Any]) 
 
 def _normalize_location_fields(metadata: dict[str, Any]) -> None:
     page_nums = _coerce_int_list(metadata.get("page_nums"))
-    page_num = _safe_int(metadata.get("page_num"))
-    slide_num = _safe_int(metadata.get("slide_num"))
+    page_num = safe_int(metadata.get("page_num"))
+    slide_num = safe_int(metadata.get("slide_num"))
     if not page_nums:
         if page_num:
             page_nums = [page_num]
@@ -163,20 +164,20 @@ def _normalize_location_fields(metadata: dict[str, Any]) -> None:
 
 def _normalize_retrieval_signals(metadata: dict[str, Any], text: str) -> None:
     chunk_type = str(metadata.get("chunk_type") or "")
-    metadata["table_detected"] = _safe_bool(
+    metadata["table_detected"] = safe_bool(
         metadata.get("table_detected"),
         chunk_type in TABLE_CHUNK_TYPES or has_table_signals(text),
     )
-    metadata["chart_detected"] = _safe_bool(
+    metadata["chart_detected"] = safe_bool(
         metadata.get("chart_detected"),
         chunk_type in CHART_CHUNK_TYPES or has_chart_signals(text),
     )
-    metadata["contains_numeric_data"] = _safe_bool(
+    metadata["contains_numeric_data"] = safe_bool(
         metadata.get("contains_numeric_data"),
         has_numeric_data(text),
     )
     metadata["numeric_density"] = max(
-        _safe_float(metadata.get("numeric_density"), 0.0),
+        safe_float(metadata.get("numeric_density"), 0.0),
         numeric_density(text) if text else 0.0,
     )
     metadata["asset_refs"] = _coerce_string_list(metadata.get("asset_refs"))
@@ -187,8 +188,8 @@ def _normalize_retrieval_signals(metadata: dict[str, Any], text: str) -> None:
 
 
 def _normalize_temporal_fields(metadata: dict[str, Any]) -> None:
-    metadata["version_rank"] = _safe_int(metadata.get("version_rank")) or 0
-    metadata["is_current"] = _safe_bool(metadata.get("is_current"), False)
+    metadata["version_rank"] = safe_int(metadata.get("version_rank")) or 0
+    metadata["is_current"] = safe_bool(metadata.get("is_current"), False)
     for key in ("effective_from", "effective_to", "published_at"):
         metadata[key] = _isoformat_or_none(metadata.get(key))
     for key in ("document_date", "as_of_date", "metric_basis"):
@@ -228,7 +229,7 @@ def _coerce_int_list(value: Any) -> list[int]:
     values = value if isinstance(value, list | tuple | set) else [value]
     coerced: list[int] = []
     for item in values:
-        parsed = _safe_int(item)
+        parsed = safe_int(item)
         if parsed is not None:
             coerced.append(parsed)
     return coerced
@@ -267,29 +268,4 @@ def _first_text(*values: Any) -> str | None:
     return None
 
 
-def _safe_int(value: Any) -> int | None:
-    try:
-        if value is None or value == "":
-            return None
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _safe_float(value: Any, default: float) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _safe_bool(value: Any, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"true", "1", "yes"}:
-            return True
-        if lowered in {"false", "0", "no"}:
-            return False
-    return default
+# safe_int, safe_float, safe_bool imported from app.core.safe_coerce

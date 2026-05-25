@@ -9,6 +9,8 @@ from typing import Any
 
 from llama_index.core.schema import MetadataMode
 
+from app.core.safe_coerce import safe_float
+
 logger = logging.getLogger(__name__)
 
 
@@ -55,9 +57,9 @@ class CrossEncoderSemanticReranker:
             )
             return list(nodes[:top_k])
 
-        metadata_scores = [_safe_score(node.score, 0.0) or 0.0 for node in nodes]
+        metadata_scores = [safe_float(node.score, 0.0) or 0.0 for node in nodes]
         semantic_scores = [
-            _safe_score(cross_encoder_score, metadata_scores[index]) or 0.0
+            safe_float(cross_encoder_score, metadata_scores[index]) or 0.0
             for index, cross_encoder_score in enumerate(cross_encoder_scores)
         ]
         normalized_metadata_scores = _minmax(metadata_scores)
@@ -122,13 +124,6 @@ def _node_content(node) -> str:
         return node.node.get_content(metadata_mode=MetadataMode.EMBED)
     except Exception:
         return node.node.text or ""
-
-
-def _safe_score(value, default: float | None) -> float | None:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def _minmax(values: Sequence[float]) -> list[float]:

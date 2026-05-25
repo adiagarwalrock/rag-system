@@ -34,6 +34,11 @@ from app.ingestion.parser.external.helper import (
 )
 from llama_index.core import Document as LlamaDocument
 
+from app.ingestion.parser.external.prompts import (
+    LLAMA_CLOUD_AGENTIC_AUTO_MODE_PARSING_PROMPT,
+    LLAMA_CLOUD_AGENT_CUSTOM_PROMPT,
+    LLAMA_CLOUD_EXTRACTION_PROMPT,
+)
 
 class LlamaParseParser:
     """
@@ -49,10 +54,10 @@ class LlamaParseParser:
     EXTRACT_TIMEOUT_S : int — 120
     """
 
-    PARSER_NAME:       str = "llamaparse"
-    LAYOUT_ENGINE:     str = "llamaparse_vlm"
-    PARSER_VERSION:    str = settings.EXTERNAL_PARSER_VERSION
-    EXTRACT_TIER:      str = "agentic"
+    PARSER_NAME: str = "llamaparse"
+    LAYOUT_ENGINE: str = "llamaparse_vlm"
+    PARSER_VERSION: str = settings.EXTERNAL_PARSER_VERSION
+    EXTRACT_TIER: str = "agentic"
     EXTRACT_TIMEOUT_S: int = 120
 
     def __init__(self) -> None:
@@ -111,38 +116,13 @@ class LlamaParseParser:
                             "tier": "agentic_plus",
                             "version": "latest",
                             "specialized_chart_parsing": "agentic_plus",
-                            "custom_prompt": (
-                                "This page contains charts. For every chart, output a markdown table: "
-                                "axis labels and series names as column headers, all data points with exact values and units. "
-                                "For KPI tiles and summary boxes, output: metric | value | unit | period. "
-                                "Key REIT metrics: NOI, FFO, AFFO, NAV, Cap rate, Occupancy, ABR, WALT, "
-                                "Net debt/EBITDA, leasing spreads, guidance ranges. "
-                                "Append '(approx)' for values estimated from the visual. Never emit image placeholders."
-                            ),
+                            "custom_prompt": LLAMA_CLOUD_AGENTIC_AUTO_MODE_PARSING_PROMPT,
                         },
                     },
                 ],
             },
             agentic_options={
-                "custom_prompt": (
-                    "You are a specialized REIT document parser. "
-                    "Extract all financial metrics, tables, charts, and visual data with precise attention to:\n\n"
-                    "1. DATE NORMALIZATION: Convert all dates to ISO format (YYYY-MM-DD, YYYY-MM, YYYY, or YYYY-Q# for quarters). "
-                    "Preserve original labels alongside normalized dates.\n\n"
-                    "2. TABLE PRESERVATION: Extract tables with full structure including headers, row labels, units, "
-                    "currencies, and footnotes. Do not flatten tables into prose.\n\n"
-                    "3. VISUAL EXTRACTION: Convert all charts, graphs, maps, KPI tiles, and diagrams into structured data. "
-                    "For charts with visible values, extract exact numbers. For approximate values from visual estimation, "
-                    "mark is_approximate as true.\n\n"
-                    "4. REIT METRICS: Pay special attention to: NOI, Same-store NOI, FFO, Core FFO, AFFO, NAV, Cap rate, "
-                    "Occupancy, Leasing spreads, Rent growth, ABR, WALT, Debt maturity, Net debt/EBITDA, Interest coverage, "
-                    "Development pipeline, Property count, GLA/square footage, Tenant concentration, Sector exposure, "
-                    "Geographic exposure, Dividend metrics, Guidance ranges.\n\n"
-                    "5. VALUE TYPES: Distinguish between actuals, estimates, guidance, pro forma, and targets. "
-                    "Preserve units (thousands, millions, billions, per share, percentage, basis points, square feet).\n\n"
-                    "6. DO NOT HALLUCINATE: Only extract values explicitly present in the document. "
-                    "Mark uncertain extractions appropriately."
-                ),
+                "custom_prompt": LLAMA_CLOUD_AGENT_CUSTOM_PROMPT,
             },
         )
 
@@ -213,19 +193,6 @@ class LlamaParseParser:
     # extract
     # ------------------------------------------------------------------
 
-    _EXTRACTION_PROMPT = """
-Associate structured metadata with the existing parser page chunks for downstream RAG
-ingestion. Return exactly one chunks item for each page chunk id listed below. Do not
-create new chunks and do not rewrite chunk text. Fill metadata, asset references,
-citations, and confidence values when available. Preserve page numbers and do not invent
-values. Use empty strings, empty arrays, or null for fields that are not present.
-
-For each chunk, populate these temporal/scope fields when present in the document:
-- document_date: ISO date of the presentation/document (YYYY-MM-DD, YYYY-MM, YYYY, or YYYY-Q#)
-- as_of_date: ISO as-of date for the metric snapshot
-- metric_basis: one of 'actual', 'guidance', 'pro_forma', 'estimate', 'target'
-"""
-
     def extract(self, parsed_document: ParsedDocument) -> DocumentExtraction:
         """Call LlamaCloud Extract API to enrich chunk metadata. Returns DocumentExtraction."""
         if not parsed_document.parse_job_id:
@@ -250,7 +217,7 @@ For each chunk, populate these temporal/scope fields when present in the documen
                 "cite_sources": True,
                 "confidence_scores": True,
                 "system_prompt": build_metadata_association_prompt(
-                    self._EXTRACTION_PROMPT, parsed_document
+                    LLAMA_CLOUD_EXTRACTION_PROMPT, parsed_document
                 ),
             },
             verbose=True,
@@ -277,6 +244,7 @@ For each chunk, populate these temporal/scope fields when present in the documen
         if metadata is None:
             return []
         from app.ingestion.parser.external.helper import to_plain_data
+
         plain = to_plain_data(metadata)
         if isinstance(plain, dict):
             citations = (
@@ -284,7 +252,11 @@ For each chunk, populate these temporal/scope fields when present in the documen
                 or plain.get("sources")
                 or plain.get("field_metadata")
             )
-            return citations if isinstance(citations, list) else ([citations] if citations else [])
+            return (
+                citations
+                if isinstance(citations, list)
+                else ([citations] if citations else [])
+            )
         return []
 
     @staticmethod

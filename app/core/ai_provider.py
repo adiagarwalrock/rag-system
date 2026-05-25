@@ -46,6 +46,7 @@ def get_llm(
     model: str | None = None,
     api_key: str | None = None,
     reasoning_effort: str | None = None,
+    timeout_seconds: float | None = None,
 ):
     """Return an OpenAI-compatible LLM instance for the configured API mode."""
     llm_model = model or settings.LLM_MODEL
@@ -56,6 +57,8 @@ def get_llm(
         kwargs["reasoning_options"] = {
             "effort": normalize_reasoning_effort(reasoning_effort)
         }
+    if timeout_seconds is not None:
+        kwargs["timeout"] = float(timeout_seconds)
     return llm_class(**kwargs)
 
 
@@ -87,7 +90,7 @@ def invoke_llm_chat(
     timeout_seconds: float | None = None,
 ) -> Any:
     """Invoke a chat completion through the centralized LlamaIndex provider."""
-    llm = get_llm(model=model, reasoning_effort=reasoning_effort)
+    llm = get_llm(model=model, reasoning_effort=reasoning_effort, timeout_seconds=timeout_seconds)
     messages = _to_chat_messages(input_messages)
     runtime_kwargs = _build_chat_runtime_kwargs(
         max_output_tokens=max_output_tokens,

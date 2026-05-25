@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
 
+import httpx as _httpx
 from llama_index.core.base.llms.types import (
     ChatMessage,
     ImageBlock,
@@ -29,14 +30,23 @@ from app.core.ai_provider import (
     normalize_reasoning_effort,
 )
 from app.core.config import settings
+from app.core.safe_coerce import normalize_metric_subject, safe_bool, safe_int
 from app.core.prompts import (
     GROUNDED_ANSWER_DEVELOPER_PROMPT,
     build_grounded_answer_prompt,
 )
 from app.core.token_budget import ResponsesInputBudgeter
 from app.indexing.vector_store import vector_store_manager
-from app.retrieval.citation_builder import build_citations
+from app.retrieval.citation_builder import (
+    build_citations,
+    format_enriched_metadata_for_prompt,
+)
 from app.retrieval.conflict_detector import detect_conflicts
+from app.retrieval.query_intent import (
+    RetrievalIntent,
+    analyze_retrieval_intent,
+    query_entity_aliases,
+)
 from app.retrieval.query_expansion import build_query_variants, should_expand_query
 from app.retrieval.reranker import rerank_nodes
 
@@ -89,6 +99,18 @@ COMPARATIVE_TERMS = (
     "versus",
     "vs",
     "between",
+)
+BROAD_BALANCED_TERMS = (
+    "different",
+    "both",
+    "each",
+    "across",
+    "sectors",
+    "represented",
+    "by reit",
+    "for each",
+    "in the corpus",
+    "corpus",
 )
 VISUAL_QUERY_TERMS = (
     "image",
@@ -237,6 +259,7 @@ class GroundedAnswerSynthesizer:
         try:
             budgeter = ResponsesInputBudgeter(model=settings.LLM_MODEL)
             sections = _build_labeled_context_sections(
+                question=question,
                 citations=citations,
                 conflicts=conflicts,
                 conversation_context=self.conversation_context,
@@ -275,6 +298,7 @@ class GroundedAnswerSynthesizer:
                 prompt_cache_retention=settings.RESPONSE_PROMPT_CACHE_RETENTION,
                 safety_identifier=f"{settings.RESPONSE_SAFETY_IDENTIFIER_PREFIX}:{self.client_id}",
                 user_tag=settings.RESPONSE_USER_TAG,
+                timeout_seconds=settings.RESPONSE_SYNTHESIS_TIMEOUT_SECONDS,
             )
             text = extract_chat_response_text(response)
             answer, reasoning = _split_reasoning_from_text(text)
@@ -286,6 +310,15 @@ class GroundedAnswerSynthesizer:
                 images_used=used_image_paths,
                 reasoning_effort_applied=effort_applied,
             )
+        except Exception as exc:
+            # Re-raise timeout errors — don't fall through to the chat path and
+            # wait another 240s when the API is just slow.
+            if isinstance(exc, (TimeoutError, _httpx.TimeoutException)):
+                raise
+            logger.exception(
+                "Responses answer synthesis failed; falling back to LlamaIndex chat"
+            )
+            return None
         except Exception:
             logger.exception(
                 "Responses answer synthesis failed; falling back to LlamaIndex chat"
@@ -301,7 +334,10 @@ class GroundedAnswerSynthesizer:
         image_paths: list[str],
         effort_applied: bool,
     ) -> GroundedAnswerResult | None:
-        llm = get_llm(reasoning_effort=self.reasoning_effort)
+        llm = get_llm(
+            reasoning_effort=self.reasoning_effort,
+            timeout_seconds=settings.RESPONSE_SYNTHESIS_TIMEOUT_SECONDS,
+        )
         prompt = _build_grounded_prompt(
             question,
             citations,
@@ -368,6 +404,7 @@ class VecteraRetriever:
         self.evidence_limit = DEFAULT_EVIDENCE_LIMIT
         self.comparative_evidence_limit = COMPARATIVE_EVIDENCE_LIMIT
         self.conflict_evidence_limit = CONFLICT_EVIDENCE_LIMIT
+        self._last_retrieval_metadata: dict[str, Any] = {}
         self.filters = MetadataFilters(
             filters=[ExactMatchFilter(key="client_id", value=self.client_id)]
         )
@@ -388,6 +425,7 @@ class VecteraRetriever:
 
         # Step 1: Hybrid Qdrant retrieval, with dense fallback for older indexes.
         source_nodes, retrieval_metadata = self._retrieve(question)
+        intent = analyze_retrieval_intent(question)
 
         if not source_nodes:
             return {
@@ -401,6 +439,12 @@ class VecteraRetriever:
                 "reasoning_effort": self.reasoning_effort,
                 "reasoning_effort_applied": False,
                 "retrieval_diagnostics": _build_retrieval_diagnostics([], []),
+                "intent_labels": list(intent.labels),
+                "companion_queries": [],
+                "companion_counts_by_query": {},
+                "evidence_by_document": {},
+                "evidence_by_version_group": {},
+                "evidence_by_entity": {},
                 **retrieval_metadata,
             }
 
@@ -410,7 +454,7 @@ class VecteraRetriever:
         # Step 3: Select bounded evidence used for answer synthesis/citations.
         evidence_nodes = self._select_evidence_nodes(question, ranked_nodes)
         retrieval_diagnostics = _build_retrieval_diagnostics(
-            ranked_nodes, evidence_nodes
+            ranked_nodes, evidence_nodes, intent=intent
         )
 
         # Step 4: Conflict detection (advisory, scoped to evidence + near-miss nodes).
@@ -438,6 +482,10 @@ class VecteraRetriever:
                 "reasoning_effort_applied", False
             ),
             "retrieval_diagnostics": retrieval_diagnostics,
+            "intent_labels": list(intent.labels),
+            "evidence_by_document": _node_counts_by_document(evidence_nodes),
+            "evidence_by_version_group": _node_counts_by_version_group(evidence_nodes),
+            "evidence_by_entity": _node_counts_by_entity(evidence_nodes, intent),
             **retrieval_metadata,
         }
 
@@ -447,12 +495,23 @@ class VecteraRetriever:
         return self._rank_nodes(question, source_nodes)
 
     def _rank_nodes(self, question: str, source_nodes: list) -> list:
+        intent = analyze_retrieval_intent(question)
+        comparative_query = _is_comparison_or_conflict_query(question)
+        balanced_query = _needs_balanced_evidence_query(question)
+        conflict_focused_query = _is_conflict_focused_query(question)
         prefer_latest = not (
-            _is_comparison_or_conflict_query(question)
+            comparative_query
+            or balanced_query
+            or intent.has("temporal_delta")
             or _is_time_anchored_query(question)
         )
-        rank_top_k = (
-            self.top_k + 8 if _is_conflict_focused_query(question) else self.top_k
+        rank_top_k = self._resolve_rank_top_k(
+            comparative_query=comparative_query
+            or balanced_query
+            or intent.has("temporal_delta")
+            or intent.has("outlook_scope"),
+            conflict_focused_query=conflict_focused_query,
+            high_diversity_query=_is_high_diversity_intent(intent),
         )
         return rerank_nodes(
             source_nodes,
@@ -480,12 +539,18 @@ class VecteraRetriever:
             expanded,
             self.client_id,
         )
-        return nodes, {"retrieval_mode": mode, "query_expanded": expanded}
+        return nodes, {
+            "retrieval_mode": mode,
+            "query_expanded": expanded,
+            **self._last_retrieval_metadata,
+        }
 
     def _retrieve_with_mode(self, question: str, hybrid: bool) -> tuple[list, bool]:
+        intent = analyze_retrieval_intent(question)
+        self._last_retrieval_metadata = _empty_retrieval_intent_metadata(intent)
         prefetch_top_k = (
             self.prefetch_top_k + 10
-            if _is_conflict_focused_query(question)
+            if _is_conflict_focused_query(question) or intent.companion_queries
             else self.prefetch_top_k
         )
         base_retriever = vector_store_manager.get_retriever(
@@ -498,12 +563,34 @@ class VecteraRetriever:
 
         expansion_question = self._build_query_expansion_input(question)
         should_expand = should_expand_query(expansion_question)
+        companion_queries = list(intent.companion_queries)
         if should_expand:
-            return self._retrieve_with_expansion(
+            nodes, expanded, companion_counts = self._retrieve_with_expansion(
                 question,
                 expansion_question,
                 base_retriever,
+                companion_queries=companion_queries,
             )
+            self._last_retrieval_metadata = _retrieval_intent_metadata(
+                intent=intent,
+                companion_queries=companion_queries,
+                companion_counts=companion_counts,
+            )
+            return nodes, expanded
+
+        if companion_queries:
+            queries = [question, *companion_queries]
+            batches = _retrieve_query_batches(base_retriever, queries)
+            self._last_retrieval_metadata = _retrieval_intent_metadata(
+                intent=intent,
+                companion_queries=companion_queries,
+                companion_counts={
+                    query: len(batch)
+                    for query, batch in zip(queries, batches)
+                    if query in companion_queries
+                },
+            )
+            return _fuse_node_batches(batches), False
 
         return base_retriever.retrieve(question), False
 
@@ -512,13 +599,22 @@ class VecteraRetriever:
         question: str,
         expansion_question: dict[str, Any],
         base_retriever,
-    ) -> tuple[list, bool]:
+        *,
+        companion_queries: list[str] | None = None,
+    ) -> tuple[list, bool, dict[str, int]]:
         query_variants = build_query_variants(expansion_question)
-        if len(query_variants) == 1:
-            return base_retriever.retrieve(question), False
+        companion_queries = companion_queries or []
+        queries = _dedupe_retrieval_queries([*query_variants, *companion_queries])
+        if len(queries) == 1:
+            return base_retriever.retrieve(question), False, {}
 
-        batches = [base_retriever.retrieve(variant) for variant in query_variants]
-        return _fuse_node_batches(batches), True
+        batches = _retrieve_query_batches(base_retriever, queries)
+        companion_counts = {
+            query: len(batch)
+            for query, batch in zip(queries, batches)
+            if query in companion_queries
+        }
+        return _fuse_node_batches(batches), len(query_variants) > 1, companion_counts
 
     def _build_query_expansion_input(self, question: str) -> dict[str, Any]:
         return {
@@ -530,10 +626,15 @@ class VecteraRetriever:
         if not ranked_nodes:
             return []
 
+        intent = analyze_retrieval_intent(question)
         comparative_query = _is_comparison_or_conflict_query(question)
+        balanced_query = _needs_balanced_evidence_query(question)
         conflict_focused_query = _is_conflict_focused_query(question)
         evidence_cap = self._resolve_evidence_cap(
-            comparative_query=comparative_query,
+            comparative_query=comparative_query
+            or balanced_query
+            or intent.has("temporal_delta")
+            or intent.has("outlook_scope"),
             conflict_focused_query=conflict_focused_query,
         )
         candidate_nodes = self._prioritize_conflict_candidates(
@@ -548,7 +649,36 @@ class VecteraRetriever:
             primary_candidates=primary_candidates,
             secondary_candidates=secondary_candidates,
             evidence_cap=evidence_cap,
-            comparative_query=comparative_query,
+            comparative_query=comparative_query
+            or balanced_query
+            or intent.has("temporal_delta")
+            or intent.has("outlook_scope"),
+        )
+        selected = _ensure_temporal_delta_evidence(
+            intent=intent,
+            selected_nodes=selected,
+            ranked_nodes=ranked_nodes,
+            evidence_cap=evidence_cap,
+        )
+        selected = _ensure_named_entity_evidence(
+            question=question,
+            intent=intent,
+            selected_nodes=selected,
+            ranked_nodes=ranked_nodes,
+            evidence_cap=evidence_cap,
+        )
+        selected = _ensure_outlook_scope_evidence(
+            intent=intent,
+            selected_nodes=selected,
+            ranked_nodes=ranked_nodes,
+            evidence_cap=evidence_cap,
+        )
+        selected = _ensure_metric_variant_evidence(
+            question=question,
+            intent=intent,
+            selected_nodes=selected,
+            ranked_nodes=ranked_nodes,
+            evidence_cap=evidence_cap,
         )
         selected = _ensure_structured_evidence(
             question=question,
@@ -583,6 +713,21 @@ class VecteraRetriever:
         if comparative_query:
             return self.comparative_evidence_limit
         return self.evidence_limit
+
+    def _resolve_rank_top_k(
+        self,
+        *,
+        comparative_query: bool,
+        conflict_focused_query: bool,
+        high_diversity_query: bool = False,
+    ) -> int:
+        if conflict_focused_query:
+            return max(self.top_k + 8, self.conflict_evidence_limit)
+        if high_diversity_query:
+            return max(self.top_k + 25, self.comparative_evidence_limit * 2)
+        if comparative_query:
+            return max(self.top_k + 8, self.comparative_evidence_limit)
+        return self.top_k
 
     def _prioritize_conflict_candidates(
         self,
@@ -729,6 +874,44 @@ def _fuse_node_batches(node_batches: list[list]) -> list:
     ]
 
 
+def _retrieve_query_batches(base_retriever: Any, queries: list[str]) -> list[list[Any]]:
+    return [base_retriever.retrieve(query) for query in queries]
+
+
+def _dedupe_retrieval_queries(queries: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for query in queries:
+        cleaned = " ".join(str(query or "").split())
+        normalized = cleaned.lower()
+        if not cleaned or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(cleaned)
+    return deduped
+
+
+def _empty_retrieval_intent_metadata(intent: RetrievalIntent) -> dict[str, Any]:
+    return _retrieval_intent_metadata(
+        intent=intent,
+        companion_queries=list(intent.companion_queries),
+        companion_counts={},
+    )
+
+
+def _retrieval_intent_metadata(
+    *,
+    intent: RetrievalIntent,
+    companion_queries: list[str],
+    companion_counts: dict[str, int],
+) -> dict[str, Any]:
+    return {
+        "intent_labels": list(intent.labels),
+        "companion_queries": companion_queries,
+        "companion_counts_by_query": companion_counts,
+    }
+
+
 def _node_fusion_key(node: Any, rank: int) -> str:
     node_id = getattr(node.node, "node_id", None)
     metadata = node.node.metadata or {}
@@ -759,6 +942,25 @@ def _is_comparison_or_conflict_query(question: str) -> bool:
     return any(term in normalized for term in COMPARATIVE_TERMS)
 
 
+def _needs_balanced_evidence_query(question: str) -> bool:
+    normalized = question.lower()
+    intent = analyze_retrieval_intent(question)
+    if any(term in normalized for term in BROAD_BALANCED_TERMS):
+        return True
+    return len(intent.entities) >= 2
+
+
+def _is_high_diversity_intent(intent: RetrievalIntent) -> bool:
+    return any(
+        intent.has(label)
+        for label in (
+            "temporal_delta",
+            "outlook_scope",
+            "named_entity_comparison",
+        )
+    )
+
+
 def _is_conflict_focused_query(question: str) -> bool:
     normalized = question.lower()
     conflict_terms = (
@@ -776,7 +978,7 @@ def _is_conflict_focused_query(question: str) -> bool:
 def _has_numeric_signal(node: Any) -> bool:
     metadata = node.node.metadata or {}
     raw = metadata.get("contains_numeric_data")
-    return _safe_bool(raw, False)
+    return safe_bool(raw, False)
 
 
 def _node_has_image_assets(node: Any) -> bool:
@@ -787,25 +989,6 @@ def _node_has_image_assets(node: Any) -> bool:
     if isinstance(refs, list):
         return any(isinstance(ref, str) and ref.strip() for ref in refs)
     return False
-
-
-def _safe_bool(value: Any, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"true", "1", "yes"}:
-            return True
-        if lowered in {"false", "0", "no"}:
-            return False
-    return default
-
-
-def _safe_int(value: Any, default: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def _is_reasoning_chunk(node: Any) -> bool:
@@ -848,7 +1031,7 @@ def _is_table_like_node(node: Any) -> bool:
         "table_segment",
         "table_summary_text",
         "reasoning_table",
-    } or _safe_bool(metadata.get("table_detected"), False)
+    } or safe_bool(metadata.get("table_detected"), False)
 
 
 def _is_chart_like_node(node: Any) -> bool:
@@ -865,7 +1048,7 @@ def _is_chart_like_node(node: Any) -> bool:
             "reasoning_chart",
             "reasoning_figure",
         }
-        or _safe_bool(metadata.get("chart_detected"), False)
+        or safe_bool(metadata.get("chart_detected"), False)
         or figure_type in {"chart", "diagram", "infographic"}
     )
 
@@ -1012,11 +1195,15 @@ def _ensure_direct_metric_evidence(
     evidence_cap: int,
 ) -> list[Any]:
     normalized_question = question.lower()
-    if not any(term in normalized_question for term in ("how many", "number of", "count")):
+    if not any(
+        term in normalized_question for term in ("how many", "number of", "count")
+    ):
         return selected_nodes
 
     candidates = [
-        node for node in ranked_nodes if _is_direct_metric_node(node, normalized_question)
+        node
+        for node in ranked_nodes
+        if _is_direct_metric_node(node, normalized_question)
     ]
     if not candidates:
         return selected_nodes
@@ -1026,7 +1213,9 @@ def _ensure_direct_metric_evidence(
     selected = list(selected_nodes)
     selected_keys = {_node_unique_key(node) for node in selected}
     if best_key in selected_keys:
-        return [best] + [node for node in selected if _node_unique_key(node) != best_key]
+        return [best] + [
+            node for node in selected if _node_unique_key(node) != best_key
+        ]
 
     if len(selected) < evidence_cap:
         selected.insert(0, best)
@@ -1046,13 +1235,340 @@ def _ensure_direct_metric_evidence(
     return selected
 
 
+def _ensure_temporal_delta_evidence(
+    *,
+    intent: RetrievalIntent,
+    selected_nodes: list[Any],
+    ranked_nodes: list[Any],
+    evidence_cap: int,
+) -> list[Any]:
+    if not intent.has("temporal_delta"):
+        return selected_nodes
+    return _ensure_group_quota(
+        selected_nodes=selected_nodes,
+        ranked_nodes=ranked_nodes,
+        evidence_cap=evidence_cap,
+        group_key_fn=_document_or_version_group_key,
+        target_groups=_top_groups(
+            ranked_nodes, _document_or_version_group_key, limit=2
+        ),
+        quota_per_group=3,
+    )
+
+
+def _ensure_named_entity_evidence(
+    *,
+    question: str,
+    intent: RetrievalIntent,
+    selected_nodes: list[Any],
+    ranked_nodes: list[Any],
+    evidence_cap: int,
+) -> list[Any]:
+    aliases_by_entity = dict(intent.entities) or _query_entity_aliases(question.lower())
+    if len(aliases_by_entity) < 2:
+        return selected_nodes
+
+    quota = min(3, max(1, evidence_cap // max(len(aliases_by_entity), 1)))
+    selected = list(selected_nodes)
+    selected_keys = {_node_unique_key(node) for node in selected}
+
+    for aliases in aliases_by_entity.values():
+        while (
+            sum(1 for node in selected if _node_matches_entity(node, aliases)) < quota
+        ):
+            candidate = next(
+                (
+                    node
+                    for node in ranked_nodes
+                    if _node_unique_key(node) not in selected_keys
+                    and _node_matches_entity(node, aliases)
+                ),
+                None,
+            )
+            if candidate is None:
+                break
+
+            candidate_key = _node_unique_key(candidate)
+            if len(selected) < evidence_cap:
+                selected.append(candidate)
+                selected_keys.add(candidate_key)
+                continue
+
+            replace_idx = _least_useful_entity_replacement_index(
+                selected=selected,
+                required_aliases=aliases_by_entity.values(),
+            )
+            if replace_idx is None:
+                break
+            selected_keys.discard(_node_unique_key(selected[replace_idx]))
+            selected[replace_idx] = candidate
+            selected_keys.add(candidate_key)
+
+    return selected
+
+
+def _query_entity_aliases(normalized_question: str) -> dict[str, tuple[str, ...]]:
+    return query_entity_aliases(normalized_question)
+
+
+def _ensure_outlook_scope_evidence(
+    *,
+    intent: RetrievalIntent,
+    selected_nodes: list[Any],
+    ranked_nodes: list[Any],
+    evidence_cap: int,
+) -> list[Any]:
+    if not intent.has("outlook_scope"):
+        return selected_nodes
+
+    selected = list(selected_nodes)
+    selected_keys = {_node_unique_key(node) for node in selected}
+    desired_scope_nodes = 3
+    for candidate in ranked_nodes:
+        if (
+            sum(
+                1
+                for node in selected
+                if _node_has_scope_terms(node, MERGER_SCOPE_TERMS)
+            )
+            >= desired_scope_nodes
+        ):
+            return selected
+        if not _node_has_scope_terms(candidate, MERGER_SCOPE_TERMS):
+            continue
+        candidate_key = _node_unique_key(candidate)
+        if candidate_key in selected_keys:
+            continue
+        _append_or_replace_node(
+            selected=selected,
+            selected_keys=selected_keys,
+            candidate=candidate,
+            evidence_cap=evidence_cap,
+            replace_predicate=lambda node: not _node_has_scope_terms(
+                node, MERGER_SCOPE_TERMS
+            ),
+        )
+    return selected
+
+
+def _ensure_metric_variant_evidence(
+    *,
+    question: str,
+    intent: RetrievalIntent,
+    selected_nodes: list[Any],
+    ranked_nodes: list[Any],
+    evidence_cap: int,
+) -> list[Any]:
+    if not intent.has("caveat_inconsistency"):
+        return selected_nodes
+
+    normalized_question = question.lower()
+    subjects = _metric_query_subjects(normalized_question)
+    if not subjects:
+        return selected_nodes
+
+    selected = list(selected_nodes)
+    selected_keys = {_node_unique_key(node) for node in selected}
+    selected_values = _metric_values_for_nodes(selected, subjects)
+    for candidate in ranked_nodes:
+        candidate_values = _metric_values_for_node(candidate, subjects)
+        missing_values = candidate_values - selected_values
+        if not missing_values:
+            continue
+        candidate_key = _node_unique_key(candidate)
+        if candidate_key in selected_keys:
+            selected_values.update(candidate_values)
+            continue
+        _append_or_replace_node(
+            selected=selected,
+            selected_keys=selected_keys,
+            candidate=candidate,
+            evidence_cap=evidence_cap,
+            replace_predicate=lambda node: not _metric_values_for_node(node, subjects),
+        )
+        selected_values.update(candidate_values)
+        if len(selected_values) >= 2:
+            return selected
+    return selected
+
+
+MERGER_SCOPE_TERMS = (
+    "merger",
+    "pro forma",
+    "pro-forma",
+    "acquisition",
+    "neutral",
+    "accretive",
+    "stabilization",
+    "combined",
+)
+
+
+def _node_has_scope_terms(node: Any, terms: tuple[str, ...]) -> bool:
+    text = _node_search_text(node)
+    return any(term in text for term in terms)
+
+
+def _metric_values_for_nodes(nodes: list[Any], subjects: set[str]) -> set[str]:
+    values: set[str] = set()
+    for node in nodes:
+        values.update(_metric_values_for_node(node, subjects))
+    return values
+
+
+def _metric_values_for_node(node: Any, subjects: set[str]) -> set[str]:
+    values: set[str] = set()
+    text = node.node.text or ""
+    for match in METRIC_VALUE_PATTERN.finditer(text):
+        if normalize_metric_subject(match.group("subject")) in subjects:
+            values.add(_normalize_metric_value(match.group(0)))
+    return values
+
+
+def _normalize_metric_value(raw_value: str) -> str:
+    return " ".join(raw_value.lower().replace(",", "").split())
+
+
+def _ensure_group_quota(
+    *,
+    selected_nodes: list[Any],
+    ranked_nodes: list[Any],
+    evidence_cap: int,
+    group_key_fn: Any,
+    target_groups: list[str],
+    quota_per_group: int,
+) -> list[Any]:
+    if len(target_groups) < 2:
+        return selected_nodes
+
+    selected = list(selected_nodes)
+    selected_keys = {_node_unique_key(node) for node in selected}
+    for group in target_groups:
+        while _count_group(selected, group_key_fn, group) < quota_per_group:
+            candidate = next(
+                (
+                    node
+                    for node in ranked_nodes
+                    if _node_unique_key(node) not in selected_keys
+                    and group_key_fn(node) == group
+                ),
+                None,
+            )
+            if candidate is None:
+                break
+            _append_or_replace_node(
+                selected=selected,
+                selected_keys=selected_keys,
+                candidate=candidate,
+                evidence_cap=evidence_cap,
+                replace_predicate=lambda node: group_key_fn(node) not in target_groups
+                or _count_group(selected, group_key_fn, group_key_fn(node))
+                > quota_per_group,
+            )
+    return selected
+
+
+def _top_groups(nodes: list[Any], group_key_fn: Any, limit: int) -> list[str]:
+    groups: list[str] = []
+    for node in nodes:
+        group = group_key_fn(node)
+        if group and group not in groups:
+            groups.append(group)
+        if len(groups) >= limit:
+            break
+    return groups
+
+
+def _count_group(nodes: list[Any], group_key_fn: Any, group: str) -> int:
+    return sum(1 for node in nodes if group_key_fn(node) == group)
+
+
+def _document_or_version_group_key(node: Any) -> str:
+    metadata = node.node.metadata or {}
+    return str(
+        metadata.get("document_id")
+        or metadata.get("document_name")
+        or metadata.get("source_file")
+        or metadata.get("version_label")
+        or metadata.get("document_version_group")
+        or _node_unique_key(node)
+    )
+
+
+def _append_or_replace_node(
+    *,
+    selected: list[Any],
+    selected_keys: set[str],
+    candidate: Any,
+    evidence_cap: int,
+    replace_predicate: Any,
+) -> None:
+    candidate_key = _node_unique_key(candidate)
+    if candidate_key in selected_keys:
+        return
+    if len(selected) < evidence_cap:
+        selected.append(candidate)
+        selected_keys.add(candidate_key)
+        return
+
+    replace_idx = next(
+        (
+            idx
+            for idx in range(len(selected) - 1, -1, -1)
+            if replace_predicate(selected[idx])
+        ),
+        None,
+    )
+    if replace_idx is None:
+        replace_idx = len(selected) - 1
+    selected_keys.discard(_node_unique_key(selected[replace_idx]))
+    selected[replace_idx] = candidate
+    selected_keys.add(candidate_key)
+
+
+def _node_matches_entity(node: Any, aliases: tuple[str, ...]) -> bool:
+    haystack = _node_search_text(node)
+    return any(alias in haystack for alias in aliases)
+
+
+def _node_search_text(node: Any) -> str:
+    metadata = node.node.metadata or {}
+    return " ".join(
+        str(value or "")
+        for value in (
+            metadata.get("document_name"),
+            metadata.get("file_name"),
+            metadata.get("source_file"),
+            metadata.get("document_family"),
+            metadata.get("section_path"),
+            metadata.get("section_title"),
+            metadata.get("llm_page_summary"),
+            metadata.get("llm_caption"),
+            node.node.text,
+        )
+    ).lower()
+
+
+def _least_useful_entity_replacement_index(
+    *,
+    selected: list[Any],
+    required_aliases: Any,
+) -> int | None:
+    for idx in range(len(selected) - 1, -1, -1):
+        if not any(
+            _node_matches_entity(selected[idx], aliases) for aliases in required_aliases
+        ):
+            return idx
+    return len(selected) - 1 if selected else None
+
+
 def _is_direct_metric_node(node: Any, normalized_question: str) -> bool:
     subjects = _metric_query_subjects(normalized_question)
     if not subjects:
         return False
     text = (node.node.text or "").lower()
     return any(
-        _normalize_metric_subject(match.group("subject")) in subjects
+        normalize_metric_subject(match.group("subject")) in subjects
         for match in METRIC_VALUE_PATTERN.finditer(text)
     )
 
@@ -1061,7 +1577,7 @@ def _direct_metric_priority(node: Any) -> tuple[int, int, float]:
     metadata = node.node.metadata or {}
     chunk_type = str(metadata.get("chunk_type") or "")
     return (
-        _safe_int(metadata.get("version_rank"), 0),
+        safe_int(metadata.get("version_rank"), 0),
         1 if chunk_type == "body_text" else 0,
         float(node.score or 0.0),
     )
@@ -1072,22 +1588,14 @@ def _metric_query_subjects(normalized_query: str) -> set[str]:
     for token in re.findall(r"[a-z][a-z-]+", normalized_query):
         if len(token) < 4 or token in METRIC_STOPWORDS:
             continue
-        subjects.add(_normalize_metric_subject(token))
+        subjects.add(normalize_metric_subject(token))
     return subjects
-
-
-def _normalize_metric_subject(token: str) -> str:
-    normalized = token.lower().strip("-")
-    if normalized.endswith("ies") and len(normalized) > 4:
-        return f"{normalized[:-3]}y"
-    if normalized.endswith("s") and len(normalized) > 3:
-        return normalized[:-1]
-    return normalized
 
 
 def _build_retrieval_diagnostics(
     ranked_nodes: list[Any],
     evidence_nodes: list[Any],
+    intent: RetrievalIntent | None = None,
 ) -> dict[str, Any]:
     ranked_chunk_types = _chunk_type_counts(ranked_nodes)
     evidence_chunk_types = _chunk_type_counts(evidence_nodes)
@@ -1115,6 +1623,10 @@ def _build_retrieval_diagnostics(
         "evidence_reasoning_count": evidence_reasoning,
         "ranked_image_chunk_count": ranked_image_count,
         "evidence_image_chunk_count": evidence_image_count,
+        "intent_labels": list(intent.labels) if intent else [],
+        "evidence_by_document": _node_counts_by_document(evidence_nodes),
+        "evidence_by_version_group": _node_counts_by_version_group(evidence_nodes),
+        "evidence_by_entity": _node_counts_by_entity(evidence_nodes, intent),
     }
 
 
@@ -1140,6 +1652,49 @@ def _document_diversity_keys(nodes: list[Any]) -> set[str]:
         if value:
             keys.add(str(value))
     return keys
+
+
+def _node_counts_by_document(nodes: list[Any]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for node in nodes:
+        metadata = node.node.metadata or {}
+        label = str(
+            metadata.get("document_name")
+            or metadata.get("source_file")
+            or metadata.get("document_id")
+            or "unknown"
+        )
+        counts[label] = counts.get(label, 0) + 1
+    return counts
+
+
+def _node_counts_by_version_group(nodes: list[Any]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for node in nodes:
+        metadata = node.node.metadata or {}
+        label = str(
+            metadata.get("version_label")
+            or metadata.get("document_version_group")
+            or metadata.get("document_family")
+            or metadata.get("document_name")
+            or metadata.get("document_id")
+            or "unknown"
+        )
+        counts[label] = counts.get(label, 0) + 1
+    return counts
+
+
+def _node_counts_by_entity(
+    nodes: list[Any], intent: RetrievalIntent | None
+) -> dict[str, int]:
+    if intent is None or not intent.entities:
+        return {}
+    counts: dict[str, int] = {}
+    for entity_name, aliases in intent.entities.items():
+        count = sum(1 for node in nodes if _node_matches_entity(node, aliases))
+        if count:
+            counts[entity_name] = count
+    return counts
 
 
 def _evidence_diversity_key(node: Any) -> str:
@@ -1189,12 +1744,16 @@ def _build_grounded_prompt(
         version = citation.get("version_label") or "unknown"
         chunk_type = citation.get("chunk_type") or "text"
         location = _citation_location(citation)
+        source_context = _citation_source_context(citation)
         image_assets = citation.get("asset_refs") or []
+        enriched = _citation_enriched_facts(citation)
         excerpt = _prompt_excerpt(citation)
+        enriched_block = f"Extracted facts:\n{enriched}\n" if enriched else ""
         evidence_lines.append(
             f"[{index}] {label} | version={version} | chunk_type={chunk_type}"
             f"{location} | image_assets={len(image_assets)}\n"
-            f"Excerpt:\n{excerpt}"
+            f"{source_context}"
+            f"{enriched_block}Excerpt:\n{excerpt}"
         )
 
     conflict_lines = []
@@ -1220,11 +1779,13 @@ def _build_grounded_prompt(
         evidence_block=evidence_block,
         conflict_block=conflict_block,
         conversation_context_block=conversation_block,
+        answering_notes_block=_build_answering_notes(question, citations),
     )
 
 
 def _build_labeled_context_sections(
     *,
+    question: str,
     citations: list[dict[str, Any]],
     conflicts: list[dict[str, Any]],
     conversation_context: dict[str, Any],
@@ -1236,7 +1797,10 @@ def _build_labeled_context_sections(
         "session_summary": summary,
         "cross_session_lines": _build_context_cross_session_lines(cross_session_pairs),
         "evidence_lines": _build_context_evidence_lines(citations),
-        "conflict_lines": _build_context_conflict_lines(conflicts),
+        "conflict_lines": [
+            *_build_answering_notes(question, citations).splitlines(),
+            *_build_context_conflict_lines(conflicts),
+        ],
     }
 
 
@@ -1271,10 +1835,14 @@ def _build_context_evidence_lines(citations: list[dict[str, Any]]) -> list[str]:
         version = citation.get("version_label") or "unknown"
         chunk_type = citation.get("chunk_type") or "text"
         location = _citation_location(citation)
+        source_context = _citation_source_context(citation)
+        enriched = _citation_enriched_facts(citation)
         excerpt = _prompt_excerpt(citation)
+        enriched_block = f"Extracted facts:\n{enriched}\n" if enriched else ""
         lines.append(
             f"[{index}] {label} | version={version} | chunk_type={chunk_type}{location}\n"
-            f"Excerpt: {excerpt}"
+            f"{source_context}"
+            f"{enriched_block}Excerpt: {excerpt}"
         )
     return lines
 
@@ -1288,6 +1856,109 @@ def _build_context_conflict_lines(conflicts: list[dict[str, Any]]) -> list[str]:
     if not lines:
         return ["- No high-confidence conflicts were detected in selected evidence."]
     return lines
+
+
+def _build_answering_notes(question: str, citations: list[dict[str, Any]]) -> str:
+    intent = analyze_retrieval_intent(question)
+    notes: list[str] = []
+
+    if intent.has("temporal_delta"):
+        notes.append(
+            "- For this change question, organize the answer as older/baseline evidence, "
+            "newer/update evidence, then stable vs changed or newly emphasized items."
+        )
+
+    if intent.has("stale_source") or _citations_have_source_dates(citations):
+        notes.append(
+            "- State absolute source/date scope for dated evidence; if figures describe "
+            "an older data year, do not present them as current."
+        )
+
+    if intent.has("outlook_scope") and _citations_have_scope_terms(citations):
+        notes.append(
+            "- Separate standalone guidance from merger/acquisition/pro-forma, neutral, "
+            "accretive, stabilization, or combined-company context."
+        )
+
+    if intent.has("caveat_inconsistency"):
+        value_sources = _metric_value_sources_for_citations(question, citations)
+        if len(value_sources) >= 2:
+            source_summary = "; ".join(
+                f"{value}: {', '.join(source_refs[:3])}"
+                for value, source_refs in list(value_sources.items())[:5]
+            )
+            notes.append(
+                "- Selected evidence contains multiple values for the same metric "
+                f"({source_summary}); explicitly reconcile all values with "
+                "document/date/page qualifiers, including same-document inconsistencies."
+            )
+
+    if intent.has("named_entity_comparison"):
+        notes.append(
+            "- Compare each named entity with the evidence available for that entity; "
+            "partial scope evidence should be used with a precise limitation."
+        )
+
+    return "\n".join(notes)
+
+
+def _citations_have_source_dates(citations: list[dict[str, Any]]) -> bool:
+    for citation in citations:
+        if citation.get("document_date") or citation.get("as_of_date"):
+            return True
+        enriched = citation.get("enriched_metadata")
+        if isinstance(enriched, dict) and (
+            enriched.get("document_date") or enriched.get("as_of_date")
+        ):
+            return True
+    return False
+
+
+def _citations_have_scope_terms(citations: list[dict[str, Any]]) -> bool:
+    return any(
+        any(term in _citation_search_text(citation) for term in MERGER_SCOPE_TERMS)
+        for citation in citations
+    )
+
+
+def _metric_values_for_citations(
+    question: str, citations: list[dict[str, Any]]
+) -> set[str]:
+    return set(_metric_value_sources_for_citations(question, citations))
+
+
+def _metric_value_sources_for_citations(
+    question: str, citations: list[dict[str, Any]]
+) -> dict[str, list[str]]:
+    subjects = _metric_query_subjects(question.lower())
+    if not subjects:
+        return {}
+
+    values: dict[str, list[str]] = {}
+    for index, citation in enumerate(citations, start=1):
+        for match in METRIC_VALUE_PATTERN.finditer(_citation_search_text(citation)):
+            if normalize_metric_subject(match.group("subject")) in subjects:
+                value = _normalize_metric_value(match.group(0))
+                values.setdefault(value, []).append(f"[{index}]")
+    return values
+
+
+def _citation_search_text(citation: dict[str, Any]) -> str:
+    enriched = citation.get("enriched_metadata")
+    enriched_text = ""
+    if isinstance(enriched, dict):
+        enriched_text = format_enriched_metadata_for_prompt(enriched)
+    return " ".join(
+        str(value or "")
+        for value in (
+            citation.get("document_name"),
+            citation.get("citation_label"),
+            citation.get("section_title"),
+            citation.get("metric_basis"),
+            citation.get("text"),
+            enriched_text,
+        )
+    ).lower()
 
 
 def _build_context_cross_session_lines(
@@ -1325,6 +1996,32 @@ def _citation_location(citation: dict[str, Any]) -> str:
     if citation.get("slide_num"):
         return f" | slide={citation['slide_num']}"
     return ""
+
+
+def _citation_source_context(citation: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for label, key in (
+        ("document_date", "document_date"),
+        ("as_of_date", "as_of_date"),
+        ("metric_basis", "metric_basis"),
+        ("version_group", "version_group"),
+        ("effective_from", "effective_from"),
+        ("effective_to", "effective_to"),
+        ("section", "section_title"),
+    ):
+        value = citation.get(key)
+        if value:
+            parts.append(f"{label}={value}")
+    enriched = citation.get("enriched_metadata")
+    if isinstance(enriched, dict):
+        for label in ("document_date", "as_of_date", "metric_basis", "units"):
+            if label not in {part.split("=", 1)[0] for part in parts} and enriched.get(
+                label
+            ):
+                parts.append(f"{label}={enriched[label]}")
+    if not parts:
+        return ""
+    return "Source context: " + " | ".join(str(part) for part in parts) + "\n"
 
 
 def _truncate_with_ellipsis(text: str, max_chars: int) -> str:
@@ -1387,6 +2084,13 @@ def _prompt_excerpt(citation: dict[str, Any]) -> str:
     return f"{text[:limit].rstrip()}\n[...truncated]"
 
 
+def _citation_enriched_facts(citation: dict[str, Any]) -> str:
+    enriched = citation.get("enriched_metadata")
+    if not isinstance(enriched, dict):
+        return ""
+    return format_enriched_metadata_for_prompt(enriched)
+
+
 def _build_grounded_message(prompt: str, image_paths: list[str]) -> ChatMessage:
     blocks: list[Any] = [TextBlock(text=prompt)]
     for image_path in image_paths:
@@ -1437,9 +2141,7 @@ def _append_image_inputs(
             {**item} if isinstance(item, dict) else item for item in user_content
         ]
     else:
-        multimodal_content = [
-            {"type": "input_text", "text": str(user_content or "")}
-        ]
+        multimodal_content = [{"type": "input_text", "text": str(user_content or "")}]
 
     multimodal_content.extend(image_inputs)
     user_message["content"] = multimodal_content
@@ -1563,6 +2265,7 @@ def _split_reasoning_from_text(text: str) -> tuple[str, str | None]:
     if not text:
         return "", None
 
+    text = text.strip()
     thinking_match = re.search(
         r"<thinking>(.*?)</thinking>", text, re.IGNORECASE | re.DOTALL
     )
@@ -1580,8 +2283,22 @@ def _split_reasoning_from_text(text: str) -> tuple[str, str | None]:
             flags=re.IGNORECASE | re.DOTALL,
         ).strip()
         answer = re.sub(r"</?answer>", "", answer, flags=re.IGNORECASE).strip()
+    elif re.search(r"<thinking\b[^>]*>", text, re.IGNORECASE):
+        open_answer_match = re.search(
+            r"<answer\b[^>]*>(.*)$", text, re.IGNORECASE | re.DOTALL
+        )
+        if open_answer_match:
+            answer = open_answer_match.group(1).strip()
+        else:
+            answer = re.sub(
+                r"<thinking\b[^>]*>.*$",
+                "",
+                text,
+                flags=re.IGNORECASE | re.DOTALL,
+            ).strip()
+        answer = re.sub(r"</?answer>", "", answer, flags=re.IGNORECASE).strip()
     else:
-        answer = text.strip()
+        answer = text
 
     return answer, reasoning
 

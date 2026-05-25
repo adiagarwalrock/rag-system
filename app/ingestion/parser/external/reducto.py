@@ -35,6 +35,11 @@ from app.ingestion.parser.external.helper import (
 )
 from llama_index.core import Document as LlamaDocument
 
+from app.ingestion.parser.external.prompts import (
+    REDUCTO_TABLE_PARSER_PROMPT,
+    REDUCTO_CHART_PARSER_PROMPT,
+    REDUCTO_EXTRACTION_PROMPT,
+)
 
 class ReductoParser:
     """
@@ -91,47 +96,12 @@ class ReductoParser:
                 "agentic": [
                     {
                         "scope": "table",
-                        "prompt": (
-                            "This is a REIT financial presentation. Follow these instructions in order:\n"
-                            "1. FINANCIAL TABLES: Reconstruct with full fidelity — all column headers, row labels, "
-                            "merged cells, units, currencies, bold subtotals, and footnotes exactly as written. "
-                            "Normalize dates to ISO format (YYYY-MM-DD, YYYY-MM, YYYY, or YYYY-Q#) and keep the "
-                            "original label alongside in the same cell.\n"
-                            "2. VALUE TYPES: Label each column or value as actual, estimate, guidance, pro forma, "
-                            "or target where indicated. Key metrics to preserve exactly: NOI, FFO, AFFO, NAV, "
-                            "Cap rate, Occupancy, ABR, WALT, Net debt/EBITDA, leasing spreads, guidance ranges.\n"
-                            "3. STRATEGY AND FRAMEWORK SLIDES with multiple pillars, columns of text, or "
-                            "side-by-side comparisons: Reconstruct as a single pipe table.\n"
-                            "4. Do NOT re-extract standalone KPI icon tiles, metric summary boxes, charts, "
-                            "graphs, or any visual element handled by the figure agent.\n"
-                            "5. Do not flatten rows into prose. Do not hallucinate. Include all footnotes."
-                        ),
+                        "prompt": REDUCTO_TABLE_PARSER_PROMPT,
                     },
                     {
                         "scope": "figure",
                         "advanced_chart_agent": True,
-                        "prompt": (
-                            "This is a REIT financial presentation. Follow these instructions in order:\n"
-                            "1. CHARTS AND GRAPHS (bar, line, scatter, waterfall): Output a single markdown "
-                            "pipe table per chart. Use axis labels and series names as column headers. Include "
-                            "every data point with exact values, units, and ISO dates alongside original labels. "
-                            "Annotate CAGR labels, trend arrows, and callout boxes as extra rows or a footnote "
-                            "row at the bottom. Mark visually estimated values with '(approx)'.\n"
-                            "2. KPI TILES AND SUMMARY METRIC BOXES: Output exactly one pipe table per tile "
-                            "using columns | Metric | Value | Unit | Period |.\n"
-                            "3. FLOW DIAGRAMS, STRATEGY FRAMEWORKS, LIFECYCLE DIAGRAMS, PROCESS MAPS: "
-                            "Extract every component as a row in a structured pipe table.\n"
-                            "4. GEOGRAPHIC MAPS AND PROPERTY MAPS: Extract all labeled entities as a pipe "
-                            "table with columns | Entity | Owner / Affiliation | Location | Notes |.\n"
-                            "5. DECORATIVE PHOTOGRAPHS: Output exactly one line: "
-                            "'[Photograph: {one-line subject description}]'.\n"
-                            "6. ICONS, LOGOS, ARROWS, DECORATIVE GRAPHICS with no extractable data: "
-                            "Output nothing.\n"
-                            "7. NEVER follow a table with bullet lists or prose describing the same visual.\n"
-                            "8. Key metrics: NOI, FFO, AFFO, NAV, Cap rate, Occupancy, ABR, WALT, "
-                            "Net debt/EBITDA, leasing spreads, guidance ranges.\n"
-                            "9. Do not invent values. Do not emit image placeholders."
-                        ),
+                        "prompt": REDUCTO_CHART_PARSER_PROMPT,
                     },
                 ],
             },
@@ -248,22 +218,6 @@ class ReductoParser:
     # extract
     # ------------------------------------------------------------------
 
-    _EXTRACTION_PROMPT = """
-    Associate structured metadata with the existing parser page chunks for downstream RAG
-    ingestion. Return exactly one chunks item for each page chunk id listed below. Do not
-    create new chunks and do not rewrite chunk text. Preserve exact financial values, dates,
-    units, table metadata, chart facts, page numbers, citations, and confidence values. For
-    charts, extract axis labels, series, approximate data points, trends, and key facts into
-    metadata fields. For reasoning metadata, include claims and evidence references only when
-    directly supported by the document. Do not hallucinate. Use empty strings, empty arrays,
-    or null for fields that are not present.
-
-    For each chunk, populate these temporal/scope fields when present in the document:
-    - document_date: ISO date of the presentation/document (YYYY-MM-DD, YYYY-MM, YYYY, or YYYY-Q#)
-    - as_of_date: ISO as-of date for the metric snapshot
-    - metric_basis: one of 'actual', 'guidance', 'pro_forma', 'estimate', 'target'
-    """
-
     def extract(self, parsed_document: ParsedDocument) -> DocumentExtraction:
         """Call Reducto Extract API to enrich chunk metadata. Returns DocumentExtraction."""
         if not parsed_document.extract_input_id:
@@ -283,13 +237,13 @@ class ReductoParser:
             instructions={
                 "schema": provider_metadata_association_schema(),
                 "system_prompt": build_metadata_association_prompt(
-                    self._EXTRACTION_PROMPT, parsed_document
+                    REDUCTO_EXTRACTION_PROMPT, parsed_document
                 ),
             },
             settings={
                 "array_extract": True,
                 "deep_extract": True,
-                "include_images": False,      # skip per-page VLM image pass — saves ~150-250s
+                "include_images": False,  # skip per-page VLM image pass — saves ~150-250s
                 "citations": {
                     "enabled": True,
                     "numerical_confidence": False,  # skip per-value confidence pass — saves ~50s

@@ -40,6 +40,11 @@ pg = st.navigation(
             title="Qdrant Inspector",
             icon=":material/dataset:",
         ),
+        st.Page(
+            "ui/pages/7_Status.py",
+            title="Status",
+            icon=":material/health_and_safety:",
+        ),
     ]
 )
 

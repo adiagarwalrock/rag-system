@@ -84,7 +84,7 @@ class RuntimeStatusService:
             },
         ]
         routing_priority = [
-            parser["name"] for parser in parsers[1:] if bool(parser["enabled"])
+            parser["name"] for parser in parsers[1:] if parser["enabled"]
         ]
         routing_priority.extend(["Layout-aware PDF", "Legacy"])
 
@@ -132,7 +132,7 @@ class RuntimeStatusService:
             response = client.get_collections()
             collections = getattr(response, "collections", []) or []
             rows = []
-            partial_error = None
+            partial_errors: list[str] = []
             for collection in collections:
                 name = str(getattr(collection, "name", collection))
                 point_count = None
@@ -143,7 +143,7 @@ class RuntimeStatusService:
                         None,
                     )
                 except Exception as exc:
-                    partial_error = self._error_message(exc)
+                    partial_errors.append(self._error_message(exc))
                 rows.append(
                     {
                         "name": name,
@@ -152,10 +152,10 @@ class RuntimeStatusService:
                     }
                 )
             payload["collections"] = rows
-            if partial_error:
+            if partial_errors:
                 payload["status"] = "partial"
                 payload["message"] = (
-                    f"Collections loaded; count failed: {partial_error}"
+                    f"Collections loaded; count failed: {'; '.join(partial_errors)}"
                 )
         except Exception as exc:
             payload["status"] = "error"
@@ -215,11 +215,11 @@ class RuntimeStatusService:
             )
             response = client.models.list()
             models = getattr(response, "data", response)
-            model_ids = sorted(
+            model_ids = {
                 str(getattr(model, "id", ""))
                 for model in (models or [])
                 if getattr(model, "id", None)
-            )
+            }
             return {
                 "status": "ok",
                 "message": "Models API check succeeded.",
@@ -260,7 +260,8 @@ class RuntimeStatusService:
 
     @staticmethod
     def _has_secret(value: str | None) -> bool:
-        return bool(settings._normalize_secret(value))
+        key = (value or "").strip().strip("'\"").strip()
+        return bool(key)
 
     @staticmethod
     def _overall_status(section: dict[str, Any]) -> str:

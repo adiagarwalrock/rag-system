@@ -61,8 +61,7 @@ def _render_overview(overall: dict[str, Any]) -> None:
         ("Parsers", overall.get("parsers")),
     ]
     for col, (label, value) in zip(cols, items):
-        normalized = _normalize_status(value)
-        col.metric(label, normalized.upper())
+        col.metric(label, _status_label(value))
 
 
 def _render_parser_section(parser_status: dict[str, Any]) -> None:
@@ -101,13 +100,9 @@ def _render_qdrant_section(qdrant_status: dict[str, Any]) -> None:
         str(qdrant_status.get("chat_history_collection") or "-"),
     )
 
-    message = qdrant_status.get("message")
-    if qdrant_status.get("status") == "error":
-        st.error(message or "Qdrant check failed.")
-    elif qdrant_status.get("status") == "partial":
-        st.warning(message or "Qdrant check partially succeeded.")
-    elif message:
-        st.caption(str(message))
+    _render_status_message(
+        qdrant_status, partial_fallback="Qdrant check partially succeeded."
+    )
 
     rows = qdrant_status.get("collections") or []
     if rows:
@@ -125,11 +120,7 @@ def _render_database_section(database_status: dict[str, Any]) -> None:
     cols[2].metric("Dialect", str(database_status.get("dialect") or "-"))
     cols[3].metric("Target", _database_target_label(target))
 
-    message = database_status.get("message")
-    if database_status.get("status") == "error":
-        st.error(message or "Database check failed.")
-    elif message:
-        st.caption(str(message))
+    _render_status_message(database_status)
 
     if isinstance(target, dict) and len(target) > 1:
         rows = [{"field": key, "value": value or "-"} for key, value in target.items()]
@@ -155,45 +146,51 @@ def _render_ai_section(ai_status: dict[str, Any]) -> None:
         str(ai_status.get("embedding_dimensions") or "-"),
     )
 
-    checks = []
     initialization = ai_status.get("initialization") or {}
     models_api = ai_status.get("models_api") or {}
-    checks.append(
+    checks = [
         {
             "check": "Provider initialization",
             "status": _status_label(initialization.get("status")),
             "result": initialization.get("message") or "-",
-        }
-    )
-    checks.append(
+        },
         {
             "check": "Models API",
             "status": _status_label(models_api.get("status")),
             "result": models_api.get("message") or "-",
-        }
-    )
-    checks.append(
+        },
         {
             "check": "LLM model listed",
             "status": _yes_no(models_api.get("llm_model_available")),
             "result": ai_status.get("llm_model") or "-",
-        }
-    )
-    checks.append(
+        },
         {
             "check": "Embedding model listed",
             "status": _yes_no(models_api.get("embedding_model_available")),
             "result": ai_status.get("embedding_model") or "-",
-        }
-    )
-    checks.append(
+        },
         {
             "check": "Model count",
             "status": str(models_api.get("model_count", 0)),
             "result": "models returned",
-        }
-    )
+        },
+    ]
     st.dataframe(pd.DataFrame(checks), hide_index=True, width="stretch")
+
+
+def _render_status_message(
+    status_dict: dict[str, Any],
+    *,
+    partial_fallback: str = "",
+) -> None:
+    message = status_dict.get("message")
+    status = status_dict.get("status")
+    if status == "error":
+        st.error(message or "Check failed.")
+    elif status == "partial" and partial_fallback:
+        st.warning(message or partial_fallback)
+    elif message:
+        st.caption(str(message))
 
 
 def _status_label(value: Any) -> str:

@@ -3,6 +3,7 @@ from urllib.parse import quote_plus
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy import event
 
 from app.core.config import settings
 from app.core.logging_config import configure_logging
@@ -26,11 +27,25 @@ def get_engine():
             f"&role={settings.SNOWFLAKE_ROLE}"
         )
         return create_engine(conn_str, echo=False)
-    # Fallback to local SQLite for rapid development and testing
+    # Fallback to local SQLite for rapid development and testing.
+    # WAL mode + busy_timeout allow concurrent readers/writers from multiple threads
+    # without "database is locked" deadlocks during parallel eval runs.
     logger.info("Connecting to local SQLite database fallback")
-    return create_engine(
-        "sqlite:///./rag_local.db", connect_args={"check_same_thread": False}
+
+    _engine = create_engine(
+        "sqlite:///./rag_local.db",
+        connect_args={"check_same_thread": False, "timeout": 30},
     )
+
+    @event.listens_for(_engine, "connect")
+    def _set_sqlite_pragmas(dbapi_conn, _):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=30000")  # 30s before giving up
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.close()
+
+    return _engine
 
 
 engine = get_engine()

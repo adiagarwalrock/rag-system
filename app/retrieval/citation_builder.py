@@ -3,6 +3,7 @@ Citation builder: constructs structured citations from retrieved source nodes.
 """
 
 import hashlib
+import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, List
@@ -24,6 +25,19 @@ RICH_CHUNK_TYPES = {
     "reasoning_figure",
     "reasoning_page",
 }
+ENRICHED_METADATA_FIELDS = (
+    "key_chart_facts",
+    "approx_datapoints",
+    "trend_summary",
+    "units",
+    "as_of_date",
+    "document_date",
+    "metric_basis",
+    "claims",
+    "evidence_refs",
+    "llm_page_summary",
+    "llm_caption",
+)
 
 
 def build_citations(source_nodes: list) -> List[Dict[str, Any]]:
@@ -75,6 +89,9 @@ def build_citations(source_nodes: list) -> List[Dict[str, Any]]:
             "version_group": metadata.get("document_version_group"),
             "effective_from": metadata.get("effective_from"),
             "effective_to": metadata.get("effective_to"),
+            "document_date": metadata.get("document_date"),
+            "as_of_date": metadata.get("as_of_date"),
+            "metric_basis": metadata.get("metric_basis"),
             "citation_label": metadata.get(
                 "citation_label", _build_fallback_label(metadata, i + 1)
             ),
@@ -84,6 +101,7 @@ def build_citations(source_nodes: list) -> List[Dict[str, Any]]:
             "figure_type": metadata.get("figure_type"),
             "chart_type": metadata.get("chart_type"),
             "table_id": metadata.get("table_id"),
+            "enriched_metadata": _extract_enriched_metadata(metadata),
         }
         citations.append(citation)
 
@@ -124,6 +142,64 @@ def format_citations_for_prompt(citations: List[Dict[str, Any]]) -> str:
 
 def _text_limit_for_chunk(chunk_type: str) -> int:
     return RICH_TEXT_LIMIT if chunk_type in RICH_CHUNK_TYPES else DEFAULT_TEXT_LIMIT
+
+
+def _extract_enriched_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    enriched: dict[str, Any] = {}
+    for field_name in ENRICHED_METADATA_FIELDS:
+        value = metadata.get(field_name)
+        if _has_enriched_value(value):
+            enriched[field_name] = _normalize_enriched_value(value)
+    return enriched
+
+
+def _has_enriched_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, set, dict)):
+        return bool(value)
+    return True
+
+
+def _normalize_enriched_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (tuple, set)):
+        return list(value)
+    return value
+
+
+def format_enriched_metadata_for_prompt(enriched_metadata: dict[str, Any]) -> str:
+    """Render enriched parser facts for answer synthesis prompts."""
+    if not enriched_metadata:
+        return ""
+
+    lines: list[str] = []
+    for field_name, value in enriched_metadata.items():
+        formatted = _format_metadata_value(value)
+        if formatted:
+            lines.append(f"- {field_name}: {formatted}")
+    return "\n".join(lines)
+
+
+def _format_metadata_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return " ".join(value.split())
+    if isinstance(value, list):
+        truncated = len(value) > 8
+        parts = [_format_metadata_value(item) for item in value[:8]]
+        result = "; ".join(part for part in parts if part)
+        return f"{result}; [+{len(value) - 8} more]" if truncated else result
+    if isinstance(value, dict):
+        try:
+            return json.dumps(value, ensure_ascii=False, sort_keys=True)[:1200]
+        except TypeError:
+            return str(value)[:1200]
+    return str(value)
 
 
 def _coerce_asset_refs(

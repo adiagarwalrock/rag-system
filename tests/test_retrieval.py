@@ -7,13 +7,16 @@ from llama_index.core.schema import NodeWithScore, TextNode
 import app.retrieval.reranker as reranker_module
 import app.retrieval.retriever as retriever_module
 from app.core.config import settings
+from app.core.prompts import GROUNDED_ANSWER_DEVELOPER_PROMPT
 from app.retrieval.citation_builder import build_citations
 from app.retrieval.cross_encoder_reranker import CrossEncoderSemanticReranker
+from app.retrieval.query_intent import analyze_retrieval_intent
 from app.retrieval.query_expansion import should_expand_query
 from app.retrieval.retriever import (
     VecteraRetriever,
     _build_conversation_context_block,
     _build_retrieval_diagnostics,
+    _build_answering_notes,
     _collect_image_evidence_paths,
     _extract_answer_and_reasoning_from_chat,
     _fuse_node_batches,
@@ -152,6 +155,68 @@ def test_retrieve_with_mode_uses_history_aware_query_variants(monkeypatch):
     assert captured["payload"]["current_question"] == "What about that?"
     assert captured["payload"]["recent_turns"][0]["role"] == "user"
     assert captured["max_rewrites"] == 2
+
+
+def test_intent_detection_adds_companions_for_remaining_quality_gaps():
+    bxp_delta = analyze_retrieval_intent(
+        "What's changed in BXP's strategy between the 2025 Investor Day and the Q4 2025 update?"
+    )
+    simon_stale = analyze_retrieval_intent(
+        "What is the economic impact of Simon's shopping centers on local communities?"
+    )
+    dlr_customers = analyze_retrieval_intent(
+        "How many customers does Digital Realty have?"
+    )
+    psa_outlook = analyze_retrieval_intent("What is PSA's outlook for 2026?")
+    vici_o = analyze_retrieval_intent(
+        "VICI and Realty Income both mention gaming exposure. How are their gaming portfolios different?"
+    )
+
+    assert "temporal_delta" in bxp_delta.labels
+    assert any(
+        "older prior investor day" in query for query in bxp_delta.companion_queries
+    )
+    assert any(
+        "newer latest quarterly update" in query
+        for query in bxp_delta.companion_queries
+    )
+    assert "stale_source" in simon_stale.labels
+    assert "caveat_inconsistency" in dlr_customers.labels
+    assert "outlook_scope" in psa_outlook.labels
+    assert "named_entity_comparison" in vici_o.labels
+    assert {"VICI", "Realty Income"} <= set(vici_o.entities)
+
+
+def test_retrieve_with_mode_adds_companion_queries_without_marking_expanded(
+    monkeypatch,
+):
+    retriever = VecteraRetriever("client-1", top_k=5)
+    retrieval_calls: list[str] = []
+
+    class FakeBaseRetriever:
+        def retrieve(self, question):
+            retrieval_calls.append(question)
+            return [_node(question, 0.9, {"document_id": question})]
+
+    monkeypatch.setattr(
+        retriever_module.vector_store_manager,
+        "get_retriever",
+        lambda **kwargs: FakeBaseRetriever(),
+    )
+    monkeypatch.setattr(retriever_module, "should_expand_query", lambda _payload: False)
+
+    nodes, expanded = retriever._retrieve_with_mode(
+        "What is PSA's outlook for 2026?",
+        hybrid=True,
+    )
+
+    assert expanded is False
+    assert len(nodes) == 3
+    assert retrieval_calls[0] == "What is PSA's outlook for 2026?"
+    assert any("pro forma merger acquisition" in call for call in retrieval_calls)
+    assert any("neutral accretive" in call for call in retrieval_calls)
+    assert retriever._last_retrieval_metadata["intent_labels"] == ["outlook_scope"]
+    assert retriever._last_retrieval_metadata["companion_counts_by_query"]
 
 
 def test_fuse_node_batches_dedupes_and_boosts_repeated_nodes():
@@ -495,6 +560,276 @@ def test_comparison_queries_select_multiple_versions_for_citations():
     assert "v2" in versions
 
 
+def test_temporal_delta_query_keeps_multiple_chunks_from_both_documents():
+    retriever = VecteraRetriever("client-1", top_k=10)
+    ranked = [
+        _node(
+            f"investor-{idx}",
+            1.0 - (idx * 0.01),
+            {
+                "document_id": "doc-investor-day",
+                "document_name": "BXP Investor Day.pdf",
+                "version_label": "Investor Day 2025",
+            },
+        )
+        for idx in range(8)
+    ] + [
+        _node(
+            f"q4-{idx}",
+            0.7 - (idx * 0.01),
+            {
+                "document_id": "doc-q4",
+                "document_name": "BXP Q4 2025 Update.pdf",
+                "version_label": "Q4 2025",
+            },
+        )
+        for idx in range(5)
+    ]
+
+    evidence = retriever._select_evidence_nodes(
+        "What's changed in BXP's strategy between the 2025 Investor Day and the Q4 2025 update?",
+        ranked,
+    )
+    doc_counts = retriever_module._node_counts_by_document(evidence)
+
+    assert doc_counts["BXP Investor Day.pdf"] >= 3
+    assert doc_counts["BXP Q4 2025 Update.pdf"] >= 3
+
+
+def test_broad_sector_query_selects_document_diverse_evidence():
+    retriever = VecteraRetriever("client-1", top_k=10)
+    ranked = [
+        _node(
+            "dlr-1",
+            0.98,
+            {
+                "document_id": "doc-dlr",
+                "document_name": "Digital Realty Investor Presentation.pdf",
+            },
+        ),
+        _node(
+            "dlr-2",
+            0.97,
+            {
+                "document_id": "doc-dlr",
+                "document_name": "Digital Realty Investor Presentation.pdf",
+            },
+        ),
+        _node(
+            "bxp-1",
+            0.6,
+            {
+                "document_id": "doc-bxp",
+                "document_name": "BXP Q4 2025 Investor Presentation.pdf",
+            },
+        ),
+        _node(
+            "vici-1",
+            0.55,
+            {
+                "document_id": "doc-vici",
+                "document_name": "VICI Investor Presentation.pdf",
+            },
+        ),
+    ]
+
+    evidence = retriever._select_evidence_nodes(
+        "How is AI affecting demand across the different real estate sectors represented in these documents?",
+        ranked,
+    )
+    doc_ids = [node.node.metadata.get("document_id") for node in evidence[:3]]
+
+    assert doc_ids == ["doc-dlr", "doc-bxp", "doc-vici"]
+
+
+def test_each_reit_query_triggers_document_diverse_evidence():
+    retriever = VecteraRetriever("client-1", top_k=10)
+    ranked = [
+        _node("psa-1", 0.95, {"document_id": "doc-psa"}),
+        _node("psa-2", 0.93, {"document_id": "doc-psa"}),
+        _node("bxp-1", 0.65, {"document_id": "doc-bxp"}),
+        _node("dlr-1", 0.6, {"document_id": "doc-dlr"}),
+    ]
+
+    evidence = retriever._select_evidence_nodes(
+        "What is the 2026 FFO outlook for each REIT in the corpus?",
+        ranked,
+    )
+    doc_ids = [node.node.metadata.get("document_id") for node in evidence[:3]]
+
+    assert doc_ids == ["doc-psa", "doc-bxp", "doc-dlr"]
+
+
+def test_named_entity_query_forces_coverage_for_both_entities():
+    retriever = VecteraRetriever("client-1", top_k=10)
+    ranked = [
+        _node(
+            f"vici-{i}",
+            1.0 - (i * 0.01),
+            {
+                "document_id": "doc-vici",
+                "document_name": "VICI Investor Presentation.pdf",
+            },
+        )
+        for i in range(8)
+    ]
+    ranked.append(
+        _node(
+            "realty-income",
+            0.4,
+            {
+                "document_id": "doc-o",
+                "document_name": "Realty Income Q4 2025 Investor Presentation.pdf",
+            },
+        )
+    )
+
+    evidence = retriever._select_evidence_nodes(
+        "VICI and Realty Income both mention gaming exposure. How are their gaming portfolios different?",
+        ranked,
+    )
+    doc_ids = {node.node.metadata.get("document_id") for node in evidence}
+
+    assert {"doc-vici", "doc-o"} <= doc_ids
+
+
+def test_named_entity_query_keeps_multiple_chunks_for_each_entity():
+    retriever = VecteraRetriever("client-1", top_k=10)
+    ranked = [
+        _node(
+            f"vici-{idx}",
+            1.0 - (idx * 0.01),
+            {
+                "document_id": "doc-vici",
+                "document_name": "VICI Investor Presentation.pdf",
+            },
+        )
+        for idx in range(8)
+    ] + [
+        _node(
+            f"realty-{idx}",
+            0.6 - (idx * 0.01),
+            {
+                "document_id": "doc-o",
+                "document_name": "Realty Income Q4 2025 Investor Presentation.pdf",
+            },
+        )
+        for idx in range(4)
+    ]
+
+    evidence = retriever._select_evidence_nodes(
+        "VICI and Realty Income both mention gaming exposure. How are their gaming portfolios different?",
+        ranked,
+    )
+    intent = analyze_retrieval_intent(
+        "VICI and Realty Income both mention gaming exposure. How are their gaming portfolios different?"
+    )
+    entity_counts = retriever_module._node_counts_by_entity(evidence, intent)
+
+    assert entity_counts["VICI"] >= 3
+    assert entity_counts["Realty Income"] >= 3
+
+
+def test_outlook_query_injects_merger_scope_evidence():
+    retriever = VecteraRetriever("client-1", top_k=10)
+    ranked = [
+        _node(
+            f"standalone-{idx}",
+            1.0 - (idx * 0.01),
+            {
+                "document_id": "doc-psa-update",
+                "document_name": "PSA Company Update.pdf",
+            },
+        )
+        for idx in range(8)
+    ]
+    ranked.append(
+        _node(
+            "merger-scope",
+            0.4,
+            {
+                "document_id": "doc-psa-merger",
+                "document_name": "PSA Merger Presentation.pdf",
+            },
+        )
+    )
+    ranked[-1].node.text = (
+        "The merger is expected to be FFO/share neutral in 2026 and accretive "
+        "in 2027 after stabilization."
+    )
+
+    evidence = retriever._select_evidence_nodes(
+        "What is PSA's outlook for 2026?", ranked
+    )
+
+    assert any(node.node.node_id == "merger-scope" for node in evidence)
+
+
+def test_caveat_metric_query_keeps_conflicting_metric_values():
+    retriever = VecteraRetriever("client-1", top_k=10)
+    ranked = [
+        _node(
+            "headline",
+            0.9,
+            {
+                "chunk_type": "body_text",
+                "document_id": "doc-mar",
+                "version_label": "March 2026",
+            },
+        ),
+        _node(
+            "appendix",
+            0.75,
+            {
+                "chunk_type": "full_table",
+                "document_id": "doc-mar",
+                "version_label": "March 2026",
+            },
+        ),
+    ]
+    ranked[0].node.text = "5,500+ Customers across the global platform."
+    ranked[1].node.text = "5,000+ Global Customers shown in appendix table."
+
+    evidence = retriever._select_evidence_nodes(
+        "How many customers does Digital Realty have?",
+        ranked,
+    )
+    selected_ids = {node.node.node_id for node in evidence}
+
+    assert {"headline", "appendix"} <= selected_ids
+
+
+def test_broad_queries_keep_extra_reranked_candidates(monkeypatch):
+    captured_calls: list[dict] = []
+
+    def _fake_rerank_nodes(nodes, *, top_k, prefer_latest, query):
+        captured_calls.append(
+            {
+                "top_k": top_k,
+                "prefer_latest": prefer_latest,
+                "query": query,
+            }
+        )
+        return nodes[:top_k]
+
+    retriever = VecteraRetriever("client-1", top_k=15)
+    nodes = [_node(f"node-{idx}", 1.0 - (idx * 0.01)) for idx in range(30)]
+    monkeypatch.setattr(retriever_module, "rerank_nodes", _fake_rerank_nodes)
+
+    broad_ranked = retriever._rank_nodes(
+        "How do VICI and Realty Income compare across different sectors?",
+        nodes,
+    )
+    direct_ranked = retriever._rank_nodes("What was BXP's dividend yield?", nodes)
+
+    assert captured_calls[0]["top_k"] > retriever.top_k
+    assert captured_calls[0]["prefer_latest"] is False
+    assert len(broad_ranked) == len(nodes)
+    assert captured_calls[1]["top_k"] == retriever.top_k
+    assert captured_calls[1]["prefer_latest"] is True
+    assert len(direct_ranked) == retriever.top_k
+
+
 def test_comparison_query_deprioritizes_reasoning_chunks_for_factual_delta_questions():
     retriever = VecteraRetriever("client-1", top_k=10)
     ranked = [
@@ -701,6 +1036,85 @@ def test_build_citations_includes_asset_refs_and_visual_metadata():
     assert citations[0]["chart_type"] == "line"
 
 
+def test_build_citations_carries_enriched_chart_facts_into_prompt_context():
+    citations = build_citations(
+        [
+            _node(
+                "dividend-footnote",
+                0.8,
+                {
+                    "chunk_type": "full_table",
+                    "key_chart_facts": [
+                        "BXP’s dividend yield as of 2025-08-29 was 5.47%",
+                    ],
+                    "as_of_date": "2025-08-29",
+                    "metric_basis": "actual",
+                },
+            )
+        ]
+    )
+
+    lines = retriever_module._build_context_evidence_lines(citations)
+
+    assert citations[0]["enriched_metadata"]["as_of_date"] == "2025-08-29"
+    assert "key_chart_facts" in lines[0]
+    assert "5.47%" in lines[0]
+    assert "as_of_date: 2025-08-29" in lines[0]
+
+
+def test_prompt_context_includes_source_dates_and_scope_metadata():
+    citations = build_citations(
+        [
+            _node(
+                "dated-source",
+                0.8,
+                {
+                    "document_date": "2018-11-01",
+                    "as_of_date": "2017-12-31",
+                    "metric_basis": "annual impact study",
+                    "document_version_group": "simon-impact",
+                    "section_title": "Economic Impact",
+                },
+            )
+        ]
+    )
+
+    lines = retriever_module._build_context_evidence_lines(citations)
+
+    assert "Source context:" in lines[0]
+    assert "document_date=2018-11-01" in lines[0]
+    assert "as_of_date=2017-12-31" in lines[0]
+    assert "metric_basis=annual impact study" in lines[0]
+
+
+def test_answering_notes_warn_on_same_metric_variants_and_scope():
+    citations = [
+        {
+            "document_name": "Digital Realty March.pdf",
+            "text": "5,500+ Customers as of December 31, 2025.",
+        },
+        {
+            "document_name": "Digital Realty March.pdf",
+            "text": "5,000+ Global Customers in appendix table.",
+        },
+        {
+            "document_name": "PSA Merger.pdf",
+            "text": "Merger expected to be FFO neutral in 2026 and accretive in 2027.",
+        },
+    ]
+
+    customer_notes = _build_answering_notes(
+        "How many customers does Digital Realty have?",
+        citations,
+    )
+    outlook_notes = _build_answering_notes("What is PSA's outlook for 2026?", citations)
+
+    assert "multiple values for the same metric" in customer_notes
+    assert "5000+ global customers" in customer_notes
+    assert "5500+ customers" in customer_notes
+    assert "Separate standalone guidance" in outlook_notes
+
+
 def test_build_citations_dedupes_asset_refs_across_citations():
     citations = build_citations(
         [
@@ -836,9 +1250,7 @@ def test_visual_query_injects_image_evidence_when_top_evidence_has_no_images():
     assert len(image_evidence) >= 2
 
 
-def test_query_responses_uses_image_from_reranked_top_k_evidence(
-    monkeypatch, tmp_path
-):
+def test_query_responses_uses_image_from_reranked_top_k_evidence(monkeypatch, tmp_path):
     class _FakeBudgeter:
         def __init__(self, model: str):
             self.model = model
@@ -933,6 +1345,23 @@ def test_split_reasoning_from_text_extracts_thinking_and_answer():
     assert answer == "Revenue rises from 10 to 14 across versions [1][2]."
     assert reasoning is not None
     assert "compare figures" in reasoning
+
+
+def test_split_reasoning_strips_unclosed_thinking_from_answer():
+    answer, reasoning = _split_reasoning_from_text(
+        "<thinking>\nThis answer was cut off before final output."
+    )
+
+    assert answer == ""
+    assert reasoning is None
+
+
+def test_grounded_answer_prompt_does_not_request_literal_thinking_tags():
+    assert "<thinking>" not in GROUNDED_ANSWER_DEVELOPER_PROMPT
+    assert "<answer>" not in GROUNDED_ANSWER_DEVELOPER_PROMPT
+    assert "Do not include hidden reasoning" in GROUNDED_ANSWER_DEVELOPER_PROMPT
+    assert "document dates" in GROUNDED_ANSWER_DEVELOPER_PROMPT
+    assert "different values for the same metric" in GROUNDED_ANSWER_DEVELOPER_PROMPT
 
 
 def test_build_conversation_context_block_returns_no_context_marker():
