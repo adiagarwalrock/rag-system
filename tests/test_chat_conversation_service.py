@@ -21,8 +21,11 @@ def test_execute_client_query_creates_session_and_persists_turns(
         client_id: str,
         db,
         reasoning_effort: str = "medium",
+        reasoning_summary: str | None = None,
         session_id: str | None = None,
         conversation_context: dict | None = None,
+        status_callback=None,
+        reasoning_callback=None,
     ) -> dict:
         captured["question"] = question
         captured["client_id"] = client_id

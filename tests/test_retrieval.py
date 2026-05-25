@@ -1364,6 +1364,91 @@ def test_grounded_answer_prompt_does_not_request_literal_thinking_tags():
     assert "different values for the same metric" in GROUNDED_ANSWER_DEVELOPER_PROMPT
 
 
+def test_query_calls_status_callback_at_each_pipeline_stage(monkeypatch):
+    """VecteraRetriever.query() should invoke status_callback at each stage."""
+    source_nodes = [
+        _node("node-1", 0.9, {"chunk_type": "text", "document_id": "doc-1"}),
+    ]
+
+    monkeypatch.setattr(
+        VecteraRetriever,
+        "_retrieve",
+        lambda self, question: (source_nodes, {"retrieval_mode": "hybrid"}),
+    )
+    monkeypatch.setattr(
+        VecteraRetriever,
+        "_rank_nodes",
+        lambda self, question, nodes: nodes,
+    )
+    monkeypatch.setattr(
+        VecteraRetriever,
+        "_select_evidence_nodes",
+        lambda self, question, nodes: nodes,
+    )
+    monkeypatch.setattr(
+        VecteraRetriever,
+        "_synthesize_answer",
+        lambda self, question, citations, conflicts: {
+            "answer": "Synthesized answer.",
+            "reasoning": "Model thought about it.",
+            "images_used": [],
+            "reasoning_effort_applied": False,
+        },
+    )
+
+    emitted: list[str] = []
+    retriever = VecteraRetriever("client-1", top_k=5)
+    retriever.query("What is the retention period?", status_callback=emitted.append)
+
+    # Check that each major pipeline stage emitted a message
+    combined = " ".join(emitted).lower()
+    assert "retriev" in combined, f"Expected retrieval stage message, got: {emitted}"
+    assert "rerank" in combined, f"Expected reranking stage message, got: {emitted}"
+    assert "evidence" in combined, f"Expected evidence stage message, got: {emitted}"
+    assert "synthesiz" in combined, f"Expected synthesis stage message, got: {emitted}"
+
+
+def test_query_status_callback_exception_does_not_crash_pipeline(monkeypatch):
+    """A raising status_callback must never abort the retrieval pipeline."""
+    source_nodes = [
+        _node("node-1", 0.9, {"chunk_type": "text", "document_id": "doc-1"}),
+    ]
+
+    monkeypatch.setattr(
+        VecteraRetriever,
+        "_retrieve",
+        lambda self, question: (source_nodes, {"retrieval_mode": "hybrid"}),
+    )
+    monkeypatch.setattr(
+        VecteraRetriever,
+        "_rank_nodes",
+        lambda self, question, nodes: nodes,
+    )
+    monkeypatch.setattr(
+        VecteraRetriever,
+        "_select_evidence_nodes",
+        lambda self, question, nodes: nodes,
+    )
+    monkeypatch.setattr(
+        VecteraRetriever,
+        "_synthesize_answer",
+        lambda self, question, citations, conflicts: {
+            "answer": "Synthesized answer.",
+            "reasoning": None,
+            "images_used": [],
+            "reasoning_effort_applied": False,
+        },
+    )
+
+    def _raising_cb(msg: str) -> None:
+        raise RuntimeError("UI is broken")
+
+    retriever = VecteraRetriever("client-1", top_k=5)
+    result = retriever.query("What is the retention period?", status_callback=_raising_cb)
+    # Pipeline must complete normally despite callback raising
+    assert result["answer"] == "Synthesized answer."
+
+
 def test_build_conversation_context_block_returns_no_context_marker():
     context_block = _build_conversation_context_block({})
     assert context_block == "NO_PRIOR_CONVERSATION_CONTEXT"

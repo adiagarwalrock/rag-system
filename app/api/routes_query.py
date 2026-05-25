@@ -28,6 +28,7 @@ def query_documents(
         question=request.question,
         client_id=request.client_id,
         reasoning_effort=request.reasoning_effort,
+        reasoning_summary=request.reasoning_summary,
         session_id=request.session_id,
     )
     return QueryResponse(

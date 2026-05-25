@@ -1,3 +1,5 @@
+import queue
+import threading
 from pathlib import Path
 from datetime import datetime
 
@@ -157,8 +159,10 @@ def _render_result_details(result: dict):
 
     reasoning = (result.get("reasoning") or "").strip()
     if reasoning:
-        with st.expander(":material/psychology: Reasoning trace", expanded=False):
-            st.write(reasoning)
+        with st.expander(
+            ":material/psychology: Model reasoning summary", expanded=True
+        ):
+            st.markdown(f"*{reasoning}*")
 
     if citations:
         with st.expander(
@@ -285,17 +289,91 @@ def _submit_question(
         st.markdown(question)
 
     with st.chat_message("assistant"):
-        with st.spinner("Searching documents and drafting a sourced answer..."):
-            result = api.query(
-                client_id,
-                question,
-                reasoning_effort=reasoning_effort,
-                session_id=session_id,
-            )
-            answer = result.get("answer", "No answer generated.")
-            st.write_stream(_stream_text(answer))
-            _render_result_details(result)
-            return result
+        step_queue: queue.Queue = queue.Queue()
+        result_holder: dict = {}
+
+        def _run_query() -> None:
+            def _status_cb(msg: str) -> None:
+                step_queue.put(("step", msg))
+
+            def _reasoning_cb(delta: str) -> None:
+                step_queue.put(("reasoning", delta))
+
+            try:
+                r = api.query(
+                    client_id,
+                    question,
+                    reasoning_effort=reasoning_effort,
+                    session_id=session_id,
+                    status_callback=_status_cb,
+                    reasoning_callback=_reasoning_cb,
+                )
+                step_queue.put(("done", r))
+            except Exception as exc:  # noqa: BLE001
+                step_queue.put(("error", exc))
+
+        worker = threading.Thread(target=_run_query, daemon=True)
+        worker.start()
+
+        # Use st.status while the pipeline is running, then clear it completely
+        # so it doesn't sit above the answer once done.
+        status_placeholder = st.empty()
+        reasoning_placeholder = st.empty()
+        reasoning_buf: list[str] = []
+
+        with status_placeholder:
+            with st.status("Processing your question…", expanded=True) as status_box:
+                while True:
+                    kind, payload = step_queue.get()
+                    if kind == "step":
+                        status_box.write(payload)
+                    elif kind == "reasoning":
+                        # Accumulate and show live reasoning summary inside status
+                        reasoning_buf.append(payload)
+                        live_text = "".join(reasoning_buf)
+                        with reasoning_placeholder:
+                            with st.expander(
+                                ":material/psychology: Model reasoning summary",
+                                expanded=True,
+                            ):
+                                st.markdown(f"*{live_text}*")
+                    elif kind == "done":
+                        result_holder["result"] = payload
+                        status_box.update(
+                            label="✓ Done", state="complete", expanded=False
+                        )
+                        break
+                    elif kind == "error":
+                        status_box.update(
+                            label="Error during processing", state="error", expanded=True
+                        )
+                        worker.join(timeout=5)
+                        raise payload
+
+        worker.join(timeout=5)
+
+        # Remove the status container entirely — answer and details render fresh below
+        status_placeholder.empty()
+
+        result = result_holder["result"]
+
+        # If the model returned reasoning in the result dict, prefer that (full text).
+        # Otherwise keep whatever we accumulated live from the streaming deltas.
+        final_reasoning = (result.get("reasoning") or "").strip()
+        if not final_reasoning and reasoning_buf:
+            final_reasoning = "".join(reasoning_buf).strip()
+            # Write it back into the result so _render_result_details picks it up
+            result = dict(result)
+            result["reasoning"] = final_reasoning or None
+
+        # Clear the live reasoning placeholder — _render_result_details will show
+        # the final version inside its own expander.
+        reasoning_placeholder.empty()
+
+        answer = result.get("answer", "No answer generated.")
+        st.write_stream(_stream_text(answer))
+        _render_result_details(result)
+        return result
 
 
 def _format_session_timestamp(raw_value: str | None) -> str:

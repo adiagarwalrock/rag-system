@@ -33,7 +33,10 @@ class ChatConversationService:
         client_id: str,
         question: str,
         reasoning_effort: str = "medium",
+        reasoning_summary: str | None = None,
         session_id: str | None = None,
+        status_callback=None,
+        reasoning_callback=None,
     ) -> dict:
         session = self._resolve_session(client_id=client_id, session_id=session_id)
         next_turn_index = self._next_turn_index(session.id)
@@ -60,8 +63,11 @@ class ChatConversationService:
                 client_id=client_id,
                 db=self.db,
                 reasoning_effort=reasoning_effort,
+                reasoning_summary=reasoning_summary,
                 session_id=session.id,
                 conversation_context=context_bundle.to_dict(),
+                status_callback=status_callback,
+                reasoning_callback=reasoning_callback,
             )
         except Exception as exc:
             self.db.rollback()

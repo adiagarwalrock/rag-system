@@ -9,6 +9,7 @@ import mimetypes
 import re
 import hashlib
 import base64
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
@@ -25,9 +26,12 @@ from llama_index.core.vector_stores import ExactMatchFilter, MetadataFilters
 
 from app.core.ai_provider import (
     extract_chat_response_text,
+    extract_chat_response_reasoning,
     get_llm,
     invoke_llm_chat,
+    stream_invoke_llm_chat,
     normalize_reasoning_effort,
+    SUPPORTED_REASONING_SUMMARIES,
 )
 from app.core.config import settings
 from app.core.safe_coerce import normalize_metric_subject, safe_bool, safe_int
@@ -190,10 +194,14 @@ class GroundedAnswerSynthesizer:
         *,
         client_id: str,
         reasoning_effort: str,
+        reasoning_summary: str | None = None,
+        reasoning_callback: Callable[[str], None] | None = None,
         conversation_context: dict[str, Any],
     ):
         self.client_id = client_id
         self.reasoning_effort = reasoning_effort
+        self.reasoning_summary = reasoning_summary
+        self.reasoning_callback = reasoning_callback
         self.conversation_context = conversation_context
 
     def synthesize(
@@ -289,10 +297,11 @@ class GroundedAnswerSynthesizer:
                 image_paths=image_paths,
             )
 
-            response = invoke_llm_chat(
+            llm_kwargs = dict(
                 model=settings.LLM_MODEL,
                 input_messages=input_messages,
                 reasoning_effort=self.reasoning_effort,
+                reasoning_summary=self.reasoning_summary,
                 max_output_tokens=settings.RESPONSE_MAX_OUTPUT_TOKENS,
                 prompt_cache_key=settings.RESPONSE_PROMPT_CACHE_KEY,
                 prompt_cache_retention=settings.RESPONSE_PROMPT_CACHE_RETENTION,
@@ -300,8 +309,60 @@ class GroundedAnswerSynthesizer:
                 user_tag=settings.RESPONSE_USER_TAG,
                 timeout_seconds=settings.RESPONSE_SYNTHESIS_TIMEOUT_SECONDS,
             )
-            text = extract_chat_response_text(response)
-            answer, reasoning = _split_reasoning_from_text(text)
+
+            logger.info(
+                "Synthesis path: streaming=%s reasoning_effort=%s reasoning_summary=%s use_responses=%s",
+                self.reasoning_callback is not None,
+                self.reasoning_effort,
+                self.reasoning_summary,
+                settings.OPENAI_USE_RESPONSES,
+            )
+
+            if self.reasoning_callback is not None:
+                # Streaming path: emit reasoning summary deltas live via callback,
+                # accumulate answer text from answer deltas.
+                answer_parts: list[str] = []
+                reasoning_parts: list[str] = []
+                delta_count = 0
+                reasoning_delta_count = 0
+                for r_delta, a_delta in stream_invoke_llm_chat(**llm_kwargs):
+                    delta_count += 1
+                    if r_delta:
+                        reasoning_delta_count += 1
+                        reasoning_parts.append(r_delta)
+                        try:
+                            self.reasoning_callback(r_delta)
+                        except Exception:
+                            pass
+                    if a_delta:
+                        answer_parts.append(a_delta)
+                text = "".join(answer_parts).strip()
+                reasoning_text: str | None = "".join(reasoning_parts).strip() or None
+                logger.info(
+                    "Streaming synthesis complete: total_deltas=%d reasoning_deltas=%d answer_chars=%d reasoning_chars=%d",
+                    delta_count,
+                    reasoning_delta_count,
+                    len(text),
+                    len(reasoning_text or ""),
+                )
+                answer, parsed_reasoning = _split_reasoning_from_text(text)
+                reasoning: str | None = reasoning_text or parsed_reasoning
+            else:
+                # Blocking path (no live callback needed).
+                response = invoke_llm_chat(**llm_kwargs)
+                text = extract_chat_response_text(response)
+                answer, tag_reasoning = _split_reasoning_from_text(text)
+                # Prefer the ThinkingBlock reasoning summary (from OpenAI's
+                # reasoning.summary feature) over any <thinking> tag fallback.
+                block_reasoning = extract_chat_response_reasoning(response)
+                logger.info(
+                    "Blocking synthesis complete: answer_chars=%d block_reasoning_chars=%d tag_reasoning_chars=%d",
+                    len(text),
+                    len(block_reasoning or ""),
+                    len(tag_reasoning or ""),
+                )
+                reasoning: str | None = block_reasoning or tag_reasoning
+
             if not answer:
                 raise ValueError("LLM returned empty answer")
             return GroundedAnswerResult(
@@ -315,11 +376,6 @@ class GroundedAnswerSynthesizer:
             # wait another 240s when the API is just slow.
             if isinstance(exc, (TimeoutError, _httpx.TimeoutException)):
                 raise
-            logger.exception(
-                "Responses answer synthesis failed; falling back to LlamaIndex chat"
-            )
-            return None
-        except Exception:
             logger.exception(
                 "Responses answer synthesis failed; falling back to LlamaIndex chat"
             )
@@ -394,11 +450,16 @@ class VecteraRetriever:
         client_id: str,
         top_k: int = 15,
         reasoning_effort: str = "medium",
+        reasoning_summary: str | None = None,
         conversation_context: dict[str, Any] | None = None,
+        reasoning_callback: Callable[[str], None] | None = None,
     ):
         self.client_id = client_id
         self.top_k = top_k
         self.reasoning_effort = normalize_reasoning_effort(reasoning_effort)
+        resolved_summary = (reasoning_summary or "").strip().lower() or None
+        self.reasoning_summary = resolved_summary if resolved_summary in SUPPORTED_REASONING_SUMMARIES else None
+        self.reasoning_callback = reasoning_callback
         self.conversation_context = conversation_context or {}
         self.prefetch_top_k = top_k * 5
         self.evidence_limit = DEFAULT_EVIDENCE_LIMIT
@@ -411,23 +472,42 @@ class VecteraRetriever:
         self.answer_synthesizer = GroundedAnswerSynthesizer(
             client_id=self.client_id,
             reasoning_effort=self.reasoning_effort,
+            reasoning_summary=self.reasoning_summary,
+            reasoning_callback=self.reasoning_callback,
             conversation_context=self.conversation_context,
         )
 
-    def query(self, question: str) -> Dict[str, Any]:
+    def query(
+        self,
+        question: str,
+        status_callback: Callable[[str], None] | None = None,
+    ) -> Dict[str, Any]:
         """
         Execute the full retrieval and answer pipeline.
+
+        ``status_callback`` is an optional callable invoked with a short human-readable
+        label at each pipeline stage.  The UI uses this to update a live progress panel
+        while the synchronous pipeline is running in a background thread.
 
         Returns:
             Dict with answer, citations, conflicts, and metadata.
         """
+        def _emit(msg: str) -> None:
+            if status_callback is not None:
+                try:
+                    status_callback(msg)
+                except Exception:
+                    pass  # never let a UI callback crash the pipeline
+
         logger.info("Query for client %s: %s", self.client_id, question[:100])
 
         # Step 1: Hybrid Qdrant retrieval, with dense fallback for older indexes.
+        _emit("🔍 Retrieving relevant chunks…")
         source_nodes, retrieval_metadata = self._retrieve(question)
         intent = analyze_retrieval_intent(question)
 
         if not source_nodes:
+            _emit("⚠️ No matching chunks found in the document index")
             return {
                 "answer": "I could not find relevant information in the uploaded documents to answer this question.",
                 "reasoning": None,
@@ -449,9 +529,11 @@ class VecteraRetriever:
             }
 
         # Step 2: Rank candidates with semantic + temporal/version signals.
+        _emit(f"📊 Reranking {len(source_nodes)} candidate chunks…")
         ranked_nodes = self._rank_nodes(question, source_nodes)
 
         # Step 3: Select bounded evidence used for answer synthesis/citations.
+        _emit("✂️ Selecting evidence…")
         evidence_nodes = self._select_evidence_nodes(question, ranked_nodes)
         retrieval_diagnostics = _build_retrieval_diagnostics(
             ranked_nodes, evidence_nodes, intent=intent
@@ -466,6 +548,7 @@ class VecteraRetriever:
         citations = build_citations(evidence_nodes)
 
         # Step 6: Synthesize grounded answer from selected evidence only.
+        _emit("🧠 Synthesizing grounded answer…")
         synthesis = self._synthesize_answer(question, citations, conflicts)
 
         return {

@@ -7,7 +7,8 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import insert, true
@@ -29,8 +30,11 @@ class QueryExecutionRequest:
     question: str
     client_id: str
     reasoning_effort: str = "medium"
+    reasoning_summary: str | None = None
     session_id: str | None = None
     conversation_context: dict[str, Any] | None = None
+    status_callback: Callable[[str], None] | None = field(default=None, compare=False)
+    reasoning_callback: Callable[[str], None] | None = field(default=None, compare=False)
 
 
 class QueryLogWriter:
@@ -180,9 +184,11 @@ class QueryExecutionService:
         retriever = self.retriever_factory(
             client_id=request.client_id,
             reasoning_effort=request.reasoning_effort,
+            reasoning_summary=request.reasoning_summary,
             conversation_context=request.conversation_context,
+            reasoning_callback=request.reasoning_callback,
         )
-        return retriever.query(request.question)
+        return retriever.query(request.question, status_callback=request.status_callback)
 
     @staticmethod
     def _latency_ms(start_time: float) -> int:
@@ -194,11 +200,18 @@ def execute_query(
     client_id: str,
     db: Session,
     reasoning_effort: str = "medium",
+    reasoning_summary: str | None = None,
     session_id: str | None = None,
     conversation_context: dict | None = None,
+    status_callback: Callable[[str], None] | None = None,
+    reasoning_callback: Callable[[str], None] | None = None,
 ) -> dict:
     """
     Execute a full query pipeline: retrieve, answer, log.
+
+    ``status_callback`` is called at each pipeline stage with a human-readable label.
+    Callers (e.g. the Streamlit UI) can use this to update a live progress panel while
+    the synchronous pipeline runs.
 
     Returns:
         Dict with answer, citations, conflicts, and query metadata.
@@ -207,7 +220,10 @@ def execute_query(
         question=question,
         client_id=client_id,
         reasoning_effort=reasoning_effort,
+        reasoning_summary=reasoning_summary,
         session_id=session_id,
         conversation_context=conversation_context,
+        status_callback=status_callback,
+        reasoning_callback=reasoning_callback,
     )
     return QueryExecutionService(db).execute(request)

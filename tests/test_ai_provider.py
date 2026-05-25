@@ -1,6 +1,11 @@
 from types import SimpleNamespace
 
-from llama_index.core.base.llms.types import TextBlock
+from llama_index.core.base.llms.types import TextBlock, ThinkingBlock
+from openai.types.responses import (
+    ResponseCompletedEvent,
+    ResponseReasoningSummaryTextDeltaEvent,
+    ResponseReasoningTextDeltaEvent,
+)
 
 from app.core import ai_provider
 
@@ -12,6 +17,7 @@ def _settings(**overrides):
         "QUERY_EXPANSION_MODEL": "gpt-5.4-mini",
         "EMBEDDING_MODEL": "text-embedding-3-large",
         "EMBEDDING_OUTPUT_DIMENSION": None,
+        "REASONING_SUMMARY": None,
         "ai_api_key": "test-key",
         "is_openai_api_key_placeholder": False,
     }
@@ -181,6 +187,8 @@ def test_invoke_llm_chat_forwards_responses_runtime_kwargs(monkeypatch):
     assert captured["get_llm_kwargs"] == {
         "model": "gpt-5.2",
         "reasoning_effort": "high",
+        "reasoning_summary": None,
+        "timeout_seconds": 9.5,
     }
     chat_kwargs = captured["chat_kwargs"]
     assert chat_kwargs["max_output_tokens"] == 256
@@ -228,6 +236,112 @@ def test_invoke_llm_chat_ignores_responses_only_kwargs_when_disabled(monkeypatch
     assert "truncation" not in chat_kwargs
 
 
+def test_get_llm_includes_summary_in_reasoning_options(monkeypatch):
+    """reasoning_options should contain 'summary' when reasoning_summary is a valid value."""
+    monkeypatch.setattr(
+        ai_provider,
+        "settings",
+        _settings(OPENAI_USE_RESPONSES=True, REASONING_SUMMARY=None),
+    )
+
+    class FakeOpenAIResponses:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(ai_provider, "OpenAIResponses", FakeOpenAIResponses)
+
+    llm = ai_provider.get_llm(reasoning_effort="medium", reasoning_summary="concise")
+
+    assert llm.kwargs["reasoning_options"] == {"effort": "medium", "summary": "concise"}
+
+
+def test_get_llm_falls_back_to_settings_summary(monkeypatch):
+    """When reasoning_summary is not passed by caller, settings.REASONING_SUMMARY is used."""
+    monkeypatch.setattr(
+        ai_provider,
+        "settings",
+        _settings(OPENAI_USE_RESPONSES=True, REASONING_SUMMARY="auto"),
+    )
+
+    class FakeOpenAIResponses:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(ai_provider, "OpenAIResponses", FakeOpenAIResponses)
+
+    llm = ai_provider.get_llm(reasoning_effort="high")
+
+    assert llm.kwargs["reasoning_options"] == {"effort": "high", "summary": "auto"}
+
+
+def test_get_llm_omits_summary_when_none(monkeypatch):
+    """No 'summary' key is added when both caller and settings provide None."""
+    monkeypatch.setattr(
+        ai_provider,
+        "settings",
+        _settings(OPENAI_USE_RESPONSES=True, REASONING_SUMMARY=None),
+    )
+
+    class FakeOpenAIResponses:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(ai_provider, "OpenAIResponses", FakeOpenAIResponses)
+
+    llm = ai_provider.get_llm(reasoning_effort="low", reasoning_summary=None)
+
+    assert llm.kwargs["reasoning_options"] == {"effort": "low"}
+    assert "summary" not in llm.kwargs["reasoning_options"]
+
+
+def test_get_llm_omits_summary_for_unknown_value(monkeypatch):
+    """An unrecognised summary value is silently discarded."""
+    monkeypatch.setattr(
+        ai_provider,
+        "settings",
+        _settings(OPENAI_USE_RESPONSES=True, REASONING_SUMMARY=None),
+    )
+
+    class FakeOpenAIResponses:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(ai_provider, "OpenAIResponses", FakeOpenAIResponses)
+
+    llm = ai_provider.get_llm(reasoning_effort="medium", reasoning_summary="verbose")
+
+    assert "summary" not in llm.kwargs["reasoning_options"]
+
+
+def test_to_chat_messages_preserves_phase_on_assistant(monkeypatch):
+    """phase='commentary' on an assistant message dict is forwarded via additional_kwargs."""
+    from llama_index.core.base.llms.types import MessageRole
+
+    messages = ai_provider._to_chat_messages([
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "Let me think...", "phase": "commentary"},
+        {"role": "assistant", "content": "Here is the answer.", "phase": "final_answer"},
+    ])
+
+    assert messages[0].role == MessageRole.USER
+    assert messages[0].additional_kwargs.get("phase") is None
+
+    assert messages[1].role == MessageRole.ASSISTANT
+    assert messages[1].additional_kwargs.get("phase") == "commentary"
+
+    assert messages[2].role == MessageRole.ASSISTANT
+    assert messages[2].additional_kwargs.get("phase") == "final_answer"
+
+
+def test_to_chat_messages_does_not_add_phase_to_non_assistant(monkeypatch):
+    """phase is only forwarded for assistant role; ignored for user/system messages."""
+    messages = ai_provider._to_chat_messages([
+        {"role": "user", "content": "hi", "phase": "commentary"},
+    ])
+
+    assert not messages[0].additional_kwargs.get("phase")
+
+
 def test_extract_chat_response_text_reads_raw_responses_output_text():
     response = SimpleNamespace(
         message=SimpleNamespace(blocks=[], content=""),
@@ -266,3 +380,123 @@ def test_extract_chat_response_text_reads_dict_responses_output_items():
     }
 
     assert ai_provider.extract_chat_response_text(response) == "Dict-shaped answer."
+
+
+# --- stream_invoke_llm_chat tests ---
+
+
+def _make_stream_chunk(raw_event, delta=""):
+    """Build a minimal ChatResponse-like object for streaming tests."""
+    return SimpleNamespace(
+        raw=raw_event,
+        delta=delta,
+        message=SimpleNamespace(blocks=[]),
+    )
+
+
+def test_stream_invoke_llm_chat_yields_reasoning_summary_deltas(monkeypatch):
+    """ResponseReasoningSummaryTextDeltaEvent deltas are emitted as reasoning tuples."""
+    monkeypatch.setattr(ai_provider, "settings", _settings(OPENAI_USE_RESPONSES=True))
+
+    summary_event = ResponseReasoningSummaryTextDeltaEvent(
+        delta="Because prices",
+        item_id="item-1",
+        output_index=0,
+        sequence_number=1,
+        summary_index=0,
+        type="response.reasoning_summary_text.delta",
+    )
+    text_chunk = _make_stream_chunk(raw_event=SimpleNamespace(), delta="The answer.")
+
+    class FakeLLM:
+        def stream_chat(self, messages, **kwargs):
+            yield _make_stream_chunk(raw_event=summary_event)
+            yield text_chunk
+
+    monkeypatch.setattr(ai_provider, "get_llm", lambda **kw: FakeLLM())
+    monkeypatch.setattr(ai_provider, "OpenAIResponses", FakeLLM)
+
+    results = list(
+        ai_provider.stream_invoke_llm_chat(
+            model="gpt-5.2",
+            input_messages=[{"role": "user", "content": "question"}],
+        )
+    )
+
+    reasoning_tuples = [(r, a) for r, a in results if r is not None]
+    answer_tuples = [(r, a) for r, a in results if a is not None]
+
+    assert any("Because prices" in (r or "") for r, a in reasoning_tuples)
+    assert any("The answer." in (a or "") for r, a in answer_tuples)
+
+
+def test_stream_invoke_llm_chat_yields_raw_reasoning_text_deltas(monkeypatch):
+    """ResponseReasoningTextDeltaEvent (raw CoT) is also emitted as reasoning tuples."""
+    monkeypatch.setattr(ai_provider, "settings", _settings(OPENAI_USE_RESPONSES=True))
+
+    raw_event = ResponseReasoningTextDeltaEvent(
+        delta="Raw thinking token",
+        item_id="item-1",
+        output_index=0,
+        sequence_number=1,
+        content_index=0,
+        type="response.reasoning_text.delta",
+    )
+
+    class FakeLLM:
+        def stream_chat(self, messages, **kwargs):
+            yield _make_stream_chunk(raw_event=raw_event)
+            yield _make_stream_chunk(raw_event=SimpleNamespace(), delta="Answer here.")
+
+    monkeypatch.setattr(ai_provider, "get_llm", lambda **kw: FakeLLM())
+    monkeypatch.setattr(ai_provider, "OpenAIResponses", FakeLLM)
+
+    results = list(
+        ai_provider.stream_invoke_llm_chat(
+            model="gpt-5.2",
+            input_messages=[{"role": "user", "content": "question"}],
+        )
+    )
+
+    reasoning_tuples = [(r, a) for r, a in results if r is not None]
+    assert any("Raw thinking token" in (r or "") for r, a in reasoning_tuples)
+
+
+def test_stream_invoke_llm_chat_thinking_block_fallback_on_completed_event(monkeypatch):
+    """When no reasoning deltas arrive, ThinkingBlock from ResponseCompletedEvent is used."""
+    monkeypatch.setattr(ai_provider, "settings", _settings(OPENAI_USE_RESPONSES=True))
+
+    # Simulate a ResponseCompletedEvent with isinstance check via fake type
+    class FakeCompletedEvent:
+        pass
+
+    # Patch ResponseCompletedEvent inside ai_provider to our fake class
+    monkeypatch.setattr(ai_provider, "ResponseCompletedEvent", FakeCompletedEvent)
+
+    completed_chunk = SimpleNamespace(
+        raw=FakeCompletedEvent(),
+        delta="",
+        message=SimpleNamespace(
+            blocks=[ThinkingBlock(content="Full reasoning summary.")]
+        ),
+    )
+    answer_chunk = _make_stream_chunk(raw_event=SimpleNamespace(), delta="The answer.")
+
+    class FakeLLM:
+        def stream_chat(self, messages, **kwargs):
+            yield answer_chunk
+            yield completed_chunk
+
+    monkeypatch.setattr(ai_provider, "get_llm", lambda **kw: FakeLLM())
+    monkeypatch.setattr(ai_provider, "OpenAIResponses", FakeLLM)
+
+    results = list(
+        ai_provider.stream_invoke_llm_chat(
+            model="gpt-5.2",
+            input_messages=[{"role": "user", "content": "question"}],
+        )
+    )
+
+    reasoning_tuples = [(r, a) for r, a in results if r is not None]
+    assert len(reasoning_tuples) == 1
+    assert reasoning_tuples[0][0] == "Full reasoning summary."

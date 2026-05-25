@@ -38,6 +38,10 @@ class QueryRequest(BaseModel):
     question: str
     session_id: Optional[str] = None
     reasoning_effort: Literal["low", "medium", "high"] = "medium"
+    reasoning_summary: Optional[Literal["auto", "concise", "detailed"]] = None
+    """OpenAI reasoning summary verbosity for this request.  ``None`` (default) falls back
+    to the ``REASONING_SUMMARY`` environment variable.  Only effective when
+    ``OPENAI_USE_RESPONSES=true`` and the model is a reasoning model (gpt-5.x / o-series)."""
 
 
 class CitationDetail(BaseModel):

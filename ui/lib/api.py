@@ -195,7 +195,10 @@ class VecteraCore:
         client_id: str,
         question: str,
         reasoning_effort: str = "medium",
+        reasoning_summary: str | None = None,
         session_id: str | None = None,
+        status_callback=None,
+        reasoning_callback=None,
     ) -> dict:
         with SessionLocal() as db:
             try:
@@ -203,7 +206,10 @@ class VecteraCore:
                     client_id=client_id,
                     question=question,
                     reasoning_effort=reasoning_effort,
+                    reasoning_summary=reasoning_summary,
                     session_id=session_id,
+                    status_callback=status_callback,
+                    reasoning_callback=reasoning_callback,
                 )
                 return response
             except Exception as e:

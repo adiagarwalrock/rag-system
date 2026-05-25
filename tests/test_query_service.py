@@ -30,13 +30,16 @@ def test_execute_query_persists_query_retrieval_and_conflict_logs(
             self,
             client_id: str,
             reasoning_effort: str = "medium",
+            reasoning_summary: str | None = None,
             conversation_context: dict | None = None,
+            reasoning_callback=None,
         ):
             self.client_id = client_id
             self.reasoning_effort = reasoning_effort
+            self.reasoning_summary = reasoning_summary
             self.conversation_context = conversation_context
 
-        def query(self, question: str) -> dict:
+        def query(self, question: str, status_callback=None) -> dict:
             assert self.client_id == client.id
             assert self.reasoning_effort == "medium"
             assert question == "What changed in v2?"
@@ -106,13 +109,16 @@ def test_execute_query_marks_query_log_failed_on_retrieval_error(
             self,
             client_id: str,
             reasoning_effort: str = "medium",
+            reasoning_summary: str | None = None,
             conversation_context: dict | None = None,
+            reasoning_callback=None,
         ):
             self.client_id = client_id
             self.reasoning_effort = reasoning_effort
+            self.reasoning_summary = reasoning_summary
             self.conversation_context = conversation_context
 
-        def query(self, question: str) -> dict:
+        def query(self, question: str, status_callback=None) -> dict:
             raise RuntimeError("simulated retrieval failure")
 
     monkeypatch.setattr(query_service, "VecteraRetriever", FailingRetriever)

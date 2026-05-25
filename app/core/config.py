@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     EMBEDDING_OUTPUT_DIMENSION: int | None = None
     RESPONSE_INPUT_BUDGET_RATIO: float = 0.8
     RESPONSE_MAX_OUTPUT_TOKENS: int = 2500
-RESPONSE_SYNTHESIS_TIMEOUT_SECONDS: int = 240  # max wait for main answer synthesis; gpt-5.2 reasoning_effort=high on cross-document questions can take 2+ minutes
+    RESPONSE_SYNTHESIS_TIMEOUT_SECONDS: int = 240  # max wait for main answer synthesis; gpt-5.2 reasoning_effort=high on cross-document questions can take 2+ minutes
     RESPONSE_PROMPT_CACHE_KEY: str = "vectera:grounded-answer:v2"
     RESPONSE_PROMPT_CACHE_RETENTION: str = "24h"
     RESPONSE_USER_TAG: str = "developer"
@@ -122,6 +122,7 @@ RESPONSE_SYNTHESIS_TIMEOUT_SECONDS: int = 240  # max wait for main answer synthe
     REASONING_MAX_OUTPUT_TOKENS: int = 700
     REASONING_TIMEOUT_SECONDS: int = 30
     REASONING_MODEL: str | None = "gpt-5.4-mini"  # use a non-reasoning model; gpt-5.2 burns hidden chain-of-thought tokens against max_output_tokens, leaving too little budget for visible JSON
+    REASONING_SUMMARY: str | None = "auto"  # OpenAI reasoning summary verbosity: "auto", "concise", "detailed", or None to disable. Only applied when OPENAI_USE_RESPONSES=True and a reasoning_effort is set. NOTE: gpt-5.2 only emits reasoning summary events for reasoning_effort="high"; "medium" and "low" return zero reasoning tokens.
 
     # Background ingestion
     INGESTION_MAX_WORKERS: int = 2
