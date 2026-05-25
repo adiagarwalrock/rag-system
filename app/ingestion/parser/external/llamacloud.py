@@ -15,9 +15,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-import time
-from typing import Any
-
 from app.core.config import settings
 from app.ingestion.parser.external.helper import (
     DocumentExtraction,
