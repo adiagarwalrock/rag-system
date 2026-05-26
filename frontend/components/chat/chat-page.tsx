@@ -9,7 +9,7 @@ import { useSessionMessages } from "@/lib/hooks/use-chat";
 import { useClients } from "@/lib/hooks/use-clients";
 import { useWorkspaceStore } from "@/lib/state/workspace-store";
 import { ChatComposer } from "@/components/chat/chat-composer";
-import { Check, Copy, Printer, Share2 } from "lucide-react";
+import { BookOpen, Check, Copy, Printer, Share2, X } from "lucide-react";
 import { CitationChip } from "@/components/chat/citation-chip";
 import { ErrorState } from "@/components/common/error-state";
 import { MarkdownContent } from "@/components/common/markdown-content";
@@ -24,6 +24,11 @@ type ThreadMessage = {
   phases?: string[];
   reasoning?: string;
 };
+
+const inspectorWidthKey = "rag-console.sources-panel-width";
+const defaultInspectorWidth = 420;
+const minInspectorWidth = 320;
+const maxInspectorWidth = 720;
 
 export default function ChatPage({ routeSessionId }: { routeSessionId?: string }) {
   const router = useRouter();
@@ -46,8 +51,15 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [shareCopied, setShareCopied] = useState(false);
+  const [inspectedResponse, setInspectedResponse] = useState<QueryResponse | null>(null);
+  const [inspectorWidth, setInspectorWidth] = useState(defaultInspectorWidth);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const stored = Number(localStorage.getItem(inspectorWidthKey));
+    if (Number.isFinite(stored)) setInspectorWidth(clampInspectorWidth(stored));
+  }, []);
 
   useEffect(() => {
     if (routeSessionId && routeSessionId !== sessionId) {
@@ -96,6 +108,34 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
     await navigator.clipboard.writeText(url.toString());
     setShareCopied(true);
     window.setTimeout(() => setShareCopied(false), 1200);
+  }
+
+  function updateInspectorWidth(width: number) {
+    const nextWidth = clampInspectorWidth(width);
+    setInspectorWidth(nextWidth);
+    localStorage.setItem(inspectorWidthKey, String(nextWidth));
+  }
+
+  function startInspectorResize(event: React.PointerEvent) {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = inspectorWidth;
+
+    function handlePointerMove(moveEvent: PointerEvent) {
+      updateInspectorWidth(startWidth + startX - moveEvent.clientX);
+    }
+
+    function handlePointerUp() {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    }
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
   }
 
   async function applyFallback(
@@ -246,7 +286,11 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
           ) : (
             <div className="chat-print-thread flex flex-col gap-7">
               {messages.map((message) => (
-                <ChatThreadMessage key={message.id} message={message} />
+                <ChatThreadMessage
+                  key={message.id}
+                  message={message}
+                  onInspectSources={setInspectedResponse}
+                />
               ))}
               <div ref={bottomRef} className="h-10" />
             </div>
@@ -279,14 +323,23 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
           </p>
         </div>
       </div>
+      <AnswerSourcesPanel
+        response={inspectedResponse}
+        onClose={() => setInspectedResponse(null)}
+        width={inspectorWidth}
+        onResizeStart={startInspectorResize}
+        onWidthChange={updateInspectorWidth}
+      />
     </div>
   );
 }
 
 function ChatThreadMessage({
   message,
+  onInspectSources,
 }: {
   message: ThreadMessage;
+  onInspectSources: (response: QueryResponse) => void;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -327,29 +380,6 @@ function ChatThreadMessage({
 
         <MarkdownContent className="mt-3">{message.content || (message.streaming && !message.phases?.length ? "Thinking..." : "")}</MarkdownContent>
         {message.response?.citations.length ? (
-          <details className="no-print mt-4 rounded-2xl border border-border bg-card/60 p-3">
-            <summary className="cursor-pointer text-sm font-medium text-foreground">
-              Sources, conflicts, and retrieval trace
-            </summary>
-            <div className="mt-3 space-y-4">
-              <div className="flex flex-wrap gap-2">
-                {message.response.citations.map((citation, index) => (
-                  <CitationChip key={`${citation.filename}-${index}`} citation={citation} index={index} />
-                ))}
-              </div>
-              {message.response.conflicts.length ? (
-                <div className="space-y-2">
-                  {message.response.conflicts.map((conflict, index) => (
-                    <div key={index} className="rounded-xl border border-warning/30 bg-warning/10 p-3 text-sm text-amber-100">
-                      {conflict.explanation}
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          </details>
-        ) : null}
-        {message.response?.citations.length ? (
           <div className="print-sources">
             <div className="print-section-title">Sources</div>
             <ol>
@@ -366,6 +396,13 @@ function ChatThreadMessage({
         ) : null}
         {message.response ? (
           <div className="no-print mt-4 flex flex-wrap items-center gap-2">
+            <button
+              className="inline-flex h-6 items-center gap-1 rounded-md border border-border bg-muted px-2 text-xs text-muted-foreground hover:text-foreground"
+              onClick={() => onInspectSources(message.response!)}
+            >
+              <BookOpen className="h-3.5 w-3.5" />
+              Sources
+            </button>
             {message.response.conflicts.length ? <StatusBadge status="warning" label={`${message.response.conflicts.length} conflicts`} /> : null}
             <button
               className="inline-flex h-6 items-center gap-1 rounded-md border border-border bg-muted px-2 text-xs text-muted-foreground hover:text-foreground"
@@ -384,6 +421,150 @@ function ChatThreadMessage({
       </div>
     </div>
   );
+}
+
+function AnswerSourcesPanel({
+  response,
+  onClose,
+  width,
+  onResizeStart,
+  onWidthChange,
+}: {
+  response: QueryResponse | null;
+  onClose: () => void;
+  width: number;
+  onResizeStart: (event: React.PointerEvent) => void;
+  onWidthChange: (width: number) => void;
+}) {
+  if (!response) return null;
+
+  return (
+    <aside
+      className="no-print fixed inset-y-0 right-0 z-40 flex flex-col border-l border-border bg-card shadow-2xl shadow-black/50"
+      style={{ width: `min(${width}px, 92vw)` }}
+    >
+      <div
+        role="separator"
+        aria-label="Resize sources panel"
+        aria-orientation="vertical"
+        tabIndex={0}
+        className="absolute inset-y-0 -left-1 flex w-2 cursor-col-resize touch-none items-center justify-center"
+        onPointerDown={onResizeStart}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowLeft") {
+            event.preventDefault();
+            onWidthChange(width + 16);
+          }
+          if (event.key === "ArrowRight") {
+            event.preventDefault();
+            onWidthChange(width - 16);
+          }
+        }}
+      >
+        <span className="h-10 w-px rounded-full bg-border transition hover:bg-primary" />
+      </div>
+      <div className="flex h-14 items-center justify-between border-b border-border px-4">
+        <div>
+          <div className="text-sm font-semibold">Sources</div>
+          <div className="text-xs text-muted-foreground">
+            Evidence, conflicts, and retrieval trace
+          </div>
+        </div>
+        <button
+          type="button"
+          className="button-ghost h-8 w-8 p-0"
+          onClick={onClose}
+          aria-label="Close sources"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-4">
+        <InspectorSection label={`Citations // ${response.citations.length}`}>
+          {response.citations.length ? (
+            <div className="space-y-2">
+              {response.citations.map((citation, index) => (
+                <div key={`${citation.filename}-${index}`} className="rounded-lg border border-border bg-background p-3">
+                  <CitationChip citation={citation} index={index} />
+                  {citation.quote ? (
+                    <MarkdownContent className="mt-2 text-sm leading-6 text-muted-foreground">
+                      {citation.quote}
+                    </MarkdownContent>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">No citations returned.</p>
+          )}
+        </InspectorSection>
+
+        <InspectorSection label={`Conflicts // ${response.conflicts.length}`}>
+          {response.conflicts.length ? (
+            <div className="space-y-2">
+              {response.conflicts.map((conflict, index) => (
+                <div key={index} className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-amber-100">
+                  <div className="mb-1 font-medium">{conflict.severity} {conflict.type}</div>
+                  <MarkdownContent className="text-sm leading-6 text-amber-100">
+                    {conflict.explanation}
+                  </MarkdownContent>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">No conflicts detected.</p>
+          )}
+        </InspectorSection>
+
+        <InspectorSection label="Retrieval">
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <TraceFact label="Mode" value={response.retrieval.mode} />
+            <TraceFact label="Sparse" value={response.retrieval.sparse_available === false ? "unavailable" : "available"} />
+            <TraceFact label="Top K" value={response.retrieval.top_k ?? "-"} />
+            <TraceFact label="Latency" value={`${response.latency_ms} ms`} />
+          </div>
+          {response.retrieval.fallback_reason ? (
+            <div className="mt-2 rounded-lg border border-border bg-background p-3">
+              <MarkdownContent className="text-xs leading-5 text-muted-foreground">
+                {response.retrieval.fallback_reason}
+              </MarkdownContent>
+            </div>
+          ) : null}
+        </InspectorSection>
+      </div>
+    </aside>
+  );
+}
+
+function InspectorSection({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <details className="group mb-3 rounded-lg border border-border bg-card/60">
+      <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground">
+        <span>{label}</span>
+        <span className="text-[11px] transition group-open:rotate-90">›</span>
+      </summary>
+      <div className="border-t border-border p-3">{children}</div>
+    </details>
+  );
+}
+
+function TraceFact({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="rounded-lg border border-border bg-background p-3">
+      <div className="text-muted-foreground">{label}</div>
+      <div className="mt-1 font-mono text-foreground">{value}</div>
+    </div>
+  );
+}
+
+function clampInspectorWidth(width: number) {
+  return Math.min(maxInspectorWidth, Math.max(minInspectorWidth, Math.round(width)));
 }
 
 function toThreadMessage(message: ApiChatMessage): ThreadMessage {
