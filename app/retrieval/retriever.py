@@ -1364,15 +1364,24 @@ def _ensure_named_entity_evidence(
                 selected_keys.add(candidate_key)
                 continue
 
+            current_count = sum(
+                1 for node in selected if _node_matches_entity(node, aliases)
+            )
             replace_idx = _least_useful_entity_replacement_index(
                 selected=selected,
                 required_aliases=aliases_by_entity.values(),
+                target_aliases=aliases,
             )
             if replace_idx is None:
                 break
             selected_keys.discard(_node_unique_key(selected[replace_idx]))
             selected[replace_idx] = candidate
             selected_keys.add(candidate_key)
+            if (
+                sum(1 for node in selected if _node_matches_entity(node, aliases))
+                <= current_count
+            ):
+                break
 
     return selected
 
@@ -1623,13 +1632,20 @@ def _least_useful_entity_replacement_index(
     *,
     selected: list[Any],
     required_aliases: Any,
+    target_aliases: tuple[str, ...] | None = None,
 ) -> int | None:
     for idx in range(len(selected) - 1, -1, -1):
+        if target_aliases and _node_matches_entity(selected[idx], target_aliases):
+            continue
         if not any(
             _node_matches_entity(selected[idx], aliases) for aliases in required_aliases
         ):
             return idx
-    return len(selected) - 1 if selected else None
+    for idx in range(len(selected) - 1, -1, -1):
+        if target_aliases and _node_matches_entity(selected[idx], target_aliases):
+            continue
+        return idx
+    return None
 
 
 def _is_direct_metric_node(node: Any, normalized_question: str) -> bool:

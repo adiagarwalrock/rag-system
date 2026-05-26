@@ -9,16 +9,19 @@ import { useSessionMessages } from "@/lib/hooks/use-chat";
 import { useClients } from "@/lib/hooks/use-clients";
 import { useWorkspaceStore } from "@/lib/state/workspace-store";
 import { ChatComposer } from "@/components/chat/chat-composer";
-import { BookOpen, Check, Copy, Printer, Share2, X } from "lucide-react";
+import { BookOpen, Brain, Check, ChevronDown, Copy, Printer, Share2, X } from "lucide-react";
 import { CitationChip } from "@/components/chat/citation-chip";
 import { ErrorState } from "@/components/common/error-state";
 import { MarkdownContent } from "@/components/common/markdown-content";
 import { StatusBadge } from "@/components/common/status-badge";
+import { cn } from "@/lib/utils";
 
 type ThreadMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  createdAt?: string;
+  pinToTop?: boolean;
   response?: QueryResponse;
   streaming?: boolean;
   phases?: string[];
@@ -44,7 +47,6 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
     setReasoningEffort,
   } = useWorkspaceStore();
   const sessionMessages = useSessionMessages(workspaceId, sessionId);
-  const [retrievalMode, setRetrievalMode] = useState<"auto" | "hybrid" | "dense_only">("auto");
   const [includeMemory, setIncludeMemory] = useState(true);
   const [includeConflicts, setIncludeConflicts] = useState(true);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -52,9 +54,15 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
   const [error, setError] = useState<unknown>(null);
   const [shareCopied, setShareCopied] = useState(false);
   const [inspectedResponse, setInspectedResponse] = useState<QueryResponse | null>(null);
+  const [renderedInspectorResponse, setRenderedInspectorResponse] = useState<QueryResponse | null>(null);
   const [inspectorWidth, setInspectorWidth] = useState(defaultInspectorWidth);
   const abortRef = useRef<AbortController | null>(null);
+  const scrollAreaRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const messageRefs = useRef(new Map<string, HTMLDivElement>());
+  const scrollIntentRef = useRef<"none" | "bottom" | "submitted-question">("bottom");
+  const submittedQuestionIdRef = useRef<string | null>(null);
+  const suppressNextHistoryScrollRef = useRef(false);
 
   useEffect(() => {
     const stored = Number(localStorage.getItem(inspectorWidthKey));
@@ -72,19 +80,44 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
   }, [clients.data, setWorkspaceId, workspaceId]);
 
   useEffect(() => {
+    if (inspectedResponse) setRenderedInspectorResponse(inspectedResponse);
+  }, [inspectedResponse]);
+
+  useEffect(() => {
     if (!sessionId) {
       setMessages([]);
       return;
     }
     // Skip sync while streaming to avoid overwriting optimistic messages mid-flight.
     if (sessionMessages.data && !isStreaming) {
+      scrollIntentRef.current = suppressNextHistoryScrollRef.current ? "none" : "bottom";
+      suppressNextHistoryScrollRef.current = false;
       setMessages(sessionMessages.data.map(toThreadMessage));
     }
   }, [sessionId, sessionMessages.data, isStreaming]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [messages, isStreaming]);
+    const intent = scrollIntentRef.current;
+    if (intent === "submitted-question") {
+      const submittedQuestion = submittedQuestionIdRef.current
+        ? messageRefs.current.get(submittedQuestionIdRef.current)
+        : null;
+      const scrollArea = scrollAreaRef.current;
+      if (submittedQuestion && scrollArea) {
+        scrollArea.scrollTo({
+          top: Math.max(0, submittedQuestion.offsetTop - 12),
+          behavior: "smooth",
+        });
+      }
+      scrollIntentRef.current = "none";
+      return;
+    }
+
+    if (intent === "bottom") {
+      bottomRef.current?.scrollIntoView({ block: "end" });
+      scrollIntentRef.current = "none";
+    }
+  }, [messages]);
 
   function resolveSessionUrl(nextSessionId: string) {
     return `/c/${encodeURIComponent(nextSessionId)}`;
@@ -116,6 +149,12 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
     localStorage.setItem(inspectorWidthKey, String(nextWidth));
   }
 
+  function toggleInspectedResponse(response: QueryResponse) {
+    setInspectedResponse((current) =>
+      current?.id === response.id ? null : response,
+    );
+  }
+
   function startInspectorResize(event: React.PointerEvent) {
     event.preventDefault();
     const startX = event.clientX;
@@ -138,6 +177,10 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
     window.addEventListener("pointerup", handlePointerUp);
   }
 
+  function releasePinnedQuestion(message: ThreadMessage): ThreadMessage {
+    return message.pinToTop ? { ...message, pinToTop: false } : message;
+  }
+
   async function applyFallback(
     input: QueryRequest,
     assistantId: string,
@@ -145,11 +188,19 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
   ) {
     const fallback = await apiClient.query(input, signal);
     setResolvedSession(fallback.session_id);
+    suppressNextHistoryScrollRef.current = true;
     setMessages((current) =>
       current.map((message) =>
         message.id === assistantId
-          ? { ...message, content: fallback.answer, response: fallback, streaming: false }
-          : message,
+          ? {
+              ...message,
+              content: fallback.answer,
+              createdAt: fallback.created_at ?? message.createdAt,
+              response: fallback,
+              reasoning: fallback.reasoning ?? message.reasoning,
+              streaming: false,
+            }
+          : releasePinnedQuestion(message),
       ),
     );
   }
@@ -157,14 +208,18 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
   async function submit(question: string) {
     if (!workspaceId) return;
     const controller = new AbortController();
+    const submittedAt = new Date().toISOString();
+    const userId = crypto.randomUUID();
     const assistantId = crypto.randomUUID();
     abortRef.current = controller;
+    submittedQuestionIdRef.current = userId;
+    scrollIntentRef.current = "submitted-question";
     setError(null);
     setIsStreaming(true);
     setMessages((current) => [
       ...current,
-      { id: crypto.randomUUID(), role: "user", content: question },
-      { id: assistantId, role: "assistant", content: "", streaming: true },
+      { id: userId, role: "user", content: question, createdAt: submittedAt, pinToTop: true },
+      { id: assistantId, role: "assistant", content: "", createdAt: submittedAt, streaming: true },
     ]);
 
     const input: QueryRequest = {
@@ -172,7 +227,7 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
       client_id: workspaceId,
       session_id: sessionId || undefined,
       reasoning_effort: reasoningEffort,
-      retrieval_mode: retrievalMode,
+      reasoning_summary: "auto",
       include_memory: includeMemory,
       include_conflicts: includeConflicts,
     };
@@ -209,18 +264,20 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
           onFinal: (final) => {
             finalFromStream = final;
             setResolvedSession(final.session_id);
+            suppressNextHistoryScrollRef.current = true;
             setMessages((current) =>
               current.map((message) =>
                 message.id === assistantId
                   ? {
                       ...message,
                       content: final.answer,
+                      createdAt: final.created_at ?? message.createdAt,
                       response: final,
-                      reasoning: (final as Record<string, unknown>).reasoning as string | undefined ?? message.reasoning,
+                      reasoning: final.reasoning ?? message.reasoning,
                       streaming: false,
                       phases: undefined,
                     }
-                  : message,
+                  : releasePinnedQuestion(message),
               ),
             );
           },
@@ -235,7 +292,11 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
         await applyFallback(input, assistantId, controller.signal);
       } catch (queryError) {
         setError(queryError);
-        setMessages((current) => current.filter((message) => message.id !== assistantId));
+        setMessages((current) =>
+          current
+            .filter((message) => message.id !== assistantId)
+            .map(releasePinnedQuestion),
+        );
       }
     } finally {
       setIsStreaming(false);
@@ -269,7 +330,7 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
           ) : null}
         </div>
       ) : null}
-      <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-80 pt-10 md:pt-16">
+      <div ref={scrollAreaRef} className="no-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-80 pt-10 md:pt-16">
         <div className="chat-print-content mx-auto flex min-h-full w-full max-w-3xl flex-col">
           {messages.length === 0 ? (
             <div className="flex flex-1 flex-col items-center justify-center pb-32 text-center">
@@ -288,11 +349,21 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
           ) : (
             <div className="chat-print-thread flex flex-col gap-7">
               {messages.map((message) => (
-                <ChatThreadMessage
+                <div
                   key={message.id}
-                  message={message}
-                  onInspectSources={setInspectedResponse}
-                />
+                  ref={(node) => {
+                    if (node) {
+                      messageRefs.current.set(message.id, node);
+                    } else {
+                      messageRefs.current.delete(message.id);
+                    }
+                  }}
+                >
+                  <ChatThreadMessage
+                    message={message}
+                    onInspectSources={toggleInspectedResponse}
+                  />
+                </div>
               ))}
               <div ref={bottomRef} className="h-10" />
             </div>
@@ -313,8 +384,6 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
             onCancel={() => abortRef.current?.abort()}
             reasoningEffort={reasoningEffort}
             onReasoningEffortChange={setReasoningEffort}
-            retrievalMode={retrievalMode}
-            onRetrievalModeChange={setRetrievalMode}
             includeMemory={includeMemory}
             onIncludeMemoryChange={setIncludeMemory}
             includeConflicts={includeConflicts}
@@ -326,8 +395,10 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
         </div>
       </div>
       <AnswerSourcesPanel
-        response={inspectedResponse}
+        response={renderedInspectorResponse}
+        open={Boolean(inspectedResponse)}
         onClose={() => setInspectedResponse(null)}
+        onExited={() => setRenderedInspectorResponse(null)}
         width={inspectorWidth}
         onResizeStart={startInspectorResize}
         onWidthChange={updateInspectorWidth}
@@ -347,9 +418,32 @@ function ChatThreadMessage({
 
   if (message.role === "user") {
     return (
-      <div className="chat-print-turn chat-print-user flex justify-end">
-        <div className="chat-print-bubble max-w-[82%] rounded-2xl rounded-br-md bg-blue-600 px-4 py-3 text-sm leading-6 text-white">
-          {message.content}
+      <div
+        className={cn(
+          "chat-print-turn chat-print-user flex flex-col items-end",
+          message.pinToTop && "sticky top-0 z-10 bg-background/95 py-2 backdrop-blur",
+        )}
+      >
+        <div className="flex max-w-[82%] min-w-0 flex-col items-end">
+          <div className="chat-print-bubble max-w-full rounded-2xl rounded-br-md bg-blue-600 px-4 py-3 text-sm leading-6 text-white">
+            {message.content}
+          </div>
+          <div className="mt-1 flex items-center justify-end gap-2 text-right text-[11px] text-muted-foreground">
+            <span>{formatMessageTimestamp(message.createdAt)}</span>
+            <button
+              type="button"
+              className="no-print inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+              onClick={async () => {
+                await navigator.clipboard.writeText(message.content);
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 1200);
+              }}
+              disabled={!message.content}
+              aria-label="Copy question"
+            >
+              {copied ? <Check className="h-3.5 w-3.5 text-green-300" /> : <Copy className="h-3.5 w-3.5" />}
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -370,17 +464,29 @@ function ChatThreadMessage({
 
         {/* Reasoning summary — shown while streaming (live) and after response (collapsed) */}
         {message.reasoning ? (
-          <details className="mt-3 rounded-xl border border-border bg-muted/20" open={message.streaming}>
-            <summary className="flex cursor-pointer items-center gap-2 px-4 py-2.5 text-xs font-medium text-muted-foreground">
-              <span>🧠</span> Model reasoning summary
-            </summary>
-            <MarkdownContent className="px-4 pb-3 pt-1 text-xs leading-5 text-foreground/80">
-              {message.reasoning}
-            </MarkdownContent>
-          </details>
+          <ReasoningSummaryPanel
+            reasoning={message.reasoning}
+            open={Boolean(message.streaming)}
+          />
         ) : null}
 
         <MarkdownContent className="mt-3">{message.content || (message.streaming && !message.phases?.length ? "Thinking..." : "")}</MarkdownContent>
+        <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
+          <span>{formatMessageTimestamp(message.createdAt)}</span>
+          <button
+            type="button"
+            className="no-print inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+            onClick={async () => {
+              await navigator.clipboard.writeText(message.content);
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 1200);
+            }}
+            disabled={!message.content}
+            aria-label="Copy response"
+          >
+            {copied ? <Check className="h-3.5 w-3.5 text-green-300" /> : <Copy className="h-3.5 w-3.5" />}
+          </button>
+        </div>
         {message.response?.citations.length ? (
           <div className="print-sources">
             <div className="print-section-title">Sources</div>
@@ -400,24 +506,13 @@ function ChatThreadMessage({
           <div className="no-print mt-4 flex flex-wrap items-center gap-2">
             <button
               className="inline-flex h-6 items-center gap-1 rounded-md border border-border bg-muted px-2 text-xs text-muted-foreground hover:text-foreground"
+              data-sources-toggle="true"
               onClick={() => onInspectSources(message.response!)}
             >
               <BookOpen className="h-3.5 w-3.5" />
               Sources
             </button>
             {message.response.conflicts.length ? <StatusBadge status="warning" label={`${message.response.conflicts.length} conflicts`} /> : null}
-            <button
-              className="inline-flex h-6 items-center gap-1 rounded-md border border-border bg-muted px-2 text-xs text-muted-foreground hover:text-foreground"
-              onClick={async () => {
-                await navigator.clipboard.writeText(message.content);
-                setCopied(true);
-                window.setTimeout(() => setCopied(false), 1200);
-              }}
-              disabled={!message.content}
-            >
-              {copied ? <Check className="h-3.5 w-3.5 text-green-300" /> : <Copy className="h-3.5 w-3.5" />}
-              {copied ? "Copied" : "Copy"}
-            </button>
           </div>
         ) : null}
       </div>
@@ -425,25 +520,108 @@ function ChatThreadMessage({
   );
 }
 
+function ReasoningSummaryPanel({
+  reasoning,
+  open: externallyOpen,
+}: {
+  reasoning: string;
+  open: boolean;
+}) {
+  const [open, setOpen] = useState(externallyOpen);
+
+  useEffect(() => {
+    setOpen(externallyOpen);
+  }, [externallyOpen]);
+
+  return (
+    <div className="mt-3 overflow-hidden rounded-xl border border-border bg-muted/20 transition-colors duration-200 ease-out hover:border-border/80">
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-xs font-medium text-muted-foreground transition-colors duration-200 hover:bg-muted/25 hover:text-foreground"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <Brain className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 flex-1">Model reasoning summary</span>
+        <ChevronDown
+          className={cn(
+            "h-3.5 w-3.5 shrink-0 transition-transform duration-300 ease-out",
+            open && "rotate-180",
+          )}
+        />
+      </button>
+      <div
+        className={cn(
+          "grid transition-[grid-template-rows,opacity] duration-300 ease-out",
+          open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+        )}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <MarkdownContent className="px-4 pb-3 pt-1 text-xs leading-5 text-foreground/80">
+            {reasoning}
+          </MarkdownContent>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AnswerSourcesPanel({
   response,
+  open,
   onClose,
+  onExited,
   width,
   onResizeStart,
   onWidthChange,
 }: {
   response: QueryResponse | null;
+  open: boolean;
   onClose: () => void;
+  onExited: () => void;
   width: number;
   onResizeStart: (event: React.PointerEvent) => void;
   onWidthChange: (width: number) => void;
 }) {
+  const panelRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!response || !open) return;
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      const targetElement =
+        target instanceof Element ? target : target.parentElement;
+      if (targetElement?.closest("[data-sources-toggle='true']")) return;
+      if (!panelRef.current?.contains(target)) onClose();
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose, open, response]);
+
   if (!response) return null;
 
   return (
     <aside
-      className="no-print fixed inset-y-0 right-0 z-40 flex flex-col border-l border-border bg-card shadow-2xl shadow-black/50"
+      ref={panelRef}
+      className={cn(
+        "no-print fixed inset-y-0 right-0 z-40 flex flex-col border-l border-border bg-card shadow-2xl shadow-black/50 transition-[transform,opacity] duration-300 ease-out",
+        open ? "translate-x-0 opacity-100" : "translate-x-full opacity-0",
+      )}
       style={{ width: `min(${width}px, 92vw)` }}
+      onTransitionEnd={(event) => {
+        if (event.target === event.currentTarget && !open) onExited();
+      }}
     >
       <div
         role="separator"
@@ -569,12 +747,26 @@ function clampInspectorWidth(width: number) {
   return Math.min(maxInspectorWidth, Math.max(minInspectorWidth, Math.round(width)));
 }
 
+function formatMessageTimestamp(value?: string) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 function toThreadMessage(message: ApiChatMessage): ThreadMessage {
   if (message.role === "user") {
     return {
       id: message.id,
       role: "user",
       content: message.content,
+      createdAt: message.created_at,
     };
   }
 
@@ -582,9 +774,11 @@ function toThreadMessage(message: ApiChatMessage): ThreadMessage {
     id: message.id,
     role: "assistant",
     content: message.content,
+    createdAt: message.created_at,
     response: {
       id: message.result?.query_id ?? message.query_log_id ?? message.id,
       answer: message.content,
+      reasoning: message.result?.reasoning,
       citations: message.result?.citations ?? [],
       conflicts: [],
       retrieval: {
@@ -601,5 +795,6 @@ function toThreadMessage(message: ApiChatMessage): ThreadMessage {
       session_id: message.session_id,
       raw: message,
     },
+    reasoning: message.result?.reasoning ?? undefined,
   };
 }

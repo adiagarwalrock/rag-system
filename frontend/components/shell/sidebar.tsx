@@ -122,43 +122,55 @@ export function Sidebar({
             <span className="min-w-0 flex-1 text-left">More</span>
             <ChevronDown className={cn("h-3.5 w-3.5 transition", moreOpen && "rotate-180")} />
           </button>
-          {moreOpen ? (
-            <div className="mt-1 space-y-1 pl-3">
-              {moreItems.map((item) => {
-                const active = pathname === item.href;
-                const Icon = item.icon;
-                if (item.disabled) {
+          <div
+            className={cn(
+              "grid transition-[grid-template-rows,opacity] duration-300 ease-out",
+              moreOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+            )}
+          >
+            <div
+              className={cn(
+                "min-h-0 overflow-hidden transition-transform duration-300 ease-out",
+                moreOpen ? "translate-y-0" : "-translate-y-1",
+              )}
+            >
+              <div className="mt-1 space-y-1 pl-3">
+                {moreItems.map((item) => {
+                  const active = pathname === item.href;
+                  const Icon = item.icon;
+                  if (item.disabled) {
+                    return (
+                      <div
+                        key={item.href}
+                        aria-disabled="true"
+                        className="flex h-9 cursor-not-allowed items-center gap-2 rounded-md px-2 text-sm text-muted-foreground/55"
+                      >
+                        <Icon className="h-4 w-4" />
+                        <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                        <span className="rounded-md border border-warning/30 bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
+                          ToDo
+                        </span>
+                      </div>
+                    );
+                  }
                   return (
-                    <div
+                    <Link
                       key={item.href}
-                      aria-disabled="true"
-                      className="flex h-9 cursor-not-allowed items-center gap-2 rounded-md px-2 text-sm text-muted-foreground/55"
+                      href={item.href}
+                      onClick={() => setOpen(false)}
+                      className={cn(
+                        "flex h-9 items-center gap-2 rounded-md px-2 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground",
+                        active && "bg-muted text-foreground",
+                      )}
                     >
                       <Icon className="h-4 w-4" />
-                      <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                      <span className="rounded-md border border-warning/30 bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
-                        ToDo
-                      </span>
-                    </div>
+                      {item.label}
+                    </Link>
                   );
-                }
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    onClick={() => setOpen(false)}
-                    className={cn(
-                      "flex h-9 items-center gap-2 rounded-md px-2 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground",
-                      active && "bg-muted text-foreground",
-                    )}
-                  >
-                    <Icon className="h-4 w-4" />
-                    {item.label}
-                  </Link>
-                );
-              })}
+                })}
+              </div>
             </div>
-          ) : null}
+          </div>
         </div>
       </nav>
 

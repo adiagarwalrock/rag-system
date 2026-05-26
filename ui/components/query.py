@@ -16,6 +16,7 @@ from ui.components.utils import (
 )
 
 REASONING_EFFORT_OPTIONS = ("low", "medium", "high")
+DEFAULT_REASONING_SUMMARY = "auto"
 
 
 def _stream_text(text: str):
@@ -306,6 +307,7 @@ def _submit_question(
                     client_id,
                     question,
                     reasoning_effort=reasoning_effort,
+                    reasoning_summary=DEFAULT_REASONING_SUMMARY,
                     session_id=session_id,
                     status_callback=_status_cb,
                     reasoning_callback=_reasoning_cb,

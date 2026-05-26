@@ -730,6 +730,43 @@ def test_named_entity_query_keeps_multiple_chunks_for_each_entity():
     assert entity_counts["Realty Income"] >= 3
 
 
+def test_named_entity_query_does_not_loop_when_full_selection_needs_more_entity_coverage():
+    retriever = VecteraRetriever("client-1", top_k=15)
+    ranked = [
+        _node(
+            f"realty-{idx}",
+            1.0 - (idx * 0.01),
+            {
+                "document_id": "doc-o",
+                "document_name": "Realty Income Q4 2025 Investor Presentation.pdf",
+            },
+        )
+        for idx in range(18)
+    ] + [
+        _node(
+            f"vici-{idx}",
+            0.8 - (idx * 0.01),
+            {
+                "document_id": "doc-vici",
+                "document_name": "VICI Investor Presentation.pdf",
+            },
+        )
+        for idx in range(6)
+    ]
+
+    question = (
+        "VICI and Realty Income both mention gaming exposure. "
+        "How are their gaming portfolios different?"
+    )
+    evidence = retriever._select_evidence_nodes(question, ranked)
+    intent = analyze_retrieval_intent(question)
+    entity_counts = retriever_module._node_counts_by_entity(evidence, intent)
+
+    assert len(evidence) == retriever.comparative_evidence_limit
+    assert entity_counts["VICI"] >= 3
+    assert entity_counts["Realty Income"] >= 3
+
+
 def test_outlook_query_injects_merger_scope_evidence():
     retriever = VecteraRetriever("client-1", top_k=10)
     ranked = [

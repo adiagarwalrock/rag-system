@@ -16,8 +16,6 @@ export function ChatComposer({
   onClientChange,
   reasoningEffort,
   onReasoningEffortChange,
-  retrievalMode,
-  onRetrievalModeChange,
   includeMemory,
   onIncludeMemoryChange,
   includeConflicts,
@@ -33,8 +31,6 @@ export function ChatComposer({
   onClientChange?: (clientId: string) => void;
   reasoningEffort?: "low" | "medium" | "high";
   onReasoningEffortChange?: (value: "low" | "medium" | "high") => void;
-  retrievalMode?: "auto" | "hybrid" | "dense_only";
-  onRetrievalModeChange?: (value: "auto" | "hybrid" | "dense_only") => void;
   includeMemory?: boolean;
   onIncludeMemoryChange?: (value: boolean) => void;
   includeConflicts?: boolean;
@@ -176,29 +172,34 @@ export function ChatComposer({
             buttonClassName="min-w-24"
             menuSide="top"
           />
-          <DarkSelect
-            label="Retrieval mode"
-            value={retrievalMode ?? "auto"}
-            options={[
-              { value: "auto", label: "auto" },
-              { value: "hybrid", label: "hybrid" },
-              { value: "dense_only", label: "dense_only" },
-            ]}
-            onChange={(value) => onRetrievalModeChange?.(value)}
-            className="hidden md:block"
-            buttonClassName="min-w-24"
-            menuSide="top"
-          />
-          <span className="hidden text-xs text-muted-foreground sm:inline">Cmd/Ctrl + Enter</span>
-        {streaming ? (
-          <button type="button" className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background text-muted-foreground hover:bg-muted" onClick={onCancel} aria-label="Cancel response">
-            <Square className="h-4 w-4" />
-          </button>
-        ) : (
-          <button className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50" disabled={disabled || !question.trim()} aria-label="Send message">
-            <Send className="h-4 w-4" />
-          </button>
-        )}
+          {streaming ? (
+            <button
+              type="button"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background text-muted-foreground hover:bg-muted"
+              onClick={onCancel}
+              aria-label="Cancel response"
+            >
+              <Square className="h-4 w-4" />
+            </button>
+          ) : (
+            <span className="group relative inline-flex">
+              <button
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                disabled={disabled || !question.trim()}
+                aria-label="Send message"
+                aria-describedby="send-message-tooltip"
+              >
+                <Send className="h-4 w-4" />
+              </button>
+              <span
+                id="send-message-tooltip"
+                role="tooltip"
+                className="pointer-events-none absolute bottom-11 right-0 hidden whitespace-nowrap rounded-md border border-border bg-card px-2.5 py-1.5 text-xs text-foreground shadow-xl shadow-black/30 group-hover:block group-focus-within:block"
+              >
+                Send (Cmd/Ctrl + Enter)
+              </span>
+            </span>
+          )}
         </div>
       </div>
     </form>

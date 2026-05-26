@@ -134,6 +134,7 @@ export const queryRequestSchema = z.object({
   client_id: z.string().min(1),
   session_id: z.string().optional(),
   reasoning_effort: reasoningEffortSchema,
+  reasoning_summary: z.enum(["auto", "concise", "detailed"]).optional(),
   retrieval_mode: retrievalModeSchema.optional(),
   include_memory: z.boolean().optional(),
   include_conflicts: z.boolean().optional(),
@@ -144,6 +145,7 @@ export const queryResponseSchema = z
   .object({
     id: z.string(),
     answer: z.string(),
+    reasoning: z.string().nullish(),
     citations: z.array(citationSchema).default([]),
     conflicts: z.array(conflictSchema).default([]),
     retrieval: retrievalTraceSchema,
