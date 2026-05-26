@@ -1,5 +1,7 @@
+import io
 import queue
 import threading
+import time
 from pathlib import Path
 from datetime import datetime
 
@@ -319,7 +321,17 @@ def _submit_question(
         # so it doesn't sit above the answer once done.
         status_placeholder = st.empty()
         reasoning_placeholder = st.empty()
-        reasoning_buf: list[str] = []
+        reasoning_buf = io.StringIO()
+        _last_reasoning_render = 0.0
+        _REASONING_RENDER_INTERVAL = 0.15  # seconds between expander re-renders
+
+        def _render_live_reasoning(text: str) -> None:
+            with reasoning_placeholder:
+                with st.expander(
+                    ":material/psychology: Model reasoning summary",
+                    expanded=True,
+                ):
+                    st.markdown(f"*{text}*")
 
         with status_placeholder:
             with st.status("Processing your question…", expanded=True) as status_box:
@@ -328,15 +340,11 @@ def _submit_question(
                     if kind == "step":
                         status_box.write(payload)
                     elif kind == "reasoning":
-                        # Accumulate and show live reasoning summary inside status
-                        reasoning_buf.append(payload)
-                        live_text = "".join(reasoning_buf)
-                        with reasoning_placeholder:
-                            with st.expander(
-                                ":material/psychology: Model reasoning summary",
-                                expanded=True,
-                            ):
-                                st.markdown(f"*{live_text}*")
+                        reasoning_buf.write(payload)
+                        now = time.monotonic()
+                        if now - _last_reasoning_render >= _REASONING_RENDER_INTERVAL:
+                            _render_live_reasoning(reasoning_buf.getvalue())
+                            _last_reasoning_render = now
                     elif kind == "done":
                         result_holder["result"] = payload
                         status_box.update(
@@ -350,24 +358,21 @@ def _submit_question(
                         worker.join(timeout=5)
                         raise payload
 
-        worker.join(timeout=5)
-
         # Remove the status container entirely — answer and details render fresh below
         status_placeholder.empty()
 
-        result = result_holder["result"]
+        result = result_holder.get("result")
+        if result is None:
+            raise RuntimeError("Query worker exited without producing a result")
 
-        # If the model returned reasoning in the result dict, prefer that (full text).
-        # Otherwise keep whatever we accumulated live from the streaming deltas.
-        final_reasoning = (result.get("reasoning") or "").strip()
-        if not final_reasoning and reasoning_buf:
-            final_reasoning = "".join(reasoning_buf).strip()
-            # Write it back into the result so _render_result_details picks it up
+        # Prefer the full reasoning text from the result dict; fall back to whatever
+        # was accumulated live from the streaming deltas.
+        live_reasoning = reasoning_buf.getvalue().strip()
+        if not (result.get("reasoning") or "").strip() and live_reasoning:
             result = dict(result)
-            result["reasoning"] = final_reasoning or None
+            result["reasoning"] = live_reasoning
 
-        # Clear the live reasoning placeholder — _render_result_details will show
-        # the final version inside its own expander.
+        # Clear the live reasoning placeholder — _render_result_details shows the final version.
         reasoning_placeholder.empty()
 
         answer = result.get("answer", "No answer generated.")
@@ -427,7 +432,7 @@ def render_query():
         st.session_state["query_active_client_name"] = active_name
 
     st.session_state["query_active_client_id"] = client_options[active_name]
-    st.session_state.setdefault("query_reasoning_effort", "medium")
+    st.session_state.setdefault("query_reasoning_effort", "high")
 
     with st.sidebar:
         with st.form("query_workspace_form"):
@@ -493,11 +498,11 @@ def render_query():
                 0,
                 (
                     REASONING_EFFORT_OPTIONS.index(
-                        st.session_state.get("query_reasoning_effort", "medium")
+                        st.session_state.get("query_reasoning_effort", "high")
                     )
-                    if st.session_state.get("query_reasoning_effort", "medium")
+                    if st.session_state.get("query_reasoning_effort", "high")
                     in REASONING_EFFORT_OPTIONS
-                    else 1
+                    else 2
                 ),
             ),
             help="Controls response depth. Applied when OpenAI Responses mode is enabled.",
@@ -553,7 +558,7 @@ def render_query():
                     api,
                     selected_client_id,
                     trimmed,
-                    st.session_state.get("query_reasoning_effort", "medium"),
+                    st.session_state.get("query_reasoning_effort", "high"),
                     active_session_id,
                 )
                 returned_session_id = result.get("session_id")

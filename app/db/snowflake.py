@@ -35,6 +35,10 @@ def get_engine():
     _engine = create_engine(
         "sqlite:///./rag_local.db",
         connect_args={"check_same_thread": False, "timeout": 30},
+        # Recycle stale pooled connections automatically — prevents "database
+        # disk image is malformed" errors after an unclean shutdown left a
+        # WAL connection in a bad in-memory state.
+        pool_pre_ping=True,
     )
 
     @event.listens_for(_engine, "connect")
@@ -43,6 +47,10 @@ def get_engine():
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA busy_timeout=30000")  # 30s before giving up
         cursor.execute("PRAGMA synchronous=NORMAL")
+        # Force a full WAL checkpoint on every new connection so stale WAL
+        # frames from a previous crash are merged and discarded before any
+        # query runs on this connection.
+        cursor.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         cursor.close()
 
     return _engine

@@ -50,6 +50,23 @@ def normalize_reasoning_effort(reasoning_effort: str | None) -> str:
     return DEFAULT_REASONING_EFFORT
 
 
+def normalize_reasoning_summary(
+    reasoning_summary: str | None,
+    fallback: str | None = None,
+) -> str | None:
+    """Normalize and validate a reasoning-summary verbosity value.
+
+    Returns the normalized value if it is in ``SUPPORTED_REASONING_SUMMARIES``,
+    otherwise falls back to ``fallback`` (applying the same validation), and finally
+    returns ``None`` when neither value is valid.
+    """
+    for candidate in (reasoning_summary, fallback):
+        value = (candidate or "").strip().lower() or None
+        if value and value in SUPPORTED_REASONING_SUMMARIES:
+            return value
+    return None
+
+
 def get_llm(
     *,
     model: str | None = None,
@@ -75,11 +92,10 @@ def get_llm(
         reasoning_opts: dict[str, Any] = {
             "effort": normalize_reasoning_effort(reasoning_effort)
         }
-        resolved_summary = (
-            (reasoning_summary or settings.REASONING_SUMMARY or "").strip().lower()
-            or None
+        resolved_summary = normalize_reasoning_summary(
+            reasoning_summary, fallback=settings.REASONING_SUMMARY
         )
-        if resolved_summary and resolved_summary in SUPPORTED_REASONING_SUMMARIES:
+        if resolved_summary:
             reasoning_opts["summary"] = resolved_summary
         kwargs["reasoning_options"] = reasoning_opts
     if timeout_seconds is not None:
@@ -181,43 +197,32 @@ def stream_invoke_llm_chat(
     )
 
     if not isinstance(llm, OpenAIResponses):
-        # Non-Responses path: blocking call, yield full answer as a single delta.
         response = llm.chat(messages, **runtime_kwargs)
         full_text = extract_chat_response_text(response)
         yield (None, full_text)
         return
 
-    chunk_count = 0
-    reasoning_event_count = 0
+    reasoning_seen = False
     for chunk in llm.stream_chat(messages, **runtime_kwargs):
-        chunk_count += 1
         raw_event = getattr(chunk, "raw", None)
-        raw_type = type(raw_event).__name__ if raw_event is not None else "None"
 
-        if chunk_count <= 5 or isinstance(
+        if logger.isEnabledFor(logging.DEBUG) and isinstance(
             raw_event,
             (ResponseReasoningSummaryTextDeltaEvent, ResponseReasoningTextDeltaEvent),
         ):
             logger.debug(
-                "stream_chat chunk #%d: raw_type=%s delta=%r chunk_type=%s",
-                chunk_count,
-                raw_type,
-                chunk.delta if hasattr(chunk, "delta") else "N/A",
-                type(chunk).__name__,
+                "stream_chat reasoning delta: raw_type=%s delta=%r",
+                type(raw_event).__name__,
+                raw_event.delta,
             )
 
-        # Incremental reasoning summary delta — emitted when reasoning.summary is set.
-        if isinstance(raw_event, ResponseReasoningSummaryTextDeltaEvent):
-            reasoning_event_count += 1
-            delta = raw_event.delta
-            if delta:
-                yield (delta, None)
-            continue
-
-        # Fallback: raw reasoning text delta (when summary mode is not active).
-        # This carries encrypted/opaque tokens but may be human-readable on some models.
-        if isinstance(raw_event, ResponseReasoningTextDeltaEvent):
-            reasoning_event_count += 1
+        # Reasoning delta — emitted when reasoning.summary is set (summary event) or
+        # as a fallback raw delta when summary mode is not active.
+        if isinstance(
+            raw_event,
+            (ResponseReasoningSummaryTextDeltaEvent, ResponseReasoningTextDeltaEvent),
+        ):
+            reasoning_seen = True
             delta = raw_event.delta
             if delta:
                 yield (delta, None)
@@ -231,25 +236,20 @@ def stream_invoke_llm_chat(
         # On the final ResponseCompletedEvent, LlamaIndex replaces blocks with the full
         # parsed output (including ThinkingBlocks from reasoning items). If no reasoning
         # deltas were received yet (e.g. model uses a different event format), emit the
-        # ThinkingBlock content now as a single reasoning chunk so callers see reasoning.
-        if reasoning_event_count == 0 and isinstance(raw_event, ResponseCompletedEvent):
-            message = getattr(chunk, "message", None)
-            for block in getattr(message, "blocks", None) or []:
-                if isinstance(block, ThinkingBlock):
-                    text = (block.content or "").strip()
-                    if text:
-                        reasoning_event_count += 1
-                        logger.debug(
-                            "stream_chat: emitting ThinkingBlock content as reasoning delta (%d chars)",
-                            len(text),
-                        )
-                        yield (text, None)
-                    break
+        # ThinkingBlock content now so callers see reasoning.
+        if not reasoning_seen and isinstance(raw_event, ResponseCompletedEvent):
+            reasoning_text = extract_chat_response_reasoning(chunk)
+            if reasoning_text:
+                logger.debug(
+                    "stream_chat: emitting ThinkingBlock content as reasoning delta (%d chars)",
+                    len(reasoning_text),
+                )
+                reasoning_seen = True
+                yield (reasoning_text, None)
 
     logger.info(
-        "stream_invoke_llm_chat complete: total_chunks=%d reasoning_events=%d",
-        chunk_count,
-        reasoning_event_count,
+        "stream_invoke_llm_chat complete: reasoning_seen=%s",
+        reasoning_seen,
     )
 
 

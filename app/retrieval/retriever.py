@@ -20,7 +20,6 @@ from llama_index.core.base.llms.types import (
     ImageBlock,
     MessageRole,
     TextBlock,
-    ThinkingBlock,
 )
 from llama_index.core.vector_stores import ExactMatchFilter, MetadataFilters
 
@@ -31,7 +30,7 @@ from app.core.ai_provider import (
     invoke_llm_chat,
     stream_invoke_llm_chat,
     normalize_reasoning_effort,
-    SUPPORTED_REASONING_SUMMARIES,
+    normalize_reasoning_summary,
 )
 from app.core.config import settings
 from app.core.safe_coerce import normalize_metric_subject, safe_bool, safe_int
@@ -319,8 +318,6 @@ class GroundedAnswerSynthesizer:
             )
 
             if self.reasoning_callback is not None:
-                # Streaming path: emit reasoning summary deltas live via callback,
-                # accumulate answer text from answer deltas.
                 answer_parts: list[str] = []
                 reasoning_parts: list[str] = []
                 delta_count = 0
@@ -348,7 +345,6 @@ class GroundedAnswerSynthesizer:
                 answer, parsed_reasoning = _split_reasoning_from_text(text)
                 reasoning: str | None = reasoning_text or parsed_reasoning
             else:
-                # Blocking path (no live callback needed).
                 response = invoke_llm_chat(**llm_kwargs)
                 text = extract_chat_response_text(response)
                 answer, tag_reasoning = _split_reasoning_from_text(text)
@@ -457,9 +453,6 @@ class VecteraRetriever:
         self.client_id = client_id
         self.top_k = top_k
         self.reasoning_effort = normalize_reasoning_effort(reasoning_effort)
-        resolved_summary = (reasoning_summary or "").strip().lower() or None
-        self.reasoning_summary = resolved_summary if resolved_summary in SUPPORTED_REASONING_SUMMARIES else None
-        self.reasoning_callback = reasoning_callback
         self.conversation_context = conversation_context or {}
         self.prefetch_top_k = top_k * 5
         self.evidence_limit = DEFAULT_EVIDENCE_LIMIT
@@ -472,8 +465,8 @@ class VecteraRetriever:
         self.answer_synthesizer = GroundedAnswerSynthesizer(
             client_id=self.client_id,
             reasoning_effort=self.reasoning_effort,
-            reasoning_summary=self.reasoning_summary,
-            reasoning_callback=self.reasoning_callback,
+            reasoning_summary=normalize_reasoning_summary(reasoning_summary),
+            reasoning_callback=reasoning_callback,
             conversation_context=self.conversation_context,
         )
 
@@ -501,7 +494,6 @@ class VecteraRetriever:
 
         logger.info("Query for client %s: %s", self.client_id, question[:100])
 
-        # Step 1: Hybrid Qdrant retrieval, with dense fallback for older indexes.
         _emit("🔍 Retrieving relevant chunks…")
         source_nodes, retrieval_metadata = self._retrieve(question)
         intent = analyze_retrieval_intent(question)
@@ -528,26 +520,21 @@ class VecteraRetriever:
                 **retrieval_metadata,
             }
 
-        # Step 2: Rank candidates with semantic + temporal/version signals.
         _emit(f"📊 Reranking {len(source_nodes)} candidate chunks…")
         ranked_nodes = self._rank_nodes(question, source_nodes)
 
-        # Step 3: Select bounded evidence used for answer synthesis/citations.
         _emit("✂️ Selecting evidence…")
         evidence_nodes = self._select_evidence_nodes(question, ranked_nodes)
         retrieval_diagnostics = _build_retrieval_diagnostics(
             ranked_nodes, evidence_nodes, intent=intent
         )
 
-        # Step 4: Conflict detection (advisory, scoped to evidence + near-miss nodes).
         conflicts = detect_conflicts(
             ranked_nodes, evidence_nodes=evidence_nodes, question=question
         )
 
-        # Step 5: Build citations only from the selected answer evidence.
         citations = build_citations(evidence_nodes)
 
-        # Step 6: Synthesize grounded answer from selected evidence only.
         _emit("🧠 Synthesizing grounded answer…")
         synthesis = self._synthesize_answer(question, citations, conflicts)
 
@@ -2321,26 +2308,17 @@ def _extract_answer_and_reasoning_from_chat(response: Any) -> tuple[str, str | N
         return _split_reasoning_from_text(str(response).strip())
 
     answer_parts: list[str] = []
-    reasoning_parts: list[str] = []
     for block in getattr(message, "blocks", None) or []:
-        if isinstance(block, ThinkingBlock):
-            content = (block.content or "").strip()
-            if content:
-                reasoning_parts.append(content)
-            continue
         if isinstance(block, TextBlock):
             content = (block.text or "").strip()
             if content:
                 answer_parts.append(content)
 
     answer_text = "\n".join(answer_parts).strip()
-    reasoning_text = "\n\n".join(reasoning_parts).strip() or None
     parsed_answer, parsed_reasoning = _split_reasoning_from_text(
         answer_text or str(getattr(message, "content", "") or "").strip()
     )
-    if not reasoning_text and parsed_reasoning:
-        reasoning_text = parsed_reasoning
-
+    reasoning_text = extract_chat_response_reasoning(response) or parsed_reasoning
     return parsed_answer, reasoning_text
 
 

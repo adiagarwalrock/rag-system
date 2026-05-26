@@ -60,7 +60,7 @@ def test_build_query_variants_uses_message_history_and_enforces_dedupe_and_cap(
         "Version delta summary for current vs older",
     ]
     assert captured["model"] == "gpt-5.4-mini"
-    assert captured["reasoning_effort"] == "low"
+    assert captured["reasoning_effort"] == "none"
     input_messages = captured["input_messages"]
     assert input_messages[0]["role"] == "developer"
     assert input_messages[1] == {"role": "user", "content": "Show v1 retention policy."}
