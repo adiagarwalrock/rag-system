@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
+import { Check, Copy } from "lucide-react";
 import type { QueryHistoryItem } from "@/lib/api/schemas";
 import { CitationChip } from "@/components/chat/citation-chip";
 import { ConflictAlert } from "@/components/chat/conflict-alert";
@@ -13,6 +14,7 @@ import { formatDate, truncate } from "@/lib/utils";
 
 export function QueryHistoryTable({ rows }: { rows: QueryHistoryItem[] }) {
   const [expanded, setExpanded] = useState("");
+  const [copied, setCopied] = useState("");
   const [search, setSearch] = useState("");
   const [conflictsOnly, setConflictsOnly] = useState(false);
   const [retrievalMode, setRetrievalMode] = useState("");
@@ -29,6 +31,14 @@ export function QueryHistoryTable({ rows }: { rows: QueryHistoryItem[] }) {
       }),
     [conflictsOnly, effort, retrievalMode, rows, search],
   );
+
+  async function copyToClipboard(key: string, value: string) {
+    await navigator.clipboard.writeText(value);
+    setCopied(key);
+    window.setTimeout(() => {
+      setCopied((current) => (current === key ? "" : current));
+    }, 1200);
+  }
 
   return (
     <div className="space-y-3">
@@ -79,8 +89,8 @@ export function QueryHistoryTable({ rows }: { rows: QueryHistoryItem[] }) {
           </thead>
           <tbody className="divide-y divide-border">
             {filtered.map((row) => (
-              <>
-                <tr key={row.id} className="cursor-pointer hover:bg-muted/30" onClick={() => setExpanded(expanded === row.id ? "" : row.id)}>
+              <Fragment key={row.id}>
+                <tr className="cursor-pointer hover:bg-muted/30" onClick={() => setExpanded(expanded === row.id ? "" : row.id)}>
                   <td className="p-3 font-mono text-xs text-muted-foreground">{formatDate(row.created_at)}</td>
                   <td className="max-w-sm p-3">{truncate(row.question, 92)}</td>
                   <td className="p-3 font-mono text-xs text-muted-foreground">{row.client_id}</td>
@@ -95,6 +105,23 @@ export function QueryHistoryTable({ rows }: { rows: QueryHistoryItem[] }) {
                     <td colSpan={8} className="bg-background p-4">
                       <div className="grid gap-4 lg:grid-cols-2">
                         <div className="space-y-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <CopyButton
+                              copied={copied === `${row.id}:response`}
+                              label="Copy raw response"
+                              onClick={() => copyToClipboard(`${row.id}:response`, row.answer)}
+                            />
+                            <CopyButton
+                              copied={copied === `${row.id}:json`}
+                              label="Copy raw JSON"
+                              onClick={() =>
+                                copyToClipboard(
+                                  `${row.id}:json`,
+                                  JSON.stringify(row.raw ?? row, null, 2),
+                                )
+                              }
+                            />
+                          </div>
                           <MarkdownContent>{row.answer}</MarkdownContent>
                           <div className="flex flex-wrap gap-2">{row.citations.map((citation, index) => <CitationChip key={index} citation={citation} index={index} />)}</div>
                           {row.conflicts.map((conflict, index) => <ConflictAlert key={index} conflict={conflict} />)}
@@ -107,11 +134,32 @@ export function QueryHistoryTable({ rows }: { rows: QueryHistoryItem[] }) {
                     </td>
                   </tr>
                 )}
-              </>
+              </Fragment>
             ))}
           </tbody>
         </table>
       </div>
     </div>
+  );
+}
+
+function CopyButton({
+  copied,
+  label,
+  onClick,
+}: {
+  copied: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="inline-flex h-8 items-center gap-2 rounded-md border border-border bg-muted px-2.5 text-xs text-muted-foreground transition hover:bg-muted/70 hover:text-foreground"
+      onClick={onClick}
+    >
+      {copied ? <Check className="h-3.5 w-3.5 text-green-300" /> : <Copy className="h-3.5 w-3.5" />}
+      {copied ? "Copied" : label}
+    </button>
   );
 }

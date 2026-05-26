@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { usePathname, useRouter } from "next/navigation";
 import { apiClient } from "@/lib/api/client";
@@ -14,7 +14,7 @@ import { CitationChip } from "@/components/chat/citation-chip";
 import { ErrorState } from "@/components/common/error-state";
 import { MarkdownContent } from "@/components/common/markdown-content";
 import { StatusBadge } from "@/components/common/status-badge";
-import { cn } from "@/lib/utils";
+import { cn, formatMessageTimestamp } from "@/lib/utils";
 
 type ThreadMessage = {
   id: string;
@@ -140,7 +140,7 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
     const url = new URL(resolveSessionUrl(sessionId), window.location.origin);
     await navigator.clipboard.writeText(url.toString());
     setShareCopied(true);
-    window.setTimeout(() => setShareCopied(false), 1200);
+    setTimeout(() => setShareCopied(false), 1200);
   }
 
   function updateInspectorWidth(width: number) {
@@ -149,11 +149,14 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
     localStorage.setItem(inspectorWidthKey, String(nextWidth));
   }
 
-  function toggleInspectedResponse(response: QueryResponse) {
+  const toggleInspectedResponse = useCallback((response: QueryResponse) => {
     setInspectedResponse((current) =>
       current?.id === response.id ? null : response,
     );
-  }
+  }, []);
+
+  const closeInspector = useCallback(() => setInspectedResponse(null), []);
+  const clearRenderedInspector = useCallback(() => setRenderedInspectorResponse(null), []);
 
   function startInspectorResize(event: React.PointerEvent) {
     event.preventDefault();
@@ -397,8 +400,8 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
       <AnswerSourcesPanel
         response={renderedInspectorResponse}
         open={Boolean(inspectedResponse)}
-        onClose={() => setInspectedResponse(null)}
-        onExited={() => setRenderedInspectorResponse(null)}
+        onClose={closeInspector}
+        onExited={clearRenderedInspector}
         width={inspectorWidth}
         onResizeStart={startInspectorResize}
         onWidthChange={updateInspectorWidth}
@@ -436,7 +439,7 @@ function ChatThreadMessage({
               onClick={async () => {
                 await navigator.clipboard.writeText(message.content);
                 setCopied(true);
-                window.setTimeout(() => setCopied(false), 1200);
+                setTimeout(() => setCopied(false), 1200);
               }}
               disabled={!message.content}
               aria-label="Copy question"
@@ -745,19 +748,6 @@ function TraceFact({ label, value }: { label: string; value: React.ReactNode }) 
 
 function clampInspectorWidth(width: number) {
   return Math.min(maxInspectorWidth, Math.max(minInspectorWidth, Math.round(width)));
-}
-
-function formatMessageTimestamp(value?: string) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
 }
 
 function toThreadMessage(message: ApiChatMessage): ThreadMessage {

@@ -181,7 +181,7 @@ export const chatMessageSchema = z
   .passthrough();
 
 export const queryHistoryItemSchema = queryResponseSchema
-  .omit({ memory_hits: true, raw: true })
+  .omit({ memory_hits: true })
   .extend({
     question: z.string(),
     client_id: z.string(),

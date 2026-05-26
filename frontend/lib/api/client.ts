@@ -242,6 +242,7 @@ function normalizeHistoryItem(raw: unknown): QueryHistoryItem {
     latency_ms: Number(value.latency_ms ?? 0),
     reasoning_effort: value.reasoning_effort ?? "medium",
     created_at: value.created_at ?? new Date().toISOString(),
+    raw: value,
   });
 }
 

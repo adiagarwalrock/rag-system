@@ -17,6 +17,19 @@ export function formatDate(value?: string | null) {
   }).format(date);
 }
 
+export function formatMessageTimestamp(value?: string) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 export function formatNumber(value?: number | null) {
   if (value === null || value === undefined) return "-";
   return new Intl.NumberFormat().format(value);

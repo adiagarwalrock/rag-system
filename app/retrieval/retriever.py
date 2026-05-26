@@ -1364,7 +1364,7 @@ def _ensure_named_entity_evidence(
                 selected_keys.add(candidate_key)
                 continue
 
-            current_count = sum(
+            count_before = sum(
                 1 for node in selected if _node_matches_entity(node, aliases)
             )
             replace_idx = _least_useful_entity_replacement_index(
@@ -1377,10 +1377,10 @@ def _ensure_named_entity_evidence(
             selected_keys.discard(_node_unique_key(selected[replace_idx]))
             selected[replace_idx] = candidate
             selected_keys.add(candidate_key)
-            if (
-                sum(1 for node in selected if _node_matches_entity(node, aliases))
-                <= current_count
-            ):
+            count_after = sum(
+                1 for node in selected if _node_matches_entity(node, aliases)
+            )
+            if count_after <= count_before:
                 break
 
     return selected
