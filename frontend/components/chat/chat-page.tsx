@@ -245,28 +245,30 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
 
   return (
     <div className="print-chat relative flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="no-print pointer-events-none absolute right-3 top-3 z-10 flex gap-2 md:right-6 md:top-5">
-        <button
-          type="button"
-          className="pointer-events-auto inline-flex h-9 items-center gap-2 rounded-full border border-border bg-card/90 px-3 text-xs font-medium text-muted-foreground shadow-lg shadow-black/20 transition hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-          disabled={!messages.length}
-          onClick={() => window.print()}
-          aria-label="Print chat"
-        >
-          <Printer className="h-4 w-4" />
-          Print
-        </button>
-        <button
-          type="button"
-          className="pointer-events-auto inline-flex h-9 items-center gap-2 rounded-full border border-border bg-card/90 px-3 text-xs font-medium text-muted-foreground shadow-lg shadow-black/20 transition hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-          disabled={!sessionId}
-          onClick={copyShareUrl}
-          aria-label="Copy chat URL"
-        >
-          {shareCopied ? <Check className="h-4 w-4 text-green-300" /> : <Share2 className="h-4 w-4" />}
-          {shareCopied ? "Copied" : "Share"}
-        </button>
-      </div>
+      {messages.length ? (
+        <div className="no-print pointer-events-none absolute right-3 top-3 z-10 flex gap-2 md:right-6 md:top-5">
+          <button
+            type="button"
+            className="pointer-events-auto inline-flex h-9 items-center gap-2 rounded-full border border-border bg-card/90 px-3 text-xs font-medium text-muted-foreground shadow-lg shadow-black/20 transition hover:bg-muted hover:text-foreground"
+            onClick={() => window.print()}
+            aria-label="Print chat"
+          >
+            <Printer className="h-4 w-4" />
+            Print
+          </button>
+          {sessionId ? (
+            <button
+              type="button"
+              className="pointer-events-auto inline-flex h-9 items-center gap-2 rounded-full border border-border bg-card/90 px-3 text-xs font-medium text-muted-foreground shadow-lg shadow-black/20 transition hover:bg-muted hover:text-foreground"
+              onClick={copyShareUrl}
+              aria-label="Copy chat URL"
+            >
+              {shareCopied ? <Check className="h-4 w-4 text-green-300" /> : <Share2 className="h-4 w-4" />}
+              {shareCopied ? "Copied" : "Share"}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-80 pt-10 md:pt-16">
         <div className="chat-print-content mx-auto flex min-h-full w-full max-w-3xl flex-col">
           {messages.length === 0 ? (

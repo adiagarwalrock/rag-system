@@ -27,7 +27,7 @@ Both entry points share the same service layer in `app/services/*`.
 
 Follow these steps from the repository root to get the application running:
 
-1. **Set up environment variables**  
+1. **Set up environment variables**
    Copy the example environment file and configure the minimum required variables:
 
    ```bash
@@ -56,14 +56,14 @@ Follow these steps from the repository root to get the application running:
    SNOWFLAKE_ROLE=...
    ```
 
-2. **Run the setup script**  
+2. **Run the setup script**
    This installs Python dependencies via `uv` and necessary npm packages:
 
    ```bash
    ./setup.sh
    ```
 
-3. **Start Qdrant**  
+3. **Start Qdrant**
    You can run Qdrant locally via Docker:
 
    ```bash
@@ -72,7 +72,7 @@ Follow these steps from the repository root to get the application running:
 
    *Alternative:* You can use Qdrant Cloud on their free hosting plan: <https://qdrant.tech/documentation/cloud/>. If using the cloud plan, simply set `QDRANT_URL` and `QDRANT_API_KEY` in your `.env` to match your cluster instead of running the docker command.
 
-4. **Start the Streamlit Application**  
+4. **Start the Streamlit Application**
 
    ```bash
    uv run streamlit run streamlit_app.py
@@ -80,7 +80,7 @@ Follow these steps from the repository root to get the application running:
 
    Streamlit is available at `http://localhost:8501`.
 
-5. **(Optional) Start the API Server**  
+5. **(Optional) Start the API Server**
 
    ```bash
    uv run uvicorn api:app --reload --port 8000
@@ -183,7 +183,7 @@ Chat orchestration (`ChatConversationService`) adds:
 - Available for `failed`, `indexed`, or `completed` documents.
 - Requires original raw file to still exist in `data/raw`.
 
-UI: Document Library -> `Retry`  
+UI: Document Library -> `Retry`
 API: `POST /api/v1/documents/{document_id}/retry`
 
 ### Delete document
@@ -191,7 +191,7 @@ API: `POST /api/v1/documents/{document_id}/retry`
 - Removes vectors, relational mappings, ingestion jobs, and raw file.
 - On failure, status is set to `deleting_failed`.
 
-UI: Document Library -> `Delete`  
+UI: Document Library -> `Delete`
 API: `DELETE /api/v1/documents/{document_id}?hard=true`
 
 ## Verification
@@ -230,3 +230,45 @@ uv run pytest tests/test_retrieval.py::test_name
 - `setup_check` can fail even when runtime fallback to SQLite is acceptable.
 - Changing embedding/vector dimensions against an existing Qdrant collection may require recreating it.
 - Chat session management is currently exposed through the internal Streamlit adapter (`ui/lib/api.py`), while REST query endpoints accept `session_id` but do not provide dedicated session CRUD routes.
+
+
+## For serving
+
+Use your static IP by binding both servers to `0.0.0.0` and pointing the frontend API env to the static IP.
+
+Example, replace `YOUR_STATIC_IP`:
+
+```bash
+# backend
+uv run uvicorn api:app --host 0.0.0.0 --port 8000
+```
+
+In `frontend/.env.local`:
+
+```bash
+NEXT_PUBLIC_API_BASE_URL=http://YOUR_STATIC_IP:8000/api/v1
+```
+
+Then run frontend:
+
+```bash
+cd frontend
+npm run dev -- --hostname 0.0.0.0 --port 3000
+```
+
+Open:
+
+```text
+http://YOUR_STATIC_IP:3000
+```
+
+Also make sure your machine/cloud firewall allows inbound:
+
+```text
+TCP 3000  # Next.js UI
+TCP 8000  # FastAPI backend
+```
+
+Good news: `api.py` already has permissive CORS, so the API should accept requests from `http://YOUR_STATIC_IP:3000`.
+
+For anything beyond local testing, put this behind Nginx/Caddy with HTTPS instead of exposing ports `3000` and `8000` directly.
