@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { SectionCard } from "@/components/common/section-card";
+import { DarkSelect } from "@/components/common/dark-select";
 import { QualityEvalPanel } from "@/components/quality/quality-eval-panel";
 import { PageHeader } from "@/components/shell/page-header";
 import { useClients } from "@/lib/hooks/use-clients";
@@ -41,10 +42,18 @@ export default function QualityPage() {
         title="Quality evaluation."
         description="Measure ingestion quality, retrieval recall, citation accuracy, and answer faithfulness."
         actions={
-          <select className="control w-60 font-mono text-xs" value={workspaceId} onChange={(event) => setWorkspaceId(event.target.value)}>
-            <option value="">Select workspace</option>
-            {(clients.data ?? []).map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
-          </select>
+          <DarkSelect
+            label="Workspace"
+            value={workspaceId}
+            placeholder="Select workspace"
+            onChange={setWorkspaceId}
+            className="w-60"
+            buttonClassName="font-mono"
+            options={[
+              { value: "", label: "Select workspace" },
+              ...(clients.data ?? []).map((client) => ({ value: client.id, label: client.name })),
+            ]}
+          />
         }
       />
       <div className="grid gap-4 lg:grid-cols-[360px_minmax(0,1fr)]">

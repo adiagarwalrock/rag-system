@@ -103,6 +103,15 @@ When to use them:
 - Debugging an error that looks like a version mismatch or deprecated interface.
 - Implementing a new integration against any external service.
 
+## Streamlit ↔ API Parity
+
+Both entry points (`streamlit_app.py` via `VecteraCore` and `api.py` via `app/api/routes_*.py`) must expose the same capabilities. Any feature added or changed on one side **must be reflected on the other**:
+
+- A new service method in `app/services/*` must get both a REST route in `app/api/routes_*.py` **and** a corresponding method in `ui/lib/api.py` (`VecteraCore`).
+- A new UI workflow in `ui/pages/*` that calls `VecteraCore` must have an equivalent REST endpoint so external callers can do the same thing.
+- Parameter signatures, option flags, and response shapes should match between the two surfaces. If the API adds a query param or request field, the UI adapter should pass it through (even if the UI doesn't yet expose it as a control).
+- Removing or renaming a capability on one side requires the same change on the other — do not leave dead routes or orphaned `VecteraCore` methods.
+
 ## Engineering Rules
 
 - **Business logic belongs in `app/services/*`** — API routes and UI pages must stay thin.

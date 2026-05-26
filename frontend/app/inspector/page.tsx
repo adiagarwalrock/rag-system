@@ -6,6 +6,7 @@ import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { SectionCard } from "@/components/common/section-card";
+import { DarkSelect } from "@/components/common/dark-select";
 import { JsonDrawer } from "@/components/qdrant/json-drawer";
 import { QdrantPointTable } from "@/components/qdrant/qdrant-point-table";
 import { PageHeader } from "@/components/shell/page-header";
@@ -75,22 +76,29 @@ export default function QdrantPage() {
       />
       <SectionCard className="mb-4">
         <div className="grid gap-3 md:grid-cols-5">
-          <select className="control font-mono text-xs" value={collection} onChange={(event) => setCollection(event.target.value)}>
-            <option value="">Collection</option>
-            {(collections.data ?? []).map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}
-          </select>
+          <DarkSelect
+            label="Collection"
+            value={collection}
+            placeholder="Collection"
+            onChange={setCollection}
+            buttonClassName="font-mono"
+            options={[
+              { value: "", label: "Collection" },
+              ...(collections.data ?? []).map((item) => ({ value: item.name, label: item.name })),
+            ]}
+          />
           <input className="control md:col-span-2" placeholder="Search metadata" value={search} onChange={(event) => setSearch(event.target.value)} />
           <input className="control" placeholder="Document ID" value={documentId} onChange={(event) => setDocumentId(event.target.value)} />
-          <select
-            className="control"
+          <DarkSelect
+            label="Vector mode"
             value={vectorMode}
-            onChange={(event) => setVectorMode(event.target.value as "hybrid" | "sparse" | "dense")}
-            aria-label="Vector mode"
-          >
-            <option value="hybrid">hybrid</option>
-            <option value="sparse">sparse</option>
-            <option value="dense">dense</option>
-          </select>
+            onChange={setVectorMode}
+            options={[
+              { value: "hybrid", label: "hybrid" },
+              { value: "sparse", label: "sparse" },
+              { value: "dense", label: "dense" },
+            ]}
+          />
         </div>
       </SectionCard>
       {collections.error ? <ErrorState error={collections.error} /> : points.isLoading ? <LoadingState /> : points.error ? <ErrorState error={points.error} /> : filtered.length ? <QdrantPointTable points={filtered} onSelect={setSelected} /> : <EmptyState title="No vector points" description="Select a Qdrant collection to inspect points and payload metadata." />}

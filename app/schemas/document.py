@@ -42,6 +42,9 @@ class QueryRequest(BaseModel):
     """OpenAI reasoning summary verbosity for this request.  ``None`` (default) falls back
     to the ``REASONING_SUMMARY`` environment variable.  Only effective when
     ``OPENAI_USE_RESPONSES=true`` and the model is a reasoning model (gpt-5.x / o-series)."""
+    stream: bool = False
+    """When True, the response is returned as a Server-Sent Events stream emitting
+    phase status, reasoning deltas, answer deltas, and a final payload event."""
 
 
 class CitationDetail(BaseModel):

@@ -10,6 +10,7 @@ export function RuntimeDiagnostics({ status }: { status: RuntimeStatus }) {
     qdrant: status.qdrant.metadata ?? {},
     ai: status.ai_provider.metadata ?? {},
   };
+  const inUseCollections = getInUseCollections(metadata.qdrant);
 
   return (
     <div className="space-y-4">
@@ -76,7 +77,14 @@ export function RuntimeDiagnostics({ status }: { status: RuntimeStatus }) {
             <tbody className="divide-y divide-border">
               {status.collections.map((collection) => (
                 <tr key={collection.name}>
-                  <td className="py-3 pr-3 font-mono text-xs">{collection.name}</td>
+                  <td className="py-3 pr-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-xs">{collection.name}</span>
+                      {inUseCollections.has(collection.name) ? (
+                        <StatusBadge status="ok" label="in-use" />
+                      ) : null}
+                    </div>
+                  </td>
                   <td className="py-3 pr-3">{collection.role}</td>
                   <td className="py-3 pr-3 font-mono text-xs">{formatNumber(collection.point_count)}</td>
                   <td className="py-3 pr-3 font-mono text-xs">{collection.vector_type ?? "-"}</td>
@@ -99,6 +107,15 @@ export function RuntimeDiagnostics({ status }: { status: RuntimeStatus }) {
       </SectionCard>
     </div>
   );
+}
+
+function getInUseCollections(metadata: Record<string, unknown>) {
+  const names = new Set<string>();
+  for (const key of ["document_collection", "chat_history_collection"]) {
+    const value = metadata[key];
+    if (typeof value === "string" && value.trim()) names.add(value);
+  }
+  return names;
 }
 
 function InfoGrid({ items, preferred }: { items: Record<string, unknown>; preferred: string[] }) {

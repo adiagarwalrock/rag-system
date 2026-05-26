@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { ApiError } from "@/lib/api/errors";
-import { type StreamHandlers } from "@/lib/api/streaming";
+import { readStreamingResponse, type StreamHandlers } from "@/lib/api/streaming";
 import {
   chatSessionSchema,
   chatMessageSchema,
@@ -379,24 +379,16 @@ export const apiClient = {
     return raw.map(normalizeDocument);
   },
 
-  async uploadDocument(clientId: string, file: File, parserPreference?: string, signal?: AbortSignal) {
+  async uploadDocument(clientId: string, file: File, signal?: AbortSignal) {
     const form = new FormData();
     form.append("file", file);
     form.append("client_id", clientId);
-    if (parserPreference) form.append("parser_preference", parserPreference);
     const raw = await requestJson("/documents/ingest", z.unknown(), {
       method: "POST",
       body: form,
       signal,
     });
     return normalizeDocument(raw);
-  },
-
-  async ingestDocument(clientId: string, documentId: string, signal?: AbortSignal) {
-    return requestJson(`/documents/${documentId}/retry`, z.unknown(), {
-      method: "POST",
-      signal,
-    });
   },
 
   async getDocument(clientId: string, documentId: string, signal?: AbortSignal) {
@@ -499,12 +491,27 @@ export const apiClient = {
     return normalizeQueryResponse(raw, payload);
   },
 
-  async streamQuery(input: QueryRequest, handlers: StreamHandlers, signal?: AbortSignal) {
-    const payload = queryRequestSchema.parse(input);
-    void payload;
-    void handlers;
-    void signal;
-    throw new ApiError({ message: "Streaming endpoint is not exposed by the current OpenAPI schema.", path: "/query/stream", status: 404 });
+  async streamQuery(input: QueryRequest, handlers: StreamHandlers<QueryResponse>, signal?: AbortSignal) {
+    const payload = queryRequestSchema.parse({ ...input, stream: true });
+    const response = await fetch(`${apiBaseUrl}/query/`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "text/event-stream" },
+      body: JSON.stringify(payload),
+      signal,
+    });
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new ApiError({
+        message: `Query stream failed (${response.status})`,
+        status: response.status,
+        path: "/query/",
+        body,
+      });
+    }
+    return readStreamingResponse(response, {
+      ...handlers,
+      onFinal: (raw) => handlers.onFinal?.(normalizeQueryResponse(raw, payload)),
+    });
   },
 
   async listQueryHistory(clientId: string, signal?: AbortSignal): Promise<QueryHistoryItem[]> {
@@ -520,17 +527,9 @@ export const apiClient = {
     return rows.map(normalizeHistoryItem);
   },
 
-  async getQueryHistoryItem(clientId: string, queryId: string, signal?: AbortSignal) {
-    void clientId;
-    void queryId;
-    void signal;
-    throw new ApiError({ message: "History REST endpoint is not exposed by the current OpenAPI schema.", path: "/history", status: 404 });
-  },
-
   async listQdrantCollections(signal?: AbortSignal): Promise<QdrantCollection[]> {
-    // Derive collection list from the runtime status endpoint (no separate /qdrant/collections route exists).
-    const status = await this.runtimeStatus(signal);
-    return status.collections;
+    const raw = await requestJson("/qdrant/collections", z.array(z.unknown()), { signal });
+    return raw.map((item) => qdrantCollectionSchema.parse(item));
   },
 
   async listQdrantPoints(collection: string, signal?: AbortSignal): Promise<QdrantPoint[]> {
@@ -550,29 +549,23 @@ export const apiClient = {
     );
   },
 
-  async listQualityTests(clientId: string, signal?: AbortSignal): Promise<QualityTest[]> {
-    void clientId;
-    void signal;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async listQualityTests(_clientId: string, _signal?: AbortSignal): Promise<QualityTest[]> {
     return [];
   },
 
-  async createQualityTest(clientId: string, input: Omit<QualityTest, "id" | "client_id" | "created_at">, signal?: AbortSignal) {
-    void clientId;
-    void input;
-    void signal;
-    throw new ApiError({ message: "Quality evaluation REST endpoint is not exposed by the current OpenAPI schema.", path: "/quality/tests", status: 404 });
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async createQualityTest(_clientId: string, _input: Omit<QualityTest, "id" | "client_id" | "created_at">, _signal?: AbortSignal): Promise<never> {
+    throw new ApiError({ message: "Quality evaluation REST endpoint is not yet implemented.", path: "/quality/tests", status: 404 });
   },
 
-  async runQualityTest(clientId: string, testId: string, signal?: AbortSignal) {
-    void clientId;
-    void testId;
-    void signal;
-    throw new ApiError({ message: "Quality evaluation REST endpoint is not exposed by the current OpenAPI schema.", path: "/quality/tests/{test_id}/run", status: 404 });
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async runQualityTest(_clientId: string, _testId: string, _signal?: AbortSignal): Promise<never> {
+    throw new ApiError({ message: "Quality evaluation REST endpoint is not yet implemented.", path: "/quality/tests/{test_id}/run", status: 404 });
   },
 
-  async listQualityRuns(clientId: string, signal?: AbortSignal): Promise<QualityRun[]> {
-    void clientId;
-    void signal;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async listQualityRuns(_clientId: string, _signal?: AbortSignal): Promise<QualityRun[]> {
     return [];
   },
 };

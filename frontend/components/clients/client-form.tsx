@@ -21,7 +21,7 @@ export function ClientForm() {
 
   return (
     <form
-      className="space-y-4"
+      className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto] lg:items-end"
       onSubmit={form.handleSubmit((values) => createClient.mutate(values, { onSuccess: () => form.reset() }))}
     >
       <label className="block text-xs text-muted-foreground">
@@ -30,13 +30,17 @@ export function ClientForm() {
       </label>
       <label className="block text-xs text-muted-foreground">
         Description
-        <textarea className="mt-1 min-h-28 w-full resize-y rounded-md border border-border bg-muted/70 p-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" {...form.register("description")} />
+        <input className="control mt-1 w-full" {...form.register("description")} />
       </label>
-      <button className="button-primary w-full" disabled={createClient.isPending}>
+      <button className="button-primary mb-0 w-full lg:w-auto" disabled={createClient.isPending}>
         <Plus className="h-4 w-4" />
         Create workspace
       </button>
-      {createClient.error && <ErrorState error={createClient.error} title="Create failed" />}
+      {createClient.error && (
+        <div className="lg:col-span-3">
+          <ErrorState error={createClient.error} title="Create failed" />
+        </div>
+      )}
     </form>
   );
 }

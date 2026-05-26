@@ -132,9 +132,7 @@ def _serialize_point(collection_name: str, record: Any) -> dict[str, Any]:
     payload = getattr(record, "payload", None) or {}
     vector = getattr(record, "vector", None)
     node_payload = _node_payload(payload)
-    metadata = node_payload.get("metadata") if isinstance(node_payload, dict) else {}
-    if not isinstance(metadata, dict):
-        metadata = {}
+    metadata = node_payload.get("metadata") or {}
 
     dense_size = _dense_vector_size(vector)
     sparse_available = _sparse_vector_available(vector)

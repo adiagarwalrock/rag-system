@@ -528,7 +528,7 @@ def render_query():
             width="stretch",
             disabled=not bool(active_session_id),
         ):
-            api.clear_chat_session(active_session_id)
+            api.clear_chat_session(active_session_id, selected_client_id)
             st.rerun()
 
         if st.button(

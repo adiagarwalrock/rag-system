@@ -1,7 +1,7 @@
 "use client";
 
 import * as Tabs from "@radix-ui/react-tabs";
-import { Upload } from "lucide-react";
+import { FileText, Upload, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useClients } from "@/lib/hooks/use-clients";
 import { useDeleteDocument, useDocuments, useRetryDocument, useUploadDocument } from "@/lib/hooks/use-documents";
@@ -14,6 +14,7 @@ import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { SectionCard } from "@/components/common/section-card";
+import { DarkSelect } from "@/components/common/dark-select";
 
 export default function DocumentsPage() {
   const clients = useClients();
@@ -24,22 +25,32 @@ export default function DocumentsPage() {
   const retryDoc = useRetryDocument(workspaceId);
   const deleteDoc = useDeleteDocument(workspaceId);
   const retryJob = useRetryIngestionJob(workspaceId);
-  const [files, setFiles] = useState<FileList | null>(null);
-  const [parser, setParser] = useState("auto fallback");
-  const [versionMode, setVersionMode] = useState("new document family");
-  const [family, setFamily] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
+  const activeJobs = (jobs.data ?? []).filter((job) =>
+    job.status === "queued" || job.status === "processing" || job.status === "failed",
+  );
 
   useEffect(() => {
     if (!workspaceId && clients.data?.[0]) setWorkspaceId(clients.data[0].id);
   }, [clients.data, setWorkspaceId, workspaceId]);
 
   async function queueUpload() {
-    if (!files) return;
+    if (!files.length) return;
     await Promise.all(
-      Array.from(files).map((file) => upload.mutateAsync({ file, parserPreference: parser })),
+      files.map((file) => upload.mutateAsync({ file })),
     );
+    setFiles([]);
     await documents.refetch();
     await jobs.refetch();
+  }
+
+  function addFiles(nextFiles: FileList | null) {
+    if (!nextFiles?.length) return;
+    setFiles((current) => [...current, ...Array.from(nextFiles)]);
+  }
+
+  function removeFile(index: number) {
+    setFiles((current) => current.filter((_, currentIndex) => currentIndex !== index));
   }
 
   return (
@@ -48,10 +59,18 @@ export default function DocumentsPage() {
         title="Source material."
         description="Upload, ingest, version, inspect, retry, and delete documents within the active workspace."
         actions={
-          <select className="control w-60 font-mono text-xs" value={workspaceId} onChange={(event) => setWorkspaceId(event.target.value)}>
-            <option value="">Select workspace</option>
-            {(clients.data ?? []).map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
-          </select>
+          <DarkSelect
+            label="Workspace"
+            value={workspaceId}
+            placeholder="Select workspace"
+            onChange={setWorkspaceId}
+            className="w-60"
+            buttonClassName="font-mono"
+            options={[
+              { value: "", label: "Select workspace" },
+              ...(clients.data ?? []).map((client) => ({ value: client.id, label: client.name })),
+            ]}
+          />
         }
       />
       <Tabs.Root defaultValue="upload" className="space-y-4">
@@ -64,40 +83,55 @@ export default function DocumentsPage() {
         </Tabs.List>
         <Tabs.Content value="upload">
           <SectionCard title="Upload files" description="Supported formats: PDF, DOCX, PPTX. Max size: 200MB per file.">
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-              <label className="flex min-h-56 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-border bg-muted/20 p-8 text-center hover:bg-muted/30">
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+              <label
+                className="flex min-h-56 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-border bg-muted/20 p-8 text-center hover:bg-muted/30"
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  addFiles(event.dataTransfer.files);
+                }}
+              >
                 <Upload className="h-8 w-8 text-muted-foreground" />
                 <span className="mt-3 text-sm font-medium">Drop source files here</span>
                 <span className="mt-1 text-xs text-muted-foreground">or browse from disk</span>
-                <input className="hidden" type="file" multiple accept=".pdf,.docx,.pptx" onChange={(event) => setFiles(event.target.files)} />
+                <input className="hidden" type="file" multiple accept=".pdf,.docx,.pptx" onChange={(event) => addFiles(event.target.files)} />
               </label>
               <div className="space-y-3">
-                <label className="block text-xs text-muted-foreground">
-                  Parser preference
-                  <select className="control mt-1 w-full" value={parser} onChange={(event) => setParser(event.target.value)}>
-                    {["auto fallback", "reducto", "llamaparse", "layout_pdf", "legacy"].map((value) => <option key={value}>{value}</option>)}
-                  </select>
-                </label>
-                <label className="block text-xs text-muted-foreground">
-                  Version mode
-                  <select className="control mt-1 w-full" value={versionMode} onChange={(event) => setVersionMode(event.target.value)}>
-                    <option>new document family</option>
-                    <option>new version of existing document</option>
-                  </select>
-                </label>
-                {versionMode.includes("existing") && (
-                  <label className="block text-xs text-muted-foreground">
-                    Existing document family
-                    <select className="control mt-1 w-full font-mono text-xs" value={family} onChange={(event) => setFamily(event.target.value)}>
-                      <option value="">Select family</option>
-                      {(documents.data ?? []).map((document) => <option key={document.id} value={document.document_family}>{document.document_family}</option>)}
-                    </select>
-                  </label>
-                )}
-                <div className="rounded-md border border-border bg-background p-3 text-xs text-muted-foreground">
-                  {files?.length ? `${files.length} file(s) selected.` : "No files selected."}
+                <div className="rounded-md border border-border bg-background">
+                  <div className="border-b border-border px-3 py-2 text-xs font-medium text-muted-foreground">
+                    Selected files
+                  </div>
+                  {files.length ? (
+                    <div className="max-h-56 divide-y divide-border overflow-y-auto">
+                      {files.map((file, index) => (
+                        <div key={`${file.name}-${file.size}-${index}`} className="flex items-start gap-2 px-3 py-2">
+                          <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-sm font-medium">{file.name}</div>
+                            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 font-mono text-[11px] text-muted-foreground">
+                              <span>{formatFileSize(file.size)}</span>
+                              <span>{file.type || fileExtension(file.name) || "unknown type"}</span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                            onClick={() => removeFile(index)}
+                            aria-label={`Remove ${file.name}`}
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="px-3 py-6 text-center text-xs text-muted-foreground">
+                      No files selected.
+                    </div>
+                  )}
                 </div>
-                <button className="button-primary w-full" disabled={!workspaceId || !files?.length || upload.isPending} onClick={queueUpload}>
+                <button className="button-primary w-full" disabled={!workspaceId || !files.length || upload.isPending} onClick={queueUpload}>
                   Queue ingestion
                 </button>
                 {upload.error && <ErrorState error={upload.error} title="Upload failed" />}
@@ -106,11 +140,11 @@ export default function DocumentsPage() {
           </SectionCard>
         </Tabs.Content>
         <Tabs.Content value="activity">
-          {jobs.isLoading ? <LoadingState /> : jobs.error ? <ErrorState error={jobs.error} /> : jobs.data?.length ? (
+          {jobs.isLoading ? <LoadingState /> : jobs.error ? <ErrorState error={jobs.error} /> : activeJobs.length ? (
             <div className="space-y-3">
-              {jobs.data.map((job) => <IngestionJobCard key={job.id} job={job} onRetry={() => retryJob.mutate(job.id)} retrying={retryJob.isPending} />)}
+              {activeJobs.map((job) => <IngestionJobCard key={job.id} job={job} onRetry={() => retryJob.mutate(job.id)} retrying={retryJob.isPending} />)}
             </div>
-          ) : <EmptyState title="No ingestion jobs" description="Queued and processing documents will appear here." />}
+          ) : <EmptyState title="No active ingestion jobs" description="Queued, processing, and failed ingestion jobs will appear here." />}
         </Tabs.Content>
         <Tabs.Content value="library">
           {documents.isLoading ? <LoadingState /> : documents.error ? <ErrorState error={documents.error} /> : documents.data?.length ? (
@@ -127,4 +161,16 @@ export default function DocumentsPage() {
       </Tabs.Root>
     </div>
   );
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  return `${(kb / 1024).toFixed(1)} MB`;
+}
+
+function fileExtension(filename: string) {
+  const extension = filename.split(".").pop();
+  return extension ? `.${extension.toLowerCase()}` : "";
 }

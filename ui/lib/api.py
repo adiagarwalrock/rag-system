@@ -306,9 +306,9 @@ class VecteraCore:
                 response_messages.append(payload)
             return response_messages
 
-    def clear_chat_session(self, session_id: str) -> Dict[str, Any]:
+    def clear_chat_session(self, session_id: str, client_id: str) -> Dict[str, Any]:
         with SessionLocal() as db:
-            ChatConversationService(db).clear_session(session_id=session_id)
+            ChatConversationService(db).clear_session(session_id=session_id, client_id=client_id)
             return {"status": "success", "session_id": session_id}
 
     def list_query_history(

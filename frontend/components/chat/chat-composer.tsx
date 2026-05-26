@@ -1,7 +1,8 @@
 "use client";
 
-import { Check, ChevronDown, Plus, Send, Square } from "lucide-react";
-import { useState } from "react";
+import { Check, Plus, Send, Square } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { DarkSelect } from "@/components/common/dark-select";
 import type { Client } from "@/lib/api/schemas";
 import { cn } from "@/lib/utils";
 
@@ -42,7 +43,29 @@ export function ChatComposer({
 }) {
   const [question, setQuestion] = useState(initialQuestion);
   const [clientMenuOpen, setClientMenuOpen] = useState(false);
+  const clientMenuRef = useRef<HTMLDivElement | null>(null);
   const activeClient = clients?.find((client) => client.id === activeClientId);
+
+  useEffect(() => {
+    if (!clientMenuOpen) return;
+
+    function handlePointerDown(event: PointerEvent) {
+      if (!clientMenuRef.current?.contains(event.target as Node)) {
+        setClientMenuOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setClientMenuOpen(false);
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [clientMenuOpen]);
 
   return (
     <form
@@ -70,7 +93,7 @@ export function ChatComposer({
         }}
       />
       <div className="flex items-center justify-between gap-3">
-        <div className="relative flex items-center gap-2">
+        <div ref={clientMenuRef} className="relative flex items-center gap-2">
           <button
             type="button"
             className={cn(
@@ -137,30 +160,35 @@ export function ChatComposer({
           )}
           <div className="hidden max-w-[220px] items-center gap-1 rounded-full border border-border bg-background px-3 py-2 text-xs text-muted-foreground sm:flex">
             <span className="truncate">{activeClient?.name ?? "No client"}</span>
-            <ChevronDown className="h-3.5 w-3.5 shrink-0" />
           </div>
         </div>
         <div className="flex min-w-0 items-center justify-end gap-2">
-          <select
-            className="hidden h-9 rounded-full border border-border bg-background px-3 text-xs text-muted-foreground outline-none md:block"
+          <DarkSelect
+            label="Reasoning effort"
             value={reasoningEffort ?? "medium"}
-            onChange={(event) => onReasoningEffortChange?.(event.target.value as "low" | "medium" | "high")}
-            aria-label="Reasoning effort"
-          >
-            <option value="low">low</option>
-            <option value="medium">medium</option>
-            <option value="high">high</option>
-          </select>
-          <select
-            className="hidden h-9 rounded-full border border-border bg-background px-3 text-xs text-muted-foreground outline-none md:block"
+            options={[
+              { value: "low", label: "low" },
+              { value: "medium", label: "medium" },
+              { value: "high", label: "high" },
+            ]}
+            onChange={(value) => onReasoningEffortChange?.(value)}
+            className="hidden md:block"
+            buttonClassName="min-w-24"
+            menuSide="top"
+          />
+          <DarkSelect
+            label="Retrieval mode"
             value={retrievalMode ?? "auto"}
-            onChange={(event) => onRetrievalModeChange?.(event.target.value as "auto" | "hybrid" | "dense_only")}
-            aria-label="Retrieval mode"
-          >
-            <option value="auto">auto</option>
-            <option value="hybrid">hybrid</option>
-            <option value="dense_only">dense_only</option>
-          </select>
+            options={[
+              { value: "auto", label: "auto" },
+              { value: "hybrid", label: "hybrid" },
+              { value: "dense_only", label: "dense_only" },
+            ]}
+            onChange={(value) => onRetrievalModeChange?.(value)}
+            className="hidden md:block"
+            buttonClassName="min-w-24"
+            menuSide="top"
+          />
           <span className="hidden text-xs text-muted-foreground sm:inline">Cmd/Ctrl + Enter</span>
         {streaming ? (
           <button type="button" className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background text-muted-foreground hover:bg-muted" onClick={onCancel} aria-label="Cancel response">

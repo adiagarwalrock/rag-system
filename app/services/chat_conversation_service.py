@@ -136,6 +136,16 @@ class ChatConversationService:
         self.db.refresh(session)
         return session
 
+    def require_session(self, *, session_id: str, client_id: str) -> ChatSession:
+        session = (
+            self.db.query(ChatSession)
+            .filter(ChatSession.id == session_id, ChatSession.client_id == client_id)
+            .first()
+        )
+        if not session:
+            raise ValueError(f"Session {session_id} not found for client {client_id}.")
+        return session
+
     def list_messages(self, *, session_id: str, limit: int = 200) -> list[ChatMessage]:
         bounded_limit = max(1, min(limit, 500))
         rows = (
@@ -147,9 +157,11 @@ class ChatConversationService:
         )
         return list(reversed(rows))
 
-    def clear_session(self, *, session_id: str) -> None:
+    def clear_session(self, *, session_id: str, client_id: str) -> None:
         session = (
-            self.db.query(ChatSession).filter(ChatSession.id == session_id).first()
+            self.db.query(ChatSession)
+            .filter(ChatSession.id == session_id, ChatSession.client_id == client_id)
+            .first()
         )
         if not session:
             raise ValueError(f"Session {session_id} not found.")

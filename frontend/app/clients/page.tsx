@@ -19,7 +19,7 @@ export default function ClientsPage() {
         title="Workspaces."
         description="Create isolated client workspaces with scoped documents, sessions, history, and semantic memory."
       />
-      <div className="grid gap-4 xl:grid-cols-[420px_minmax(0,1fr)]">
+      <div className="mx-auto max-w-5xl space-y-4">
         <SectionCard
           title="Create workspace"
           description="Add a new isolated client scope."
@@ -30,7 +30,7 @@ export default function ClientsPage() {
         <div>
           {clients.isLoading ? <LoadingState /> : clients.error ? <ErrorState error={clients.error} /> : clients.data?.length ? (
             <SectionCard title={`Workspace library // ${clients.data.length}`}>
-              <div className="grid gap-3 2xl:grid-cols-2">
+              <div className="space-y-3">
                 {clients.data.map((client) => (
                   <ClientCard
                     key={client.id}

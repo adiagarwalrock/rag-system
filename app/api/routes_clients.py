@@ -1,5 +1,5 @@
 import uuid
-from typing import List
+from typing import Any, List
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, true
@@ -18,47 +18,26 @@ from app.services.client_service import (
 router = APIRouter()
 
 
+def _count_by_client(db: Session, model: Any, client_ids: list[str], *extra_filters: Any) -> dict[str, int]:
+    q = (
+        db.query(model.client_id, func.count(model.id).label("cnt"))
+        .filter(model.client_id.in_(client_ids), *extra_filters)
+        .group_by(model.client_id)
+    )
+    return {row.client_id: row.cnt for row in q.all()}
+
+
 def _client_counts(db: Session, client_ids: list[str]) -> dict[str, dict]:
     """Return per-client counts for documents, queries, sessions, and vector nodes."""
     if not client_ids:
         return {}
 
-    doc_counts = {
-        row.client_id: row.cnt
-        for row in db.query(Document.client_id, func.count(Document.id).label("cnt"))
-        .filter(Document.client_id.in_(client_ids))
-        .group_by(Document.client_id)
-        .all()
-    }
-    query_counts = {
-        row.client_id: row.cnt
-        for row in db.query(QueryLog.client_id, func.count(QueryLog.id).label("cnt"))
-        .filter(QueryLog.client_id.in_(client_ids))
-        .group_by(QueryLog.client_id)
-        .all()
-    }
-    session_counts = {
-        row.client_id: row.cnt
-        for row in db.query(
-            ChatSession.client_id, func.count(ChatSession.id).label("cnt")
-        )
-        .filter(ChatSession.client_id.in_(client_ids))
-        .group_by(ChatSession.client_id)
-        .all()
-    }
-    memory_counts = {
-        row.client_id: row.cnt
-        for row in db.query(
-            VectorNodeRegistry.client_id,
-            func.count(VectorNodeRegistry.id).label("cnt"),
-        )
-        .filter(
-            VectorNodeRegistry.client_id.in_(client_ids),
-            VectorNodeRegistry.is_active == true(),
-        )
-        .group_by(VectorNodeRegistry.client_id)
-        .all()
-    }
+    doc_counts = _count_by_client(db, Document, client_ids)
+    query_counts = _count_by_client(db, QueryLog, client_ids)
+    session_counts = _count_by_client(db, ChatSession, client_ids)
+    memory_counts = _count_by_client(
+        db, VectorNodeRegistry, client_ids, VectorNodeRegistry.is_active == true()
+    )
 
     return {
         cid: {

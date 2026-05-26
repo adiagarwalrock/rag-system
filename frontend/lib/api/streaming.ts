@@ -1,8 +1,11 @@
-import type { QueryRequest, QueryResponse } from "@/lib/api/schemas";
+import type { QueryRequest } from "@/lib/api/schemas";
 
-export type StreamHandlers = {
-  onText: (chunk: string) => void;
-  onFinal?: (response: QueryResponse) => void;
+export type StreamHandlers<TFinal = unknown> = {
+  onText?: (chunk: string) => void;
+  onStatus?: (phase: string) => void;
+  onReasoning?: (delta: string) => void;
+  onFinal?: (response: TFinal) => void;
+  onError?: (message: string, detail?: unknown) => void;
 };
 
 export async function readStreamingResponse(
@@ -40,6 +43,15 @@ function consumeStreamEvent(event: string, handlers: StreamHandlers) {
     .filter(Boolean);
   if (!lines.length) return;
 
+  // Extract the named SSE event type (e.g. "event: status") if present.
+  // The FastAPI route emits:
+  //   event: status     data: {"delta": "..."}
+  //   event: reasoning  data: {"delta": "..."}
+  //   event: final      data: {<QueryResponse fields>}
+  //   event: error      data: {"detail": "..."}
+  const eventLine = lines.find((line) => line.startsWith("event:"));
+  const eventType = eventLine ? eventLine.slice(6).trim() : undefined;
+
   const dataLines = lines
     .filter((line) => line.startsWith("data:"))
     .map((line) => line.slice(5).trim());
@@ -47,21 +59,54 @@ function consumeStreamEvent(event: string, handlers: StreamHandlers) {
 
   if (payload === "[DONE]") return;
 
+  // Route by SSE event name first. Fall back to inspecting a "type" field
+  // inside JSON for compatibility with older/plain streaming responses.
   try {
     const decoded = JSON.parse(payload) as {
       type?: string;
       delta?: string;
       text?: string;
       answer?: string;
-      response?: QueryResponse;
+      response?: unknown;
+      result?: unknown;
+      detail?: string;
+      message?: string;
     };
-    if (decoded.type === "final" && decoded.response) {
-      handlers.onFinal?.(decoded.response);
+
+    const resolvedType = eventType ?? decoded.type;
+
+    if (resolvedType === "status" || resolvedType === "phase") {
+      handlers.onStatus?.(decoded.delta ?? "");
       return;
     }
-    handlers.onText(decoded.delta ?? decoded.text ?? decoded.answer ?? "");
+    if (resolvedType === "reasoning" || resolvedType === "reasoning_delta") {
+      handlers.onReasoning?.(decoded.delta ?? "");
+      return;
+    }
+    if (
+      resolvedType === "answer" ||
+      resolvedType === "answer_delta" ||
+      resolvedType === "delta" ||
+      resolvedType === "token"
+    ) {
+      handlers.onText?.(decoded.delta ?? decoded.text ?? decoded.answer ?? "");
+      return;
+    }
+    if (resolvedType === "final") {
+      // With named SSE events the final payload is usually the response itself.
+      // Some clients wrap it under response/result, so handle both shapes.
+      const responsePayload = decoded.response ?? decoded.result ?? decoded;
+      handlers.onFinal?.(responsePayload);
+      return;
+    }
+    if (resolvedType === "error") {
+      const message = decoded.detail ?? decoded.message ?? "The query stream failed.";
+      handlers.onError?.(message, decoded);
+      return;
+    }
+    handlers.onText?.(decoded.delta ?? decoded.text ?? decoded.answer ?? "");
   } catch {
-    handlers.onText(payload);
+    handlers.onText?.(payload);
   }
 }
 

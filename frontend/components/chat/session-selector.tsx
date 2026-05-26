@@ -1,6 +1,7 @@
 "use client";
 
 import { Plus } from "lucide-react";
+import { DarkSelect } from "@/components/common/dark-select";
 import { useCreateSession, useSessions } from "@/lib/hooks/use-chat";
 import { getStoredSession, setStoredSession } from "@/lib/state/workspace-store";
 
@@ -18,23 +19,24 @@ export function SessionSelector({
 
   return (
     <div className="flex items-center gap-2">
-      <select
-        className="control w-52 font-mono text-xs"
+      <DarkSelect
+        label="Chat session"
         value={sessionId || getStoredSession(workspaceId)}
-        onChange={(event) => {
-          onChange(event.target.value);
-          setStoredSession(workspaceId, event.target.value);
+        onChange={(value) => {
+          onChange(value);
+          setStoredSession(workspaceId, value);
         }}
         disabled={!workspaceId}
-        aria-label="Chat session"
-      >
-        <option value="">No session</option>
-        {(sessions.data ?? []).map((session) => (
-          <option key={session.id} value={session.id}>
-            {session.title || session.id}
-          </option>
-        ))}
-      </select>
+        className="w-52"
+        buttonClassName="font-mono"
+        options={[
+          { value: "", label: "No session" },
+          ...(sessions.data ?? []).map((session) => ({
+            value: session.id,
+            label: session.title || session.id,
+          })),
+        ]}
+      />
       <button
         className="button-secondary"
         disabled={!workspaceId || createSession.isPending}

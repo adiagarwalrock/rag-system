@@ -137,6 +137,7 @@ export const queryRequestSchema = z.object({
   retrieval_mode: retrievalModeSchema.optional(),
   include_memory: z.boolean().optional(),
   include_conflicts: z.boolean().optional(),
+  stream: z.boolean().optional(),
 });
 
 export const queryResponseSchema = z
@@ -214,7 +215,7 @@ export const qdrantCollectionSchema = z
     point_count: z.number(),
     vector_type: z.enum(["dense", "sparse", "hybrid"]).optional(),
     health: statusSchema,
-    last_updated: z.string().optional(),
+    last_updated: optionalStringish.optional(),
   })
   .passthrough();
 

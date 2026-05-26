@@ -1,11 +1,12 @@
 "use client";
 
+import { DarkSelect } from "@/components/common/dark-select";
 import { useClients } from "@/lib/hooks/use-clients";
 
 export function WorkspaceSelector({
   value,
   onChange,
-  className = "control w-60 font-mono text-xs",
+  className = "w-60",
 }: {
   value: string;
   onChange: (workspaceId: string) => void;
@@ -13,11 +14,17 @@ export function WorkspaceSelector({
 }) {
   const clients = useClients();
   return (
-    <select className={className} value={value} onChange={(event) => onChange(event.target.value)} aria-label="Workspace">
-      <option value="">Select workspace</option>
-      {(clients.data ?? []).map((client) => (
-        <option key={client.id} value={client.id}>{client.name}</option>
-      ))}
-    </select>
+    <DarkSelect
+      label="Workspace"
+      value={value}
+      placeholder="Select workspace"
+      onChange={onChange}
+      className={className}
+      buttonClassName="font-mono"
+      options={[
+        { value: "", label: "Select workspace" },
+        ...(clients.data ?? []).map((client) => ({ value: client.id, label: client.name })),
+      ]}
+    />
   );
 }

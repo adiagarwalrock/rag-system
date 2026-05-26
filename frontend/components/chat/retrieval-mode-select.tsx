@@ -1,5 +1,7 @@
 "use client";
 
+import { DarkSelect } from "@/components/common/dark-select";
+
 export function RetrievalModeSelect({
   value,
   onChange,
@@ -8,10 +10,15 @@ export function RetrievalModeSelect({
   onChange: (value: "auto" | "hybrid" | "dense_only") => void;
 }) {
   return (
-    <select className="control w-full" value={value} onChange={(event) => onChange(event.target.value as "auto" | "hybrid" | "dense_only")} aria-label="Retrieval mode">
-      <option value="auto">auto</option>
-      <option value="hybrid">hybrid</option>
-      <option value="dense_only">dense_only</option>
-    </select>
+    <DarkSelect
+      label="Retrieval mode"
+      value={value}
+      onChange={onChange}
+      options={[
+        { value: "auto", label: "auto" },
+        { value: "hybrid", label: "hybrid" },
+        { value: "dense_only", label: "dense_only" },
+      ]}
+    />
   );
 }

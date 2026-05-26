@@ -1,5 +1,7 @@
 "use client";
 
+import { DarkSelect } from "@/components/common/dark-select";
+
 export function ReasoningEffortSelect({
   value,
   onChange,
@@ -8,10 +10,15 @@ export function ReasoningEffortSelect({
   onChange: (value: "low" | "medium" | "high") => void;
 }) {
   return (
-    <select className="control w-full" value={value} onChange={(event) => onChange(event.target.value as "low" | "medium" | "high")} aria-label="Reasoning effort">
-      <option value="low">low</option>
-      <option value="medium">medium</option>
-      <option value="high">high</option>
-    </select>
+    <DarkSelect
+      label="Reasoning effort"
+      value={value}
+      onChange={onChange}
+      options={[
+        { value: "low", label: "low" },
+        { value: "medium", label: "medium" },
+        { value: "high", label: "high" },
+      ]}
+    />
   );
 }

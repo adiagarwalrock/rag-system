@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.db.models.chat import ChatMessage, ChatSession
 from app.db.snowflake import get_db
 from app.services.chat_conversation_service import ChatConversationService
 from app.services.client_service import ClientLookupService
@@ -121,18 +120,12 @@ def list_messages(
     limit: int = Query(200, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
-    session = (
-        db.query(ChatSession)
-        .filter(ChatSession.id == session_id, ChatSession.client_id == client_id)
-        .first()
-    )
-    if not session:
+    svc = ChatConversationService(db)
+    try:
+        svc.require_session(session_id=session_id, client_id=client_id)
+    except ValueError:
         raise HTTPException(status_code=404, detail="Session not found")
-
-    messages = ChatConversationService(db).list_messages(
-        session_id=session_id,
-        limit=limit,
-    )
+    messages = svc.list_messages(session_id=session_id, limit=limit)
     return [_serialize_message(message) for message in messages]
 
 
@@ -142,13 +135,10 @@ def clear_messages(
     session_id: str,
     db: Session = Depends(get_db),
 ):
-    session = (
-        db.query(ChatSession)
-        .filter(ChatSession.id == session_id, ChatSession.client_id == client_id)
-        .first()
-    )
-    if not session:
+    try:
+        ChatConversationService(db).clear_session(
+            session_id=session_id, client_id=client_id
+        )
+    except ValueError:
         raise HTTPException(status_code=404, detail="Session not found")
-
-    ChatConversationService(db).clear_session(session_id=session_id)
     return {"status": "success", "session_id": session_id}

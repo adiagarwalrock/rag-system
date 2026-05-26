@@ -8,6 +8,7 @@ import { RetrievalTraceView } from "@/components/chat/retrieval-trace";
 import { JsonViewer } from "@/components/common/json-viewer";
 import { MarkdownContent } from "@/components/common/markdown-content";
 import { StatusBadge } from "@/components/common/status-badge";
+import { DarkSelect } from "@/components/common/dark-select";
 import { formatDate, truncate } from "@/lib/utils";
 
 export function QueryHistoryTable({ rows }: { rows: QueryHistoryItem[] }) {
@@ -33,18 +34,30 @@ export function QueryHistoryTable({ rows }: { rows: QueryHistoryItem[] }) {
     <div className="space-y-3">
       <div className="grid gap-2 md:grid-cols-5">
         <input className="control md:col-span-2" placeholder="Search questions and answers" value={search} onChange={(event) => setSearch(event.target.value)} />
-        <select className="control" value={retrievalMode} onChange={(event) => setRetrievalMode(event.target.value)}>
-          <option value="">all retrieval</option>
-          <option value="hybrid">hybrid</option>
-          <option value="dense_only">dense_only</option>
-          <option value="sparse_only">sparse_only</option>
-        </select>
-        <select className="control" value={effort} onChange={(event) => setEffort(event.target.value)}>
-          <option value="">all effort</option>
-          <option value="low">low</option>
-          <option value="medium">medium</option>
-          <option value="high">high</option>
-        </select>
+        <DarkSelect
+          label="Retrieval filter"
+          value={retrievalMode}
+          placeholder="all retrieval"
+          onChange={setRetrievalMode}
+          options={[
+            { value: "", label: "all retrieval" },
+            { value: "hybrid", label: "hybrid" },
+            { value: "dense_only", label: "dense_only" },
+            { value: "sparse_only", label: "sparse_only" },
+          ]}
+        />
+        <DarkSelect
+          label="Reasoning effort filter"
+          value={effort}
+          placeholder="all effort"
+          onChange={setEffort}
+          options={[
+            { value: "", label: "all effort" },
+            { value: "low", label: "low" },
+            { value: "medium", label: "medium" },
+            { value: "high", label: "high" },
+          ]}
+        />
         <label className="flex items-center gap-2 rounded-md border border-border bg-muted px-3 text-sm">
           <input type="checkbox" checked={conflictsOnly} onChange={(event) => setConflictsOnly(event.target.checked)} />
           Conflict only

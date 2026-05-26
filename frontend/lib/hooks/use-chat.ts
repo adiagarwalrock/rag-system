@@ -20,6 +20,31 @@ export function useCreateSession(clientId: string) {
   });
 }
 
+export function useDeleteSession(clientId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (sessionId: string) => apiClient.deleteSession(clientId, sessionId),
+    onSuccess: (_, sessionId) => {
+      queryClient.invalidateQueries({ queryKey: ["sessions", clientId] });
+      queryClient.removeQueries({ queryKey: ["session-messages", clientId, sessionId] });
+    },
+  });
+}
+
+export function useDeleteSessions(clientId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (sessionIds: string[]) =>
+      Promise.all(sessionIds.map((sessionId) => apiClient.deleteSession(clientId, sessionId))),
+    onSuccess: (_, sessionIds) => {
+      queryClient.invalidateQueries({ queryKey: ["sessions", clientId] });
+      sessionIds.forEach((sessionId) => {
+        queryClient.removeQueries({ queryKey: ["session-messages", clientId, sessionId] });
+      });
+    },
+  });
+}
+
 export function useSessionMessages(clientId: string, sessionId: string) {
   return useQuery({
     queryKey: ["session-messages", clientId, sessionId],
