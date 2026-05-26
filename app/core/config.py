@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     CROSS_ENCODER_RERANK_DEVICE: str | None = None
     CROSS_ENCODER_RERANK_TRUST_REMOTE_CODE: bool = False
 
-    COLLECTION_NAME: str = "rag_collection_oai_reducto"
+    COLLECTION_NAME: str = "rag_collection_oai_parser_extractor"
     CHAT_HISTORY_COLLECTION_NAME: str = "chat_history_v1"
     VECTOR_DIMENSIONS: int = 3072
 
@@ -125,7 +125,7 @@ class Settings(BaseSettings):
     REASONING_SUMMARY: str | None = "auto"  # OpenAI reasoning summary verbosity: "auto", "concise", "detailed", or None to disable. Only applied when OPENAI_USE_RESPONSES=True and a reasoning_effort is set. NOTE: gpt-5.2 only emits reasoning summary events for reasoning_effort="high"; "medium" and "low" return zero reasoning tokens.
 
     # Background ingestion
-    INGESTION_MAX_WORKERS: int = 2
+    INGESTION_MAX_WORKERS: int = 5
     INGESTION_QUEUE_MAX_SIZE: int = 128
 
     # UI responsiveness

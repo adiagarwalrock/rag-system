@@ -2,10 +2,12 @@ import uuid
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import true
+from sqlalchemy import func, true
 from sqlalchemy.orm import Session
 
+from app.db.models.chat import ChatSession
 from app.db.models.client import Client
+from app.db.models.document import Document, QueryLog, VectorNodeRegistry
 from app.db.snowflake import get_db
 from app.schemas.client import ClientCreate, ClientResponse, ClientUpdate
 from app.services.client_service import (
@@ -16,9 +18,77 @@ from app.services.client_service import (
 router = APIRouter()
 
 
+def _client_counts(db: Session, client_ids: list[str]) -> dict[str, dict]:
+    """Return per-client counts for documents, queries, sessions, and vector nodes."""
+    if not client_ids:
+        return {}
+
+    doc_counts = {
+        row.client_id: row.cnt
+        for row in db.query(Document.client_id, func.count(Document.id).label("cnt"))
+        .filter(Document.client_id.in_(client_ids))
+        .group_by(Document.client_id)
+        .all()
+    }
+    query_counts = {
+        row.client_id: row.cnt
+        for row in db.query(QueryLog.client_id, func.count(QueryLog.id).label("cnt"))
+        .filter(QueryLog.client_id.in_(client_ids))
+        .group_by(QueryLog.client_id)
+        .all()
+    }
+    session_counts = {
+        row.client_id: row.cnt
+        for row in db.query(
+            ChatSession.client_id, func.count(ChatSession.id).label("cnt")
+        )
+        .filter(ChatSession.client_id.in_(client_ids))
+        .group_by(ChatSession.client_id)
+        .all()
+    }
+    memory_counts = {
+        row.client_id: row.cnt
+        for row in db.query(
+            VectorNodeRegistry.client_id,
+            func.count(VectorNodeRegistry.id).label("cnt"),
+        )
+        .filter(
+            VectorNodeRegistry.client_id.in_(client_ids),
+            VectorNodeRegistry.is_active == true(),
+        )
+        .group_by(VectorNodeRegistry.client_id)
+        .all()
+    }
+
+    return {
+        cid: {
+            "document_count": doc_counts.get(cid, 0),
+            "query_count": query_counts.get(cid, 0),
+            "session_count": session_counts.get(cid, 0),
+            "memory_point_count": memory_counts.get(cid, 0),
+        }
+        for cid in client_ids
+    }
+
+
+def _enrich(client: Client, counts: dict) -> ClientResponse:
+    data = {
+        "id": client.id,
+        "name": client.name,
+        "description": client.description,
+        "is_active": client.is_active,
+        "created_at": client.created_at,
+        "updated_at": client.updated_at,
+        **counts,
+    }
+    return ClientResponse(**data)
+
+
 @router.get("/", response_model=List[ClientResponse])
 def get_clients(db: Session = Depends(get_db)):
-    return db.query(Client).filter(Client.is_active == true()).all()
+    clients = db.query(Client).filter(Client.is_active == true()).all()
+    counts = _client_counts(db, [c.id for c in clients])
+    return [_enrich(c, counts.get(c.id, {})) for c in clients]
 
 
 @router.get("/{client_id}", response_model=ClientResponse)
@@ -30,7 +100,8 @@ def get_client(
         client = ClientLookupService(db).require_client(client_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="Client not found")
-    return client
+    counts = _client_counts(db, [client_id])
+    return _enrich(client, counts.get(client_id, {}))
 
 
 @router.post("/", response_model=ClientResponse)

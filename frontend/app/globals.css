@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --background: 220 14% 5%;
+  --foreground: 210 20% 94%;
+  --card: 220 13% 8%;
+  --card-foreground: 210 20% 94%;
+  --muted: 220 12% 12%;
+  --muted-foreground: 218 10% 62%;
+  --border: 220 12% 18%;
+  --input: 220 12% 16%;
+  --ring: 211 100% 56%;
+  --primary: 211 100% 56%;
+  --primary-foreground: 210 40% 98%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 210 40% 98%;
+  --warning: 38 92% 50%;
+  --success: 142 72% 36%;
+}
+
+html {
+  font-size: 17px;
+}
+
+* {
+  @apply border-border;
+}
+
+body {
+  @apply bg-background text-foreground antialiased;
+}
+
+::selection {
+  background: hsl(var(--primary) / 0.35);
+}
+
+@layer components {
+  .control {
+    @apply h-9 rounded-md border border-border bg-muted/70 px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .button-primary {
+    @apply inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .button-secondary {
+    @apply inline-flex h-9 items-center justify-center gap-2 rounded-md border border-border bg-muted px-3 text-sm font-medium text-foreground transition hover:bg-muted/70 disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .button-ghost {
+    @apply inline-flex h-9 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50;
+  }
+}

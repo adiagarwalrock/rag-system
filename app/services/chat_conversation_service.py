@@ -162,6 +162,22 @@ class ChatConversationService:
         self.context_service.delete_session_memory(session_id)
         self.db.commit()
 
+    def delete_session(self, *, session_id: str, client_id: str) -> None:
+        """Clear all messages/memory for a session and delete the session row atomically."""
+        session = (
+            self.db.query(ChatSession)
+            .filter(ChatSession.id == session_id, ChatSession.client_id == client_id)
+            .first()
+        )
+        if not session:
+            raise ValueError(f"Session {session_id} not found.")
+        self.db.query(ChatMessage).filter(ChatMessage.session_id == session_id).delete(
+            synchronize_session=False
+        )
+        self.context_service.delete_session_memory(session_id)
+        self.db.delete(session)
+        self.db.commit()
+
     def _resolve_session(
         self, *, client_id: str, session_id: str | None
     ) -> ChatSession:

@@ -24,6 +24,10 @@ class ClientResponse(ClientBase):
     id: str
     created_at: datetime
     updated_at: datetime
+    document_count: Optional[int] = None
+    query_count: Optional[int] = None
+    session_count: Optional[int] = None
+    memory_point_count: Optional[int] = None
 
     class Config:
         from_attributes = True

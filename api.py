@@ -6,6 +6,9 @@ from app.api.routes_clients import router as clients_router
 from app.api.routes_documents import router as documents_router
 from app.api.routes_health import router as health_router
 from app.api.routes_query import router as query_router
+from app.api.routes_chat import router as chat_router
+from app.api.routes_query_history import router as query_history_router
+from app.api.routes_qdrant import router as qdrant_router
 from app.core.ai_provider import initialize_ai_provider
 from app.core.config import settings, validate_runtime_settings
 from app.db.schema import ensure_runtime_schema
@@ -35,9 +38,18 @@ app.include_router(
     clients_router, prefix=f"{settings.API_V1_STR}/clients", tags=["clients"]
 )
 app.include_router(
+    chat_router, prefix=f"{settings.API_V1_STR}/clients", tags=["chat"]
+)
+app.include_router(
+    query_history_router,
+    prefix=f"{settings.API_V1_STR}/clients",
+    tags=["history"],
+)
+app.include_router(
     documents_router, prefix=f"{settings.API_V1_STR}/documents", tags=["documents"]
 )
 app.include_router(query_router, prefix=f"{settings.API_V1_STR}/query", tags=["query"])
+app.include_router(qdrant_router, prefix=f"{settings.API_V1_STR}/qdrant", tags=["qdrant"])
 app.include_router(
     health_router, prefix=f"{settings.API_V1_STR}/health", tags=["health"]
 )
