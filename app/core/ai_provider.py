@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Generator
+from logging import Logger, getLogger, DEBUG
 from typing import Any
 
 from llama_index.core import Settings as LlamaSettings
@@ -25,7 +25,7 @@ from openai.types.responses import (
 
 from app.core.config import settings
 
-logger = logging.getLogger(__name__)
+logger: Logger = getLogger(__name__)
 
 _CONFIGURED_SIGNATURE: tuple[Any, ...] | None = None
 DEFAULT_REASONING_EFFORT = "medium"
@@ -206,7 +206,7 @@ def stream_invoke_llm_chat(
     for chunk in llm.stream_chat(messages, **runtime_kwargs):
         raw_event = getattr(chunk, "raw", None)
 
-        if logger.isEnabledFor(logging.DEBUG) and isinstance(
+        if logger.isEnabledFor(DEBUG) and isinstance(
             raw_event,
             (ResponseReasoningSummaryTextDeltaEvent, ResponseReasoningTextDeltaEvent),
         ):
@@ -347,9 +347,19 @@ def _to_chat_messages(input_messages: list[dict[str, Any]]) -> list[ChatMessage]
 
         blocks = _content_to_blocks(content)
         if blocks is not None:
-            messages.append(ChatMessage(role=role, blocks=blocks, additional_kwargs=additional_kwargs))
+            messages.append(
+                ChatMessage(
+                    role=role, blocks=blocks, additional_kwargs=additional_kwargs
+                )
+            )
             continue
-        messages.append(ChatMessage(role=role, content=str(content or ""), additional_kwargs=additional_kwargs))
+        messages.append(
+            ChatMessage(
+                role=role,
+                content=str(content or ""),
+                additional_kwargs=additional_kwargs,
+            )
+        )
 
     if not messages:
         raise ValueError("input_messages must include at least one message")

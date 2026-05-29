@@ -216,6 +216,8 @@ def execute_query(
     Returns:
         Dict with answer, citations, conflicts, and query metadata.
     """
+    from app.core.config import settings
+
     request = QueryExecutionRequest(
         question=question,
         client_id=client_id,
@@ -226,4 +228,9 @@ def execute_query(
         status_callback=status_callback,
         reasoning_callback=reasoning_callback,
     )
+
+    if settings.ENABLE_AGENTIC_RAG:
+        from app.agents.adapter import AgenticRetrieverAdapter
+        return QueryExecutionService(db, retriever_factory=AgenticRetrieverAdapter).execute(request)
+
     return QueryExecutionService(db).execute(request)

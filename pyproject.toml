@@ -6,6 +6,8 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "chonkie[table]>=1.6.2",
+    "langchain-core>=0.3.0",
+    "langgraph>=0.3.0",
     "fastapi>=0.100.0",
     "fastembed>=0.7.0",
     "httpx>=0.28.1",

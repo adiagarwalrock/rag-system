@@ -124,6 +124,11 @@ class Settings(BaseSettings):
     REASONING_MODEL: str | None = "gpt-5.4-mini"  # use a non-reasoning model; gpt-5.2 burns hidden chain-of-thought tokens against max_output_tokens, leaving too little budget for visible JSON
     REASONING_SUMMARY: str | None = "auto"  # OpenAI reasoning summary verbosity: "auto", "concise", "detailed", or None to disable. Only applied when OPENAI_USE_RESPONSES=True and a reasoning_effort is set. NOTE: gpt-5.2 only emits reasoning summary events for reasoning_effort="high"; "medium" and "low" return zero reasoning tokens.
 
+    # Agentic RAG (LangGraph pipeline — query path only, ingestion unchanged)
+    ENABLE_AGENTIC_RAG: bool = False
+    AGENTIC_MAX_ITERATIONS: int = 5  # vector_retrieval_node increments after each pass; guard fires at >= this value
+    AGENTIC_EVIDENCE_EVALUATOR_MODEL: str | None = None  # defaults to QUERY_EXPANSION_MODEL when None
+
     # Background ingestion
     INGESTION_MAX_WORKERS: int = 5
     INGESTION_QUEUE_MAX_SIZE: int = 128
