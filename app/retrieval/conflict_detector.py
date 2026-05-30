@@ -262,9 +262,7 @@ def _is_non_conflict_pair(
             right_meta = (right.node.node.metadata or {}) if right.node else {}
             left_page = left_meta.get("page_num") or left_meta.get("slide_num")
             right_page = right_meta.get("page_num") or right_meta.get("slide_num")
-            if left_page and right_page and left_page != right_page:
-                pass  # different pages: allow conflict detection
-            else:
+            if not (left_page and right_page and left_page != right_page):
                 return True
     if left.source_name_key and left.source_name_key == right.source_name_key:
         if left.version_label == right.version_label:

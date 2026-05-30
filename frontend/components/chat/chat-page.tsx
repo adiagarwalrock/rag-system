@@ -1,20 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { usePathname, useRouter } from "next/navigation";
+import { ChatComposer } from "@/components/chat/chat-composer";
+import { CitationChip } from "@/components/chat/citation-chip";
+import { ErrorState } from "@/components/common/error-state";
+import { MarkdownContent } from "@/components/common/markdown-content";
+import { StatusBadge } from "@/components/common/status-badge";
 import { apiClient } from "@/lib/api/client";
 import type { ChatMessage as ApiChatMessage, QueryRequest, QueryResponse } from "@/lib/api/schemas";
 import { useSessionMessages } from "@/lib/hooks/use-chat";
 import { useClients } from "@/lib/hooks/use-clients";
 import { useWorkspaceStore } from "@/lib/state/workspace-store";
-import { ChatComposer } from "@/components/chat/chat-composer";
-import { BookOpen, Brain, Check, ChevronDown, Copy, Printer, Share2, X } from "lucide-react";
-import { CitationChip } from "@/components/chat/citation-chip";
-import { ErrorState } from "@/components/common/error-state";
-import { MarkdownContent } from "@/components/common/markdown-content";
-import { StatusBadge } from "@/components/common/status-badge";
 import { cn, formatMessageTimestamp } from "@/lib/utils";
+import { useQueryClient } from "@tanstack/react-query";
+import { BookOpen, Brain, Check, ChevronDown, Copy, Printer, Share2, X } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type ThreadMessage = {
   id: string;
@@ -63,6 +63,7 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
   const scrollIntentRef = useRef<"none" | "bottom" | "submitted-question">("bottom");
   const submittedQuestionIdRef = useRef<string | null>(null);
   const suppressNextHistoryScrollRef = useRef(false);
+  const inFlightRef = useRef(false);
 
   useEffect(() => {
     const stored = Number(localStorage.getItem(inspectorWidthKey));
@@ -85,11 +86,11 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
 
   useEffect(() => {
     if (!sessionId) {
-      setMessages([]);
+      if (!inFlightRef.current) setMessages([]);
       return;
     }
     // Skip sync while streaming to avoid overwriting optimistic messages mid-flight.
-    if (sessionMessages.data && !isStreaming) {
+    if (sessionMessages.data && !isStreaming && !inFlightRef.current) {
       scrollIntentRef.current = suppressNextHistoryScrollRef.current ? "none" : "bottom";
       suppressNextHistoryScrollRef.current = false;
       setMessages(sessionMessages.data.map(toThreadMessage));
@@ -190,7 +191,7 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
     signal: AbortSignal,
   ) {
     const fallback = await apiClient.query(input, signal);
-    setResolvedSession(fallback.session_id);
+    setResolvedSession(fallback.session_id ?? undefined);
     suppressNextHistoryScrollRef.current = true;
     setMessages((current) =>
       current.map((message) =>
@@ -215,6 +216,7 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
     const userId = crypto.randomUUID();
     const assistantId = crypto.randomUUID();
     abortRef.current = controller;
+    inFlightRef.current = true;
     submittedQuestionIdRef.current = userId;
     scrollIntentRef.current = "submitted-question";
     setError(null);
@@ -222,7 +224,14 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
     setMessages((current) => [
       ...current,
       { id: userId, role: "user", content: question, createdAt: submittedAt, pinToTop: true },
-      { id: assistantId, role: "assistant", content: "", createdAt: submittedAt, streaming: true },
+      {
+        id: assistantId,
+        role: "assistant",
+        content: "",
+        createdAt: submittedAt,
+        streaming: true,
+        phases: [],
+      },
     ]);
 
     const input: QueryRequest = {
@@ -266,7 +275,7 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
             ),
           onFinal: (final) => {
             finalFromStream = final;
-            setResolvedSession(final.session_id);
+            setResolvedSession(final.session_id ?? undefined);
             suppressNextHistoryScrollRef.current = true;
             setMessages((current) =>
               current.map((message) =>
@@ -303,6 +312,7 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
       }
     } finally {
       setIsStreaming(false);
+      inFlightRef.current = false;
       abortRef.current = null;
     }
   }
@@ -418,6 +428,7 @@ function ChatThreadMessage({
   onInspectSources: (response: QueryResponse) => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const visiblePhases = message.phases ?? [];
 
   if (message.role === "user") {
     return (
@@ -456,10 +467,10 @@ function ChatThreadMessage({
     <div className="chat-print-turn chat-print-assistant w-full">
       <div className="min-w-0">
         {/* Live phase status panel — shown while streaming, cleared on final */}
-        {message.streaming && message.phases && message.phases.length > 0 ? (
+        {message.streaming && visiblePhases.length > 0 ? (
           <div className="mt-3 rounded-xl border border-border bg-muted/20 px-4 py-3 text-xs text-muted-foreground space-y-1.5">
             <div className="font-medium text-foreground/60 mb-2">Processing your question…</div>
-            {message.phases.map((phase, i) => (
+            {visiblePhases.map((phase, i) => (
               <div key={i}>{phase}</div>
             ))}
           </div>
@@ -473,7 +484,7 @@ function ChatThreadMessage({
           />
         ) : null}
 
-        <MarkdownContent className="mt-3">{message.content || (message.streaming && !message.phases?.length ? "Thinking..." : "")}</MarkdownContent>
+        <MarkdownContent className="mt-3">{message.content || (message.streaming && !visiblePhases.length ? "Thinking..." : "")}</MarkdownContent>
         <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
           <span>{formatMessageTimestamp(message.createdAt)}</span>
           <button

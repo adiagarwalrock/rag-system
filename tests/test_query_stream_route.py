@@ -9,6 +9,7 @@ are mocked so no real Qdrant, OpenAI, or SQLAlchemy connection is required.
 from __future__ import annotations
 
 import json
+import math
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -49,7 +50,7 @@ def client():
     return TestClient(app, raise_server_exceptions=False)
 
 
-def _mock_service(status_callback=None, reasoning_callback=None, **_kwargs):
+def _mock_service(status_callback=None, reasoning_callback=None, answer_callback=None, **_kwargs):
     """Simulate the service emitting phase events then returning FAKE_RESULT."""
     if status_callback:
         status_callback("🔍 Retrieving relevant chunks…")
@@ -59,6 +60,9 @@ def _mock_service(status_callback=None, reasoning_callback=None, **_kwargs):
     if reasoning_callback:
         reasoning_callback("I looked ")
         reasoning_callback("at the table…")
+    if answer_callback:
+        answer_callback("There are ")
+        answer_callback("17 indulgences.")
     return FAKE_RESULT
 
 
@@ -184,6 +188,21 @@ def test_streaming_emits_status_events(client):
     assert any("Retrieving" in e["data"].get("delta", "") for e in status_events)
 
 
+def test_streaming_emits_final_without_status_when_service_is_silent(client):
+    with (
+        patch("app.api.routes_query.ClientLookupService") as MockLookup,
+        patch("app.api.routes_query.ChatConversationService") as MockSvc,
+    ):
+        MockLookup.return_value.require_client.return_value = MagicMock()
+        MockSvc.return_value.execute_client_query.return_value = FAKE_RESULT
+
+        response = client.post("/", json={**BASE_PAYLOAD, "stream": True})
+
+    events = _collect_sse_events(response)
+    types = [event.get("type") for event in events]
+    assert types == ["final"]
+
+
 def test_streaming_emits_reasoning_events(client):
     with (
         patch("app.api.routes_query.ClientLookupService") as MockLookup,
@@ -197,6 +216,24 @@ def test_streaming_emits_reasoning_events(client):
     events = _collect_sse_events(response)
     reasoning_events = [e for e in events if e.get("type") == "reasoning"]
     assert len(reasoning_events) >= 1
+
+
+def test_streaming_emits_answer_delta_events(client):
+    with (
+        patch("app.api.routes_query.ClientLookupService") as MockLookup,
+        patch("app.api.routes_query.ChatConversationService") as MockSvc,
+    ):
+        MockLookup.return_value.require_client.return_value = MagicMock()
+        MockSvc.return_value.execute_client_query.side_effect = _mock_service
+
+        response = client.post("/", json={**BASE_PAYLOAD, "stream": True})
+
+    events = _collect_sse_events(response)
+    answer_events = [e for e in events if e.get("type") == "answer"]
+    assert [event["data"].get("delta") for event in answer_events] == [
+        "There are ",
+        "17 indulgences.",
+    ]
 
 
 def test_streaming_emits_final_event(client):
@@ -217,6 +254,39 @@ def test_streaming_emits_final_event(client):
     assert resp["answer"] == FAKE_RESULT["answer"]
     assert resp["query_id"] == FAKE_RESULT["query_id"]
     assert isinstance(resp["citations"], list)
+
+
+def test_streaming_final_event_replaces_non_finite_scores(client):
+    result = {
+        **FAKE_RESULT,
+        "citations": [
+            {
+                "filename": "vici_annual.pdf",
+                "page": 14,
+                "score": math.nan,
+                "nested": {"score": math.inf},
+            }
+        ],
+    }
+
+    with (
+        patch("app.api.routes_query.ClientLookupService") as MockLookup,
+        patch("app.api.routes_query.ChatConversationService") as MockSvc,
+    ):
+        MockLookup.return_value.require_client.return_value = MagicMock()
+        MockSvc.return_value.execute_client_query.return_value = result
+
+        response = client.post("/", json={**BASE_PAYLOAD, "stream": True})
+
+    assert "NaN" not in response.text
+    assert "Infinity" not in response.text
+
+    events = _collect_sse_events(response)
+    final_events = [e for e in events if e.get("type") == "final"]
+    assert len(final_events) == 1
+    citation = final_events[0]["data"]["citations"][0]
+    assert citation["score"] is None
+    assert citation["nested"]["score"] is None
 
 
 def test_streaming_event_order(client):
@@ -258,3 +328,4 @@ def test_streaming_passes_callbacks_to_service(client):
 
     assert callable(captured.get("status_callback"))
     assert callable(captured.get("reasoning_callback"))
+    assert callable(captured.get("answer_callback"))

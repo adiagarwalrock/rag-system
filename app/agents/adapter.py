@@ -32,6 +32,7 @@ class AgenticRetrieverAdapter:
         reasoning_summary: str | None = None,
         conversation_context: dict[str, Any] | None = None,
         reasoning_callback: Callable[[str], None] | None = None,
+        answer_callback: Callable[[str], None] | None = None,
         **_kwargs: Any,
     ):
         self._client_id = client_id
@@ -39,6 +40,7 @@ class AgenticRetrieverAdapter:
         self._reasoning_summary = reasoning_summary
         self._conversation_context = conversation_context or {}
         self._reasoning_callback = reasoning_callback
+        self._answer_callback = answer_callback
 
     def query(
         self,
@@ -54,6 +56,7 @@ class AgenticRetrieverAdapter:
             "conversation_context": self._conversation_context,
             "status_callback": status_callback,
             "reasoning_callback": self._reasoning_callback,
+            "answer_callback": self._answer_callback,
             # Intent (populated by intent_router_node)
             "intent_labels": [],
             "route": "internal",
@@ -73,6 +76,7 @@ class AgenticRetrieverAdapter:
             "iteration_count": 0,
             "evidence_sufficient": False,
             "retrieval_gap": None,
+            "planned_queries": [],
         }
 
         graph = get_compiled_graph()

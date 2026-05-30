@@ -15,6 +15,7 @@ def test_execute_client_query_creates_session_and_persists_turns(
 
     captured: dict = {}
     indexed: dict = {}
+    status_events: list[str] = []
 
     def _fake_execute_query(
         question: str,
@@ -26,12 +27,14 @@ def test_execute_client_query_creates_session_and_persists_turns(
         conversation_context: dict | None = None,
         status_callback=None,
         reasoning_callback=None,
+        answer_callback=None,
     ) -> dict:
         captured["question"] = question
         captured["client_id"] = client_id
         captured["reasoning_effort"] = reasoning_effort
         captured["session_id"] = session_id
         captured["conversation_context"] = conversation_context
+        status_events.append("execute_query")
         return {
             "answer": "Policy v2 changed retention clauses.",
             "reasoning": "Policy v2 updated retention from 30 to 45 days.",
@@ -50,14 +53,19 @@ def test_execute_client_query_creates_session_and_persists_turns(
         }
 
     monkeypatch.setattr(chat_conversation_service, "execute_query", _fake_execute_query)
-    monkeypatch.setattr(
-        service.context_service,
-        "build_context_bundle",
-        lambda **kwargs: ChatContextBundle(
+
+    def _fake_context_bundle(**kwargs):
+        status_events.append("build_context")
+        return ChatContextBundle(
             session_summary="Summary",
             recent_turns=[{"role": "user", "content": "Earlier context"}],
             cross_session_pairs=[],
-        ),
+        )
+
+    monkeypatch.setattr(
+        service.context_service,
+        "build_context_bundle",
+        _fake_context_bundle,
     )
     monkeypatch.setattr(
         service.context_service,
@@ -80,6 +88,7 @@ def test_execute_client_query_creates_session_and_persists_turns(
         client_id=client.id,
         question="What changed in policy v2?",
         reasoning_effort="high",
+        status_callback=status_events.append,
     )
 
     assert result["session_id"]
@@ -87,6 +96,7 @@ def test_execute_client_query_creates_session_and_persists_turns(
     assert captured["client_id"] == client.id
     assert captured["reasoning_effort"] == "high"
     assert captured["conversation_context"]["session_summary"] == "Summary"
+    assert status_events[:2] == ["build_context", "execute_query"]
 
     sessions = (
         db_session.query(ChatSession).filter(ChatSession.client_id == client.id).all()

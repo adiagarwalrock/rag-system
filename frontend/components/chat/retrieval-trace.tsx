@@ -1,15 +1,10 @@
 import { SectionCard } from "@/components/common/section-card";
 import type { RetrievalTrace } from "@/lib/api/schemas";
-import { scoreLabel } from "@/lib/utils";
 
 export function RetrievalTraceView({ retrieval }: { retrieval: RetrievalTrace }) {
   const rows = [
     ["Mode", retrieval.mode],
-    ["Dense score", scoreLabel(retrieval.dense_score)],
-    ["Sparse score", scoreLabel(retrieval.sparse_score)],
-    ["Rerank score", scoreLabel(retrieval.rerank_score)],
     ["Top K", retrieval.top_k ?? "-"],
-    ["Sparse available", retrieval.sparse_available === undefined ? "-" : retrieval.sparse_available ? "yes" : "no"],
     ["Fallback reason", retrieval.fallback_reason ?? "-"],
   ];
 

@@ -8,13 +8,14 @@ import { DarkSelect } from "@/components/common/dark-select";
 import { QueryHistoryTable } from "@/components/history/query-history-table";
 import { PageHeader } from "@/components/shell/page-header";
 import { useClients } from "@/lib/hooks/use-clients";
-import { useQueryHistory } from "@/lib/hooks/use-query-history";
+import { useDeleteQueryHistoryItem, useQueryHistory } from "@/lib/hooks/use-query-history";
 import { useWorkspaceStore } from "@/lib/state/workspace-store";
 
 export default function QueryHistoryPage() {
   const clients = useClients();
   const { workspaceId, setWorkspaceId } = useWorkspaceStore();
   const history = useQueryHistory(workspaceId);
+  const deleteHistoryItem = useDeleteQueryHistoryItem(workspaceId);
 
   useEffect(() => {
     if (!workspaceId && clients.data?.[0]) setWorkspaceId(clients.data[0].id);
@@ -40,7 +41,13 @@ export default function QueryHistoryPage() {
           />
         }
       />
-      {history.isLoading ? <LoadingState /> : history.error ? <ErrorState error={history.error} /> : history.data?.length ? <QueryHistoryTable rows={history.data} /> : <EmptyState title="No history" description="Completed RAG queries for this workspace will appear here." />}
+      {history.isLoading ? <LoadingState /> : history.error ? <ErrorState error={history.error} /> : history.data?.length ? (
+        <QueryHistoryTable
+          rows={history.data}
+          deleting={deleteHistoryItem.isPending}
+          onDelete={(queryId) => deleteHistoryItem.mutateAsync(queryId)}
+        />
+      ) : <EmptyState title="No history" description="Completed RAG queries for this workspace will appear here." />}
     </div>
   );
 }

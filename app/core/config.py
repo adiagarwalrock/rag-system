@@ -128,6 +128,7 @@ class Settings(BaseSettings):
     ENABLE_AGENTIC_RAG: bool = False
     AGENTIC_MAX_ITERATIONS: int = 5  # vector_retrieval_node increments after each pass; guard fires at >= this value
     AGENTIC_EVIDENCE_EVALUATOR_MODEL: str | None = None  # defaults to QUERY_EXPANSION_MODEL when None
+    AGENTIC_PLANNER_MODEL: str | None = None  # defaults to QUERY_EXPANSION_MODEL when None
 
     # Background ingestion
     INGESTION_MAX_WORKERS: int = 5

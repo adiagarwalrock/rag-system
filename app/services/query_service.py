@@ -35,6 +35,7 @@ class QueryExecutionRequest:
     conversation_context: dict[str, Any] | None = None
     status_callback: Callable[[str], None] | None = field(default=None, compare=False)
     reasoning_callback: Callable[[str], None] | None = field(default=None, compare=False)
+    answer_callback: Callable[[str], None] | None = field(default=None, compare=False)
 
 
 class QueryLogWriter:
@@ -187,6 +188,7 @@ class QueryExecutionService:
             reasoning_summary=request.reasoning_summary,
             conversation_context=request.conversation_context,
             reasoning_callback=request.reasoning_callback,
+            answer_callback=request.answer_callback,
         )
         return retriever.query(request.question, status_callback=request.status_callback)
 
@@ -205,6 +207,7 @@ def execute_query(
     conversation_context: dict | None = None,
     status_callback: Callable[[str], None] | None = None,
     reasoning_callback: Callable[[str], None] | None = None,
+    answer_callback: Callable[[str], None] | None = None,
 ) -> dict:
     """
     Execute a full query pipeline: retrieve, answer, log.
@@ -227,6 +230,7 @@ def execute_query(
         conversation_context=conversation_context,
         status_callback=status_callback,
         reasoning_callback=reasoning_callback,
+        answer_callback=answer_callback,
     )
 
     if settings.ENABLE_AGENTIC_RAG:

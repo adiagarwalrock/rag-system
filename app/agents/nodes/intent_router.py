@@ -11,6 +11,7 @@ import json
 import logging
 from typing import Any
 
+from app.agents.nodes._shared import emit_status
 from app.core.ai_provider import invoke_llm_chat
 from app.core.config import settings
 from app.retrieval.query_intent import analyze_retrieval_intent
@@ -41,7 +42,7 @@ Respond with JSON only — no prose, no markdown fences:
 
 def intent_router_node(state: dict[str, Any]) -> dict[str, Any]:
     question = state["question"]
-    _emit(state, "Classifying query intent…")
+    emit_status(state, "Classifying query intent…")
 
     existing_intent = analyze_retrieval_intent(question)
     route = _llm_classify(question)
@@ -75,10 +76,3 @@ def _llm_classify(question: str) -> str:
         return "internal"
 
 
-def _emit(state: dict[str, Any], msg: str) -> None:
-    cb = state.get("status_callback")
-    if cb is not None:
-        try:
-            cb(msg)
-        except Exception:
-            pass

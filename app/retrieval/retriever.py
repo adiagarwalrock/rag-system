@@ -48,7 +48,6 @@ from app.retrieval.conflict_detector import detect_conflicts
 from app.retrieval.query_intent import (
     RetrievalIntent,
     analyze_retrieval_intent,
-    query_entity_aliases,
 )
 from app.retrieval.query_expansion import build_query_variants, should_expand_query
 from app.retrieval.reranker import rerank_nodes
@@ -110,10 +109,7 @@ BROAD_BALANCED_TERMS = (
     "across",
     "sectors",
     "represented",
-    "by reit",
     "for each",
-    "in the corpus",
-    "corpus",
 )
 VISUAL_QUERY_TERMS = (
     "image",
@@ -195,12 +191,14 @@ class GroundedAnswerSynthesizer:
         reasoning_effort: str,
         reasoning_summary: str | None = None,
         reasoning_callback: Callable[[str], None] | None = None,
+        answer_callback: Callable[[str], None] | None = None,
         conversation_context: dict[str, Any],
     ):
         self.client_id = client_id
         self.reasoning_effort = reasoning_effort
         self.reasoning_summary = reasoning_summary
         self.reasoning_callback = reasoning_callback
+        self.answer_callback = answer_callback
         self.conversation_context = conversation_context
 
     def synthesize(
@@ -333,6 +331,11 @@ class GroundedAnswerSynthesizer:
                             pass
                     if a_delta:
                         answer_parts.append(a_delta)
+                        if self.answer_callback is not None:
+                            try:
+                                self.answer_callback(a_delta)
+                            except Exception:
+                                pass
                 text = "".join(answer_parts).strip()
                 reasoning_text: str | None = "".join(reasoning_parts).strip() or None
                 logger.info(
@@ -449,6 +452,7 @@ class VecteraRetriever:
         reasoning_summary: str | None = None,
         conversation_context: dict[str, Any] | None = None,
         reasoning_callback: Callable[[str], None] | None = None,
+        answer_callback: Callable[[str], None] | None = None,
     ):
         self.client_id = client_id
         self.top_k = top_k
@@ -467,6 +471,7 @@ class VecteraRetriever:
             reasoning_effort=self.reasoning_effort,
             reasoning_summary=normalize_reasoning_summary(reasoning_summary),
             reasoning_callback=reasoning_callback,
+            answer_callback=answer_callback,
             conversation_context=self.conversation_context,
         )
 
@@ -555,7 +560,7 @@ class VecteraRetriever:
             "intent_labels": list(intent.labels),
             "evidence_by_document": _node_counts_by_document(evidence_nodes),
             "evidence_by_version_group": _node_counts_by_version_group(evidence_nodes),
-            "evidence_by_entity": _node_counts_by_entity(evidence_nodes, intent),
+            "evidence_by_entity": {},
             **retrieval_metadata,
         }
 
@@ -575,13 +580,17 @@ class VecteraRetriever:
             or intent.has("temporal_delta")
             or _is_time_anchored_query(question)
         )
+        corpus_entity_count = len(
+            _corpus_entity_aliases_matching_question(question.lower(), source_nodes)
+        )
         rank_top_k = self._resolve_rank_top_k(
             comparative_query=comparative_query
             or balanced_query
             or intent.has("temporal_delta")
             or intent.has("outlook_scope"),
             conflict_focused_query=conflict_focused_query,
-            high_diversity_query=_is_high_diversity_intent(intent),
+            high_diversity_query=_is_high_diversity_intent(intent)
+            or corpus_entity_count >= 2,
         )
         return rerank_nodes(
             source_nodes,
@@ -1041,10 +1050,7 @@ def _is_comparison_or_conflict_query(question: str) -> bool:
 
 def _needs_balanced_evidence_query(question: str) -> bool:
     normalized = question.lower()
-    intent = analyze_retrieval_intent(question)
-    if any(term in normalized for term in BROAD_BALANCED_TERMS):
-        return True
-    return len(intent.entities) >= 2
+    return any(term in normalized for term in BROAD_BALANCED_TERMS)
 
 
 def _is_high_diversity_intent(intent: RetrievalIntent) -> bool:
@@ -1279,8 +1285,6 @@ METRIC_STOPWORDS = {
     "from",
     "that",
     "this",
-    "digital",
-    "realty",
 }
 
 
@@ -1378,21 +1382,20 @@ def _ensure_multi_version_evidence(
     )
 
 
-def _ensure_balanced_document_evidence(
+def _ensure_document_coverage(
     *,
     intent: RetrievalIntent,
+    intent_label: str,
     selected_nodes: list[Any],
     ranked_nodes: list[Any],
     evidence_cap: int,
+    top_n_docs: int,
+    quota_per_group: int,
 ) -> list[Any]:
-    """On balanced_scope queries ('for each REIT', 'each company in corpus', 'AI across sectors'),
-    guarantee at least 2 chunks per top-7 distinct documents. quota_per_group=2 (not 1) ensures
-    that when one chunk is a low-content section divider (e.g. an appendix header), the adjacent
-    content page from the same document is also included.
-    """
-    if not intent.has("balanced_scope"):
+    """Guarantee quota_per_group chunks per top-N distinct documents when intent_label fires."""
+    if not intent.has(intent_label):
         return selected_nodes
-    top_docs = _top_groups(ranked_nodes, _document_or_version_group_key, limit=7)
+    top_docs = _top_groups(ranked_nodes, _document_or_version_group_key, limit=top_n_docs)
     if len(top_docs) < 2:
         return selected_nodes
     return _ensure_group_quota(
@@ -1401,6 +1404,29 @@ def _ensure_balanced_document_evidence(
         evidence_cap=evidence_cap,
         group_key_fn=_document_or_version_group_key,
         target_groups=top_docs,
+        quota_per_group=quota_per_group,
+    )
+
+
+def _ensure_balanced_document_evidence(
+    *,
+    intent: RetrievalIntent,
+    selected_nodes: list[Any],
+    ranked_nodes: list[Any],
+    evidence_cap: int,
+) -> list[Any]:
+    """On balanced_scope queries, guarantee at least 2 chunks per top-7 distinct documents.
+
+    quota_per_group=2 (not 1) ensures that when one chunk is a low-content section divider
+    (e.g. an appendix header), the adjacent content page from the same document is also included.
+    """
+    return _ensure_document_coverage(
+        intent=intent,
+        intent_label="balanced_scope",
+        selected_nodes=selected_nodes,
+        ranked_nodes=ranked_nodes,
+        evidence_cap=evidence_cap,
+        top_n_docs=7,
         quota_per_group=2,
     )
 
@@ -1433,22 +1459,18 @@ def _ensure_outlook_document_evidence(
     ranked_nodes: list[Any],
     evidence_cap: int,
 ) -> list[Any]:
-    """When outlook_scope fires (projected/guidance/forecast questions), guarantee
-    at least 2 chunks per top-2 distinct documents. Outlook figures often appear in
-    both an Investor Day deck and a later quarterly update — both need to surface so
-    the answer captures the full range (e.g. BXP 87.25-88% Investor Day vs 88% Q4).
+    """When outlook_scope fires, guarantee at least 2 chunks per top-2 distinct documents.
+
+    Outlook figures often appear in both an Investor Day deck and a later quarterly update —
+    both need to surface so the answer captures the full range.
     """
-    if not intent.has("outlook_scope"):
-        return selected_nodes
-    top_docs = _top_groups(ranked_nodes, _document_or_version_group_key, limit=2)
-    if len(top_docs) < 2:
-        return selected_nodes
-    return _ensure_group_quota(
+    return _ensure_document_coverage(
+        intent=intent,
+        intent_label="outlook_scope",
         selected_nodes=selected_nodes,
         ranked_nodes=ranked_nodes,
         evidence_cap=evidence_cap,
-        group_key_fn=_document_or_version_group_key,
-        target_groups=top_docs,
+        top_n_docs=2,
         quota_per_group=2,
     )
 
@@ -1496,7 +1518,9 @@ def _ensure_named_entity_evidence(
     ranked_nodes: list[Any],
     evidence_cap: int,
 ) -> list[Any]:
-    aliases_by_entity = dict(intent.entities) or _query_entity_aliases(question.lower())
+    aliases_by_entity = _corpus_entity_aliases_matching_question(
+        question.lower(), ranked_nodes
+    )
     if len(aliases_by_entity) < 2:
         return selected_nodes
 
@@ -1546,10 +1570,6 @@ def _ensure_named_entity_evidence(
                 break
 
     return selected
-
-
-def _query_entity_aliases(normalized_question: str) -> dict[str, tuple[str, ...]]:
-    return query_entity_aliases(normalized_question)
 
 
 def _ensure_outlook_scope_evidence(
@@ -1767,6 +1787,105 @@ def _append_or_replace_node(
     selected_keys.add(candidate_key)
 
 
+_ENTITY_EXTRACTION_STOPWORDS = frozenset({
+    # Document/presentation type words
+    "investor", "presentation", "update", "report", "annual", "supplemental",
+    "earnings", "results", "slides", "deck", "summary", "overview", "analysis",
+    "merger", "acquisition", "pro", "forma", "combined", "session", "morning",
+    "appendix", "roadshow", "web", "vf", "resize", "final", "company",
+    # Temporal — quarters, months, abbreviations
+    "q1", "q2", "q3", "q4", "fy", "ytd", "h1", "h2",
+    "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+    "january", "february", "march", "april", "june", "july", "august",
+    "september", "october", "november", "december",
+    # Function words
+    "the", "and", "for", "of", "in", "a", "an", "to", "by", "at", "with",
+    # Legal/entity suffixes (only when standalone)
+    "inc", "llc", "corp", "ltd", "co", "plc", "trust", "fund",
+    # Generic words common in financial document filenames
+    "reit", "group", "properties", "capital",
+    # Common in specific document names
+    "impact", "brick", "mortar", "shopping",
+})
+
+
+def _extract_entity_label(document_name: str) -> tuple[str, tuple[str, ...]] | None:
+    """Extract (canonical_label, aliases_tuple) from a document filename.
+
+    Strips extension, removes parenthesized blocks, lowercases, splits on
+    delimiters, drops stopwords and purely numeric/punctuation tokens, then
+    takes the first contiguous run of 1-3 remaining tokens as the entity label.
+    Returns None if no meaningful tokens remain.
+    """
+    stem = re.sub(r"\.[a-zA-Z0-9]{2,5}$", "", document_name)
+    stem = re.sub(r"\([^)]*\)", " ", stem)  # remove (Resize), (vF), etc.
+    stem = re.sub(r"[_\-\.\s]+", " ", stem).lower().strip()
+    raw_tokens = stem.split()
+    tokens = [
+        t for t in raw_tokens
+        if t not in _ENTITY_EXTRACTION_STOPWORDS
+        and re.search(r"[a-z]", t)  # must contain at least one letter
+        and not re.fullmatch(r"[\d\.]+", t)
+    ]
+    if not tokens:
+        return None
+    label_tokens = tokens[:min(3, len(tokens))]
+    label = " ".join(label_tokens)
+    aliases: set[str] = {label}
+    if len(label_tokens) > 1:
+        aliases.update(label_tokens)
+    return label, tuple(sorted(aliases))
+
+
+def _build_corpus_entity_aliases(ranked_nodes: list[Any]) -> dict[str, tuple[str, ...]]:
+    """Build {entity_label: aliases_tuple} from document_name fields in ranked nodes.
+
+    Called at query time; derives entity names directly from filenames already stored
+    in Qdrant metadata. No configuration or DB lookup required — works for any corpus.
+    """
+    result: dict[str, tuple[str, ...]] = {}
+    seen_names: set[str] = set()
+    for node in ranked_nodes:
+        metadata = node.node.metadata or {}
+        doc_name = metadata.get("document_name") or metadata.get("file_name") or ""
+        if not doc_name or doc_name in seen_names:
+            continue
+        seen_names.add(doc_name)
+        extracted = _extract_entity_label(doc_name)
+        if extracted is None:
+            continue
+        label, aliases = extracted
+        if label not in result:
+            result[label] = aliases
+    return result
+
+
+def _corpus_entity_aliases_matching_question(
+    normalized_question: str, ranked_nodes: list[Any]
+) -> dict[str, tuple[str, ...]]:
+    """Return the subset of corpus entities whose aliases appear in the question.
+
+    Builds the full alias map from ranked_nodes, then filters to only entities
+    that the question actually mentions. Multi-word labels are matched as a phrase;
+    single-word labels use word-boundary matching. Individual component tokens of a
+    multi-word label are only used as aliases when the full label doesn't match, to
+    avoid false positives (e.g. 'realty' matching both 'Digital Realty' and
+    'Realty Income').
+    """
+    all_aliases = _build_corpus_entity_aliases(ranked_nodes)
+    matching: dict[str, tuple[str, ...]] = {}
+    for label, aliases in all_aliases.items():
+        if " " in label:
+            # Multi-word label: only match as a complete phrase
+            if label in normalized_question:
+                matching[label] = aliases
+        else:
+            # Single-word label: word-boundary match
+            if re.search(rf"(?<![a-z0-9]){re.escape(label)}(?![a-z0-9])", normalized_question):
+                matching[label] = aliases
+    return matching
+
+
 def _node_matches_entity(node: Any, aliases: tuple[str, ...]) -> bool:
     haystack = _node_search_text(node)
     return any(alias in haystack for alias in aliases)
@@ -1874,7 +1993,7 @@ def _build_retrieval_diagnostics(
         "intent_labels": list(intent.labels) if intent else [],
         "evidence_by_document": _node_counts_by_document(evidence_nodes),
         "evidence_by_version_group": _node_counts_by_version_group(evidence_nodes),
-        "evidence_by_entity": _node_counts_by_entity(evidence_nodes, intent),
+        "evidence_by_entity": {},
     }
 
 
@@ -1929,19 +2048,6 @@ def _node_counts_by_version_group(nodes: list[Any]) -> dict[str, int]:
             or "unknown"
         )
         counts[label] = counts.get(label, 0) + 1
-    return counts
-
-
-def _node_counts_by_entity(
-    nodes: list[Any], intent: RetrievalIntent | None
-) -> dict[str, int]:
-    if intent is None or not intent.entities:
-        return {}
-    counts: dict[str, int] = {}
-    for entity_name, aliases in intent.entities.items():
-        count = sum(1 for node in nodes if _node_matches_entity(node, aliases))
-        if count:
-            counts[entity_name] = count
     return counts
 
 

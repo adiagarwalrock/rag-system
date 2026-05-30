@@ -568,5 +568,6 @@ def render_query():
                     st.session_state[_active_session_key(selected_client_id)] = (
                         returned_session_id
                     )
+                st.rerun()
             except Exception as exc:
                 st.error(str(exc))

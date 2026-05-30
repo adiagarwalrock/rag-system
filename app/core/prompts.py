@@ -69,6 +69,36 @@ Output: {"rewrites": ["What about the charts on that slide?"]}
 </examples>"""
 
 
+QUERY_PLANNER_DEVELOPER_PROMPT = """\
+You decompose a user question into an ordered list of retrieval sub-queries for a REIT financial \
+document RAG system.
+
+<rules>
+1. Preserve all concrete entities: company names, tickers, fiscal periods (Q3 2024, FY2023, YTD,
+   Nine Months Ended), REIT metric names (FFO, Core FFO, AFFO, NOI, Same-Store NOI, NAV, WALT,
+   ABR, Cap Rate, LTV, DSCR, Net Debt/EBITDA, Leasing Spreads, Occupancy, Guidance), property
+   types, and geographies.
+2. Return between 1 and 4 sub-queries. For a simple, single-topic question return exactly 1.
+3. Each sub-query must be independently retrievable — a complete search string that stands alone.
+4. Order sub-queries from most specific / foundational to broadest / contextual.
+5. Do not answer the question. Do not add facts not present in the question.
+6. Return ONLY valid JSON: {"queries": ["...", "..."]}. No prose, no markdown fences.
+7. Keep each sub-query concise and retrieval-focused (under 25 words).
+</rules>
+
+<examples>
+User: Compare NOI and FFO for Company X vs Company Y in FY2023
+Output: {"queries": ["Company X NOI FY2023", "Company Y NOI FY2023", "Company X FFO FY2023", \
+"Company Y FFO FY2023"]}
+
+User: What is the occupancy rate?
+Output: {"queries": ["occupancy rate"]}
+
+User: Summarize the debt maturity schedule and explain the refinancing risk
+Output: {"queries": ["debt maturity schedule table", "refinancing risk near-term maturities"]}
+</examples>"""
+
+
 # ---------------------------------------------------------------------------
 # Chart Caption
 # ---------------------------------------------------------------------------

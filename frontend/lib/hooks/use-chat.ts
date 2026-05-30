@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api/client";
+import { ApiError } from "@/lib/api/errors";
 import type { QueryRequest } from "@/lib/api/schemas";
 
 export function useSessions(clientId: string) {
@@ -34,8 +35,18 @@ export function useDeleteSession(clientId: string) {
 export function useDeleteSessions(clientId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (sessionIds: string[]) =>
-      Promise.all(sessionIds.map((sessionId) => apiClient.deleteSession(clientId, sessionId))),
+    mutationFn: async (sessionIds: string[]) => {
+      const results = await Promise.allSettled(
+        sessionIds.map((sessionId) => apiClient.deleteSession(clientId, sessionId)),
+      );
+      const failure = results.find(
+        (result) =>
+          result.status === "rejected" &&
+          !(result.reason instanceof ApiError && result.reason.status === 404),
+      );
+      if (failure?.status === "rejected") throw failure.reason;
+      return results;
+    },
     onSuccess: (_, sessionIds) => {
       queryClient.invalidateQueries({ queryKey: ["sessions", clientId] });
       sessionIds.forEach((sessionId) => {

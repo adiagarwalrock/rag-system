@@ -121,7 +121,7 @@ export const retrievalTraceSchema = z
 export const memoryHitSchema = z
   .object({
     id: z.string(),
-    session_id: z.string().optional(),
+    session_id: z.string().nullish(),
     question: z.string(),
     answer_preview: z.string(),
     score: z.number(),
@@ -153,7 +153,7 @@ export const queryResponseSchema = z
     latency_ms: z.number(),
     reasoning_effort: reasoningEffortSchema,
     created_at: z.string(),
-    session_id: z.string().optional(),
+    session_id: z.string().nullish(),
     user_message_id: z.string().optional(),
     assistant_message_id: z.string().optional(),
     raw: record.optional(),
@@ -185,7 +185,7 @@ export const queryHistoryItemSchema = queryResponseSchema
   .extend({
     question: z.string(),
     client_id: z.string(),
-    session_id: z.string().optional(),
+    session_id: z.string().nullish(),
     answer: z.string(),
   })
   .passthrough();

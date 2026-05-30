@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.agents.nodes._shared import emit_status
 from app.retrieval.reranker import rerank_nodes
 from app.retrieval.retriever import VecteraRetriever
 
@@ -24,7 +25,7 @@ def reranker_node(state: dict[str, Any]) -> dict[str, Any]:
     retrieved_nodes = state.get("retrieved_nodes") or []
     question = state["question"]
 
-    _emit(state, f"Reranking {len(retrieved_nodes)} accumulated candidates…")
+    emit_status(state, f"Reranking {len(retrieved_nodes)} accumulated candidates…")
 
     if not retrieved_nodes:
         logger.warning("Reranker received empty retrieved_nodes; skipping")
@@ -50,10 +51,3 @@ def reranker_node(state: dict[str, Any]) -> dict[str, Any]:
     return {"evidence_nodes": evidence_nodes}
 
 
-def _emit(state: dict[str, Any], msg: str) -> None:
-    cb = state.get("status_callback")
-    if cb is not None:
-        try:
-            cb(msg)
-        except Exception:
-            pass

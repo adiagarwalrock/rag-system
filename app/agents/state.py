@@ -19,6 +19,7 @@ class AgentState(TypedDict):
     conversation_context: dict[str, Any]
     status_callback: Any | None       # Callable[[str], None]
     reasoning_callback: Any | None    # Callable[[str], None]
+    answer_callback: Any | None       # Callable[[str], None]
 
     # ── Intent (set by intent_router_node) ───────────────────────────────────
     intent_labels: list[str]
@@ -43,3 +44,4 @@ class AgentState(TypedDict):
     iteration_count: int
     evidence_sufficient: bool
     retrieval_gap: str | None         # reframe query hint from evidence_evaluator_node
+    planned_queries: list[str]        # sub-queries produced by planner_node; indexed by iteration_count

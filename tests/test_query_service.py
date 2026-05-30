@@ -10,6 +10,7 @@ VECTOR_COLLECTION = settings.VECTOR_COLLECTION
 def test_execute_query_persists_query_retrieval_and_conflict_logs(
     db_session, seeded_entities, monkeypatch
 ):
+    monkeypatch.setattr(settings, "ENABLE_AGENTIC_RAG", False)
     client = seeded_entities["client"]
     document = seeded_entities["document"]
 
@@ -33,6 +34,7 @@ def test_execute_query_persists_query_retrieval_and_conflict_logs(
             reasoning_summary: str | None = None,
             conversation_context: dict | None = None,
             reasoning_callback=None,
+            answer_callback=None,
         ):
             self.client_id = client_id
             self.reasoning_effort = reasoning_effort
@@ -102,6 +104,7 @@ def test_execute_query_persists_query_retrieval_and_conflict_logs(
 def test_execute_query_marks_query_log_failed_on_retrieval_error(
     db_session, seeded_entities, monkeypatch
 ):
+    monkeypatch.setattr(settings, "ENABLE_AGENTIC_RAG", False)
     client = seeded_entities["client"]
 
     class FailingRetriever:
@@ -112,6 +115,7 @@ def test_execute_query_marks_query_log_failed_on_retrieval_error(
             reasoning_summary: str | None = None,
             conversation_context: dict | None = None,
             reasoning_callback=None,
+            answer_callback=None,
         ):
             self.client_id = client_id
             self.reasoning_effort = reasoning_effort

@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.agents.nodes._shared import emit_status
 from app.retrieval.retriever import VecteraRetriever
 
 logger = logging.getLogger(__name__)
@@ -20,12 +21,19 @@ def vector_retrieval_node(state: dict[str, Any]) -> dict[str, Any]:
     iteration = state.get("iteration_count", 0)
     excluded_ids: set[str] = set(state.get("retrieved_node_ids") or [])
 
-    # On loop-back iterations use the reframe query from evidence_evaluator
-    query = state.get("retrieval_gap") or state["question"]
-    if iteration > 0 and query != state["question"]:
-        logger.info("Agentic retrieval iteration %d using gap query: %s", iteration + 1, query[:80])
+    # Query priority: planned sub-query for this pass > gap reframe > original question
+    planned = state.get("planned_queries") or []
+    if planned and iteration < len(planned):
+        query = planned[iteration]
+    elif state.get("retrieval_gap"):
+        query = state["retrieval_gap"]
+    else:
+        query = state["question"]
 
-    _emit(state, f"Retrieving relevant chunks (pass {iteration + 1})…")
+    if query != state["question"]:
+        logger.info("Agentic retrieval iteration %d using query: %s", iteration + 1, query[:80])
+
+    emit_status(state, f"Retrieving relevant chunks (pass {iteration + 1})…")
 
     retriever = VecteraRetriever(
         client_id=state["client_id"],
@@ -33,6 +41,7 @@ def vector_retrieval_node(state: dict[str, Any]) -> dict[str, Any]:
         reasoning_summary=state.get("reasoning_summary"),
         conversation_context=state.get("conversation_context") or {},
         reasoning_callback=state.get("reasoning_callback"),
+        answer_callback=state.get("answer_callback"),
     )
 
     all_nodes = retriever.retrieve_only(query)
@@ -56,10 +65,3 @@ def vector_retrieval_node(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _emit(state: dict[str, Any], msg: str) -> None:
-    cb = state.get("status_callback")
-    if cb is not None:
-        try:
-            cb(msg)
-        except Exception:
-            pass

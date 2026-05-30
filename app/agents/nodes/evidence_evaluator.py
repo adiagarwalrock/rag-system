@@ -13,6 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from app.agents.nodes._shared import emit_status
 from app.core.ai_provider import invoke_llm_chat
 from app.core.config import settings
 
@@ -67,7 +68,7 @@ def evidence_evaluator_node(state: dict[str, Any]) -> dict[str, Any]:
     if not retrieved_nodes:
         return {"evidence_sufficient": False, "retrieval_gap": f"general context about: {state['question'][:80]}"}
 
-    _emit(state, "Evaluating evidence sufficiency…")
+    emit_status(state, "Evaluating evidence sufficiency…")
 
     # Deterministic coverage check before LLM call — catches comparison questions where
     # one entity's nodes are present but low-relevance (e.g. appendix/cover pages).
@@ -244,10 +245,3 @@ def _llm_evaluate(question: str, nodes: list[Any]) -> tuple[bool, str | None]:
         return True, None
 
 
-def _emit(state: dict[str, Any], msg: str) -> None:
-    cb = state.get("status_callback")
-    if cb is not None:
-        try:
-            cb(msg)
-        except Exception:
-            pass

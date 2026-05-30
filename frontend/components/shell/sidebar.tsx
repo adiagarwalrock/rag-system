@@ -182,11 +182,10 @@ export function Sidebar({
               title="Delete all sessions"
               description="This deletes every chat session in the active workspace, including message history."
               pending={deleteSessions.isPending}
-              onConfirm={() => {
+              onConfirm={async () => {
                 const ids = (sessions.data ?? []).map((session) => session.id);
-                deleteSessions.mutate(ids, {
-                  onSuccess: () => afterSessionDelete(ids),
-                });
+                await deleteSessions.mutateAsync(ids);
+                afterSessionDelete(ids);
               }}
             >
               <button
@@ -232,10 +231,9 @@ export function Sidebar({
                     title="Delete session"
                     description="This deletes the selected chat session and its message history."
                     pending={deleteSession.isPending}
-                    onConfirm={() => {
-                      deleteSession.mutate(session.id, {
-                        onSuccess: () => afterSessionDelete([session.id]),
-                      });
+                    onConfirm={async () => {
+                      await deleteSession.mutateAsync(session.id);
+                      afterSessionDelete([session.id]);
                     }}
                   >
                     <button

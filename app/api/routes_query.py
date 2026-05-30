@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import queue as stdlib_queue
 import threading
 from typing import Any, AsyncGenerator
@@ -62,7 +63,21 @@ def _build_query_response(result: dict[str, Any]) -> QueryResponse:
 
 def _sse_chunk(event_type: str, data: Any) -> str:
     """Format a single SSE event as a pre-encoded string chunk."""
-    return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+    return (
+        f"event: {event_type}\n"
+        f"data: {json.dumps(_json_safe(data), allow_nan=False)}\n\n"
+    )
+
+
+def _json_safe(value: Any) -> Any:
+    """Return a JSON-serializable value without non-standard NaN/Infinity tokens."""
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
 
 
 @router.post("/", response_model=QueryResponse)
@@ -99,17 +114,17 @@ async def query_documents(
     # event loop is never blocked.
     event_queue: stdlib_queue.Queue = stdlib_queue.Queue(maxsize=256)
 
-    def _status_cb(msg: str) -> None:
-        try:
-            event_queue.put_nowait(_sse_chunk("status", {"delta": msg}))
-        except stdlib_queue.Full:
-            pass
+    def _delta_cb(event_type: str):
+        def _cb(delta: str) -> None:
+            try:
+                event_queue.put_nowait(_sse_chunk(event_type, {"delta": delta}))
+            except stdlib_queue.Full:
+                pass
+        return _cb
 
-    def _reasoning_cb(delta: str) -> None:
-        try:
-            event_queue.put_nowait(_sse_chunk("reasoning", {"delta": delta}))
-        except stdlib_queue.Full:
-            pass
+    _status_cb = _delta_cb("status")
+    _reasoning_cb = _delta_cb("reasoning")
+    _answer_cb = _delta_cb("answer")
 
     def _run_service() -> None:
         try:
@@ -121,8 +136,11 @@ async def query_documents(
                 session_id=request.session_id,
                 status_callback=_status_cb,
                 reasoning_callback=_reasoning_cb,
+                answer_callback=_answer_cb,
             )
-            event_queue.put(_sse_chunk("final", result))
+            event_queue.put(
+                _sse_chunk("final", _build_query_response(result).model_dump())
+            )
         except Exception as exc:
             event_queue.put(_sse_chunk("error", {"detail": str(exc)}))
         finally:

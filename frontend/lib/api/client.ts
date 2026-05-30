@@ -147,6 +147,10 @@ function normalizeDocument(raw: unknown): Document {
 
 function normalizeCitation(raw: unknown) {
   const value = raw as Record<string, unknown>;
+  const score =
+    typeof value.score === "number" && Number.isFinite(value.score)
+      ? value.score
+      : undefined;
   return citationSchema.parse({
     ...value,
     filename:
@@ -158,33 +162,118 @@ function normalizeCitation(raw: unknown) {
     page: value.page ?? value.page_num ?? value.slide_num,
     chunk_id: value.chunk_id ?? value.node_id,
     quote: value.quote ?? value.text,
+    score,
   });
+}
+
+function normalizeConflict(raw: unknown) {
+  const item = raw as Record<string, unknown>;
+  const rawType = String(item.type ?? item.conflict_type ?? "").toLowerCase();
+  const type = rawType.includes("numeric")
+    ? "numeric"
+    : rawType.includes("version")
+      ? "version"
+      : rawType.includes("definition")
+        ? "definition"
+        : "factual";
+  return {
+    type,
+    severity: item.severity ?? "medium",
+    explanation: String(item.explanation ?? item.summary ?? "Conflict detected."),
+    documents: Array.isArray(item.documents)
+      ? item.documents.map(String)
+      : undefined,
+    values: Array.isArray(item.values) ? item.values.map(String) : undefined,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function decodeEscapedAnswer(value: string): string {
+  try {
+    return JSON.parse(`"${value.replace(/"/g, '\\"')}"`);
+  } catch {
+    return value
+      .replace(/\\n/g, "\n")
+      .replace(/\\t/g, "\t")
+      .replace(/\\'/g, "'");
+  }
+}
+
+function extractPythonStyleAnswerEnvelope(
+  value: string,
+): Record<string, unknown> | undefined {
+  const singleQuoted = value.match(/['"]answer['"]\s*:\s*'((?:\\.|[^'\\])*)'/);
+  if (singleQuoted?.[1] !== undefined) {
+    return { answer: decodeEscapedAnswer(singleQuoted[1]) };
+  }
+
+  const doubleQuoted = value.match(/['"]answer['"]\s*:\s*"((?:\\.|[^"\\])*)"/);
+  if (doubleQuoted?.[1] !== undefined) {
+    return { answer: decodeEscapedAnswer(doubleQuoted[1]) };
+  }
+
+  return undefined;
+}
+
+function parseAnswerEnvelope(rawAnswer: unknown): {
+  answer: string;
+  envelope?: Record<string, unknown>;
+} {
+  if (isRecord(rawAnswer)) {
+    return {
+      answer: typeof rawAnswer.answer === "string" ? rawAnswer.answer : "",
+      envelope: rawAnswer,
+    };
+  }
+
+  if (typeof rawAnswer !== "string") {
+    return {
+      answer: rawAnswer === null || rawAnswer === undefined ? "" : String(rawAnswer),
+    };
+  }
+
+  const trimmed = rawAnswer.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+    return { answer: rawAnswer };
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (isRecord(parsed) && typeof parsed.answer === "string") {
+      return { answer: parsed.answer, envelope: parsed };
+    }
+  } catch {
+    const envelope = extractPythonStyleAnswerEnvelope(trimmed);
+    if (envelope && typeof envelope.answer === "string") {
+      return { answer: envelope.answer, envelope };
+    }
+  }
+
+  return { answer: rawAnswer };
 }
 
 function normalizeQueryResponse(raw: unknown, request?: QueryRequest): QueryResponse {
   const value = raw as Record<string, unknown>;
-  const citations = Array.isArray(value.citations)
-    ? value.citations.map(normalizeCitation)
+  const answerEnvelope = parseAnswerEnvelope(value.answer);
+  const rawCitations = Array.isArray(value.citations)
+    ? value.citations
+    : Array.isArray(answerEnvelope.envelope?.citations)
+      ? answerEnvelope.envelope.citations
+      : [];
+  const citations = rawCitations.length
+    ? rawCitations.map(normalizeCitation)
     : [];
   const conflicts = Array.isArray(value.conflicts)
-    ? value.conflicts.map((conflict) => {
-        const item = conflict as Record<string, unknown>;
-        return {
-          type: item.type ?? "factual",
-          severity: item.severity ?? "medium",
-          explanation: String(item.explanation ?? item.summary ?? "Conflict detected."),
-          documents: Array.isArray(item.documents)
-            ? item.documents.map(String)
-            : undefined,
-          values: Array.isArray(item.values) ? item.values.map(String) : undefined,
-        };
-      })
+    ? value.conflicts.map(normalizeConflict)
     : [];
 
   return queryResponseSchema.parse({
     ...value,
     id: value.id ?? value.query_id ?? crypto.randomUUID(),
-    answer: value.answer ?? "",
+    answer: answerEnvelope.answer,
     citations,
     conflicts,
     retrieval: {
@@ -196,7 +285,7 @@ function normalizeQueryResponse(raw: unknown, request?: QueryRequest): QueryResp
     memory_hits: value.memory_hits ?? [],
     latency_ms: value.latency_ms ?? 0,
     reasoning_effort: value.reasoning_effort ?? request?.reasoning_effort ?? "medium",
-    reasoning: value.reasoning,
+    reasoning: value.reasoning ?? answerEnvelope.envelope?.reasoning,
     created_at: value.created_at ?? new Date().toISOString(),
     session_id: value.session_id,
     user_message_id: value.user_message_id,
@@ -223,21 +312,28 @@ function normalizeChatMessage(raw: unknown): ChatMessage {
 
 function normalizeHistoryItem(raw: unknown): QueryHistoryItem {
   const value = raw as Record<string, unknown>;
+  const citations = Array.isArray(value.citations)
+    ? value.citations.map(normalizeCitation)
+    : [];
+  const conflicts = Array.isArray(value.conflicts)
+    ? value.conflicts.map(normalizeConflict)
+    : Array.from({ length: Number(value.conflict_count ?? 0) }).map(() => ({
+        type: "factual",
+        severity: "medium",
+        explanation: "Conflict details are available in the query logs.",
+      }));
   return queryHistoryItemSchema.parse({
     id: value.id ?? value.query_id,
     question: value.question ?? "",
     answer: value.answer ?? "",
     client_id: value.client_id ?? "",
     session_id: value.session_id,
-    citations: [],
-    conflicts: Array.from({ length: Number(value.conflict_count ?? 0) }).map(() => ({
-      type: "factual",
-      severity: "medium",
-      explanation: "Conflict details are available in the query logs.",
-    })),
+    citations,
+    conflicts,
     retrieval: {
       mode: "dense_only",
       top_k: Number(value.retrieval_count ?? 0) || undefined,
+      selected_chunks: citations,
     },
     latency_ms: Number(value.latency_ms ?? 0),
     reasoning_effort: value.reasoning_effort ?? "medium",
@@ -528,6 +624,16 @@ export const apiClient = {
     });
     const rows = Array.isArray(raw) ? raw : ((raw as { rows?: unknown[] }).rows ?? []);
     return rows.map(normalizeHistoryItem);
+  },
+
+  async deleteQueryHistoryItem(clientId: string, queryId: string, signal?: AbortSignal) {
+    return requestJson(`/clients/${clientId}/history/${queryId}`, z.unknown(), {
+      method: "DELETE",
+      signal,
+      fallbackPaths: [
+        `/clients/${clientId}/query-history/${queryId}`,
+      ],
+    });
   },
 
   async listQdrantCollections(signal?: AbortSignal): Promise<QdrantCollection[]> {

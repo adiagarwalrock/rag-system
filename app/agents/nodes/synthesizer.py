@@ -7,19 +7,21 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.agents.nodes._shared import emit_status
 from app.retrieval.retriever import GroundedAnswerSynthesizer
 
 logger = logging.getLogger(__name__)
 
 
 def synthesizer_node(state: dict[str, Any]) -> dict[str, Any]:
-    _emit(state, "Synthesizing grounded answer…")
+    emit_status(state, "Synthesizing grounded answer…")
 
     synthesizer = GroundedAnswerSynthesizer(
         client_id=state["client_id"],
         reasoning_effort=state.get("reasoning_effort", "medium"),
         reasoning_summary=state.get("reasoning_summary"),
         reasoning_callback=state.get("reasoning_callback"),
+        answer_callback=state.get("answer_callback"),
         conversation_context=state.get("conversation_context") or {},
     )
 
@@ -37,10 +39,3 @@ def synthesizer_node(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _emit(state: dict[str, Any], msg: str) -> None:
-    cb = state.get("status_callback")
-    if cb is not None:
-        try:
-            cb(msg)
-        except Exception:
-            pass

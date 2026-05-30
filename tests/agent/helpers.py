@@ -35,6 +35,7 @@ def make_state(**overrides: Any) -> dict[str, Any]:
         "conversation_context": {},
         "status_callback": None,
         "reasoning_callback": None,
+        "answer_callback": None,
         "intent_labels": [],
         "route": "internal",
         "retrieved_nodes": [],
@@ -49,6 +50,7 @@ def make_state(**overrides: Any) -> dict[str, Any]:
         "iteration_count": 0,
         "evidence_sufficient": False,
         "retrieval_gap": None,
+        "planned_queries": [],
     }
     base.update(overrides)
     return base

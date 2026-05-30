@@ -37,6 +37,7 @@ class ChatConversationService:
         session_id: str | None = None,
         status_callback=None,
         reasoning_callback=None,
+        answer_callback=None,
         skip_conversation_context: bool = False,
     ) -> dict:
         session = self._resolve_session(client_id=client_id, session_id=session_id)
@@ -73,6 +74,7 @@ class ChatConversationService:
                 conversation_context=conversation_context_dict,
                 status_callback=status_callback,
                 reasoning_callback=reasoning_callback,
+                answer_callback=answer_callback,
             )
         except Exception as exc:
             self.db.rollback()

@@ -174,7 +174,7 @@ def test_intent_detection_adds_companions_for_remaining_quality_gaps():
 
     assert "temporal_delta" in bxp_delta.labels
     assert any(
-        "older prior investor day" in query for query in bxp_delta.companion_queries
+        "older prior presentation" in query for query in bxp_delta.companion_queries
     )
     assert any(
         "newer latest quarterly update" in query
@@ -183,8 +183,9 @@ def test_intent_detection_adds_companions_for_remaining_quality_gaps():
     assert "stale_source" in simon_stale.labels
     assert "caveat_inconsistency" in dlr_customers.labels
     assert "outlook_scope" in psa_outlook.labels
-    assert "named_entity_comparison" in vici_o.labels
-    assert {"VICI", "Realty Income"} <= set(vici_o.entities)
+    # named_entity_comparison fires at retrieval time from corpus document_name metadata,
+    # not at intent-detection time — check balanced_scope instead (fires on "different").
+    assert "balanced_scope" in vici_o.labels
 
 
 def test_retrieve_with_mode_adds_companion_queries_without_marking_expanded(
@@ -211,10 +212,11 @@ def test_retrieve_with_mode_adds_companion_queries_without_marking_expanded(
     )
 
     assert expanded is False
-    assert len(nodes) == 3
+    assert len(nodes) == 4
     assert retrieval_calls[0] == "What is PSA's outlook for 2026?"
     assert any("pro forma merger acquisition" in call for call in retrieval_calls)
     assert any("neutral accretive" in call for call in retrieval_calls)
+    assert any("prior year presentation" in call for call in retrieval_calls)
     assert retriever._last_retrieval_metadata["intent_labels"] == ["outlook_scope"]
     assert retriever._last_retrieval_metadata["companion_counts_by_query"]
 
@@ -693,6 +695,13 @@ def test_named_entity_query_forces_coverage_for_both_entities():
     assert {"doc-vici", "doc-o"} <= doc_ids
 
 
+def _count_by_doc_name(nodes: list, fragment: str) -> int:
+    return sum(
+        1 for n in nodes
+        if fragment.lower() in (n.node.metadata.get("document_name") or "").lower()
+    )
+
+
 def test_named_entity_query_keeps_multiple_chunks_for_each_entity():
     retriever = VecteraRetriever("client-1", top_k=10)
     ranked = [
@@ -721,13 +730,9 @@ def test_named_entity_query_keeps_multiple_chunks_for_each_entity():
         "VICI and Realty Income both mention gaming exposure. How are their gaming portfolios different?",
         ranked,
     )
-    intent = analyze_retrieval_intent(
-        "VICI and Realty Income both mention gaming exposure. How are their gaming portfolios different?"
-    )
-    entity_counts = retriever_module._node_counts_by_entity(evidence, intent)
 
-    assert entity_counts["VICI"] >= 3
-    assert entity_counts["Realty Income"] >= 3
+    assert _count_by_doc_name(evidence, "VICI") >= 3
+    assert _count_by_doc_name(evidence, "Realty Income") >= 3
 
 
 def test_named_entity_query_does_not_loop_when_full_selection_needs_more_entity_coverage():
@@ -759,12 +764,10 @@ def test_named_entity_query_does_not_loop_when_full_selection_needs_more_entity_
         "How are their gaming portfolios different?"
     )
     evidence = retriever._select_evidence_nodes(question, ranked)
-    intent = analyze_retrieval_intent(question)
-    entity_counts = retriever_module._node_counts_by_entity(evidence, intent)
 
     assert len(evidence) == retriever.comparative_evidence_limit
-    assert entity_counts["VICI"] >= 3
-    assert entity_counts["Realty Income"] >= 3
+    assert _count_by_doc_name(evidence, "VICI") >= 3
+    assert _count_by_doc_name(evidence, "Realty Income") >= 3
 
 
 def test_outlook_query_injects_merger_scope_evidence():
@@ -850,7 +853,13 @@ def test_broad_queries_keep_extra_reranked_candidates(monkeypatch):
         return nodes[:top_k]
 
     retriever = VecteraRetriever("client-1", top_k=15)
-    nodes = [_node(f"node-{idx}", 1.0 - (idx * 0.01)) for idx in range(30)]
+    nodes = [
+        _node(f"node-{idx}", 1.0 - (idx * 0.01), {
+            "document_name": "VICI Investor Presentation.pdf" if idx < 15
+            else "Realty Income Q4 2025 Investor Presentation.pdf"
+        })
+        for idx in range(30)
+    ]
     monkeypatch.setattr(retriever_module, "rerank_nodes", _fake_rerank_nodes)
 
     broad_ranked = retriever._rank_nodes(
@@ -1581,6 +1590,70 @@ def test_synthesize_answer_prefers_responses_path(monkeypatch):
     assert result["answer"] == "Grounded response."
     assert result["reasoning"] is None
     assert result["images_used"] == []
+
+
+def test_synthesize_answer_streams_answer_deltas_to_callback(monkeypatch):
+    class _FakeBudgeter:
+        def __init__(self, model: str):
+            self.model = model
+
+        def build_budgeted_sections(self, **_kwargs):
+            class _Metrics:
+                model = "gpt-test"
+                total_input_tokens = 100
+                input_budget_tokens = 200
+                history_tokens = 10
+                summary_tokens = 5
+                cross_session_tokens = 15
+                evidence_tokens = 60
+                conflict_tokens = 10
+
+            return (
+                [
+                    {"role": "developer", "content": "dev"},
+                    {"role": "user", "content": "ctx"},
+                ],
+                "ctx",
+                _Metrics(),
+            )
+
+    def _fake_stream_invoke_llm_chat(**_kwargs):
+        yield ("Reasoning ", None)
+        yield (None, "Grounded ")
+        yield (None, "response.")
+
+    answer_deltas: list[str] = []
+    reasoning_deltas: list[str] = []
+
+    monkeypatch.setattr(retriever_module, "ResponsesInputBudgeter", _FakeBudgeter)
+    monkeypatch.setattr(
+        retriever_module,
+        "stream_invoke_llm_chat",
+        _fake_stream_invoke_llm_chat,
+    )
+
+    retriever = VecteraRetriever(
+        "client-1",
+        top_k=5,
+        reasoning_callback=reasoning_deltas.append,
+        answer_callback=answer_deltas.append,
+    )
+    result = retriever._synthesize_answer(
+        question="What changed?",
+        citations=[
+            {
+                "citation_label": "Doc 1",
+                "document_name": "Doc 1",
+                "text": "Policy changed on section 2.",
+            }
+        ],
+        conflicts=[],
+    )
+
+    assert reasoning_deltas == ["Reasoning "]
+    assert answer_deltas == ["Grounded ", "response."]
+    assert result["answer"] == "Grounded response."
+    assert result["reasoning"] == "Reasoning"
 
 
 def test_synthesize_answer_responses_attaches_image_evidence(monkeypatch, tmp_path):

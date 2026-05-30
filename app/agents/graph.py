@@ -2,13 +2,13 @@
 LangGraph StateGraph for the agentic RAG pipeline.
 
 Graph topology:
-    START → intent_router → vector_retrieval → evidence_evaluator
-                                    ↑                   |
-                                    └── (loop back) ────┘ (not sufficient)
-                                                        |
-                                              (sufficient or max iter)
-                                                        ↓
-                                    reranker → conflict_detector → citation_builder → synthesizer → END
+    START → planner → vector_retrieval → evidence_evaluator
+                              ↑                   |
+                              └── (loop back) ────┘ (not sufficient)
+                                                  |
+                                        (sufficient or max iter)
+                                                  ↓
+                              reranker → conflict_detector → citation_builder → synthesizer → END
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from app.agents.nodes import (
     citation_builder_node,
     conflict_detector_node,
     evidence_evaluator_node,
-    intent_router_node,
+    planner_node,
     reranker_node,
     synthesizer_node,
     vector_retrieval_node,
@@ -51,7 +51,7 @@ def _route_after_evaluation(state: AgentState) -> str:
 def build_graph() -> Any:
     graph = StateGraph(AgentState)
 
-    graph.add_node("intent_router", intent_router_node)
+    graph.add_node("planner", planner_node)
     graph.add_node("vector_retrieval", vector_retrieval_node)
     graph.add_node("evidence_evaluator", evidence_evaluator_node)
     graph.add_node("reranker", reranker_node)
@@ -59,8 +59,8 @@ def build_graph() -> Any:
     graph.add_node("citation_builder", citation_builder_node)
     graph.add_node("synthesizer", synthesizer_node)
 
-    graph.add_edge(START, "intent_router")
-    graph.add_edge("intent_router", "vector_retrieval")
+    graph.add_edge(START, "planner")
+    graph.add_edge("planner", "vector_retrieval")
     graph.add_edge("vector_retrieval", "evidence_evaluator")
 
     graph.add_conditional_edges(

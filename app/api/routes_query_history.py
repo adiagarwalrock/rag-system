@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.db.snowflake import get_db
@@ -28,3 +28,20 @@ def list_history(
             offset=offset,
         )
     )
+
+
+@router.delete("/{client_id}/history/{query_id}")
+@router.delete("/{client_id}/query-history/{query_id}")
+def delete_history_item(
+    client_id: str,
+    query_id: str,
+    db: Session = Depends(get_db),
+):
+    try:
+        QueryHistoryService(db).delete_query_history_item(
+            client_id=client_id,
+            query_id=query_id,
+        )
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Query history item not found")
+    return {"status": "success", "query_id": query_id}
