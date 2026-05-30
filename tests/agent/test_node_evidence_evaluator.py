@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 from tests.agent.helpers import make_node, make_state
 
 
-def _mock_llm(sufficient: bool, gap: str | None = None) -> MagicMock:
-    import json
-    response = MagicMock()
-    response.message.content = json.dumps({"sufficient": sufficient, "gap": gap})
-    return response
+def _mock_llm(sufficient: bool, gap: str | None = None):
+    from app.agents.nodes.evidence_evaluator import EvidenceEvaluation
+    return EvidenceEvaluation(sufficient=sufficient, gap=gap, node_scores=[])
 
 
 def test_force_sufficient_at_max_iterations(monkeypatch):

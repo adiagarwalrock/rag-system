@@ -770,6 +770,12 @@ class VecteraRetriever:
             evidence_cap=evidence_cap,
         )
 
+        selected = _ensure_multi_version_evidence(
+            selected_nodes=selected,
+            ranked_nodes=ranked_nodes,
+            evidence_cap=evidence_cap,
+        )
+
         return selected
 
     def _resolve_evidence_cap(
@@ -1303,6 +1309,52 @@ def _ensure_direct_metric_evidence(
         return selected
     selected[replace_idx] = best
     return selected
+
+
+def _version_label_key(node: Any) -> str:
+    """Key by version_label > document_version_group > document_name, for multi-vintage diversity."""
+    metadata = node.node.metadata or {}
+    version_label = (metadata.get("version_label") or "").strip().lower()
+    if version_label:
+        return f"version:{version_label}"
+    vg = metadata.get("document_version_group")
+    if vg:
+        return f"vg:{str(vg).strip().lower()}"
+    doc = metadata.get("document_name") or metadata.get("file_name") or metadata.get("source_file")
+    if doc:
+        return f"doc:{str(doc).strip().lower()}"
+    return f"node:{_node_unique_key(node)}"
+
+
+def _distinct_version_count(nodes: list[Any]) -> int:
+    """Count distinct version keys across a list of nodes."""
+    return len({_version_label_key(n) for n in nodes})
+
+
+def _ensure_multi_version_evidence(
+    *,
+    selected_nodes: list[Any],
+    ranked_nodes: list[Any],
+    evidence_cap: int,
+) -> list[Any]:
+    """When ranked_nodes span 2+ document vintages for the same issuer, guarantee at
+    least 2 chunks per top-2 vintages are present in selected_nodes.
+
+    This fires unconditionally (no comparative-intent requirement) so that questions
+    like "What is X's total IT capacity?" still surface both the Dec 2025 and Mar 2026
+    slides for comparison, rather than collapsing to the most-recent-only result.
+    """
+    if _distinct_version_count(ranked_nodes) < 2:
+        return selected_nodes
+    top_versions = _top_groups(ranked_nodes, _version_label_key, limit=2)
+    return _ensure_group_quota(
+        selected_nodes=selected_nodes,
+        ranked_nodes=ranked_nodes,
+        evidence_cap=evidence_cap,
+        group_key_fn=_version_label_key,
+        target_groups=top_versions,
+        quota_per_group=2,
+    )
 
 
 def _ensure_temporal_delta_evidence(

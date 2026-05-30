@@ -182,6 +182,7 @@ class EnterpriseRAGEvalRunner:
             started_at=started_at,
             finished_at=finished_at,
             output_paths=output_paths,
+            results_by_line=results_by_line,
         )
         output_paths.manifest_path.write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
@@ -470,6 +471,7 @@ class EnterpriseRAGEvalRunner:
             "query_expanded": result.get("query_expanded"),
             "retrieval_diagnostics": result.get("retrieval_diagnostics"),
             "intent_labels": result.get("intent_labels"),
+            "agentic_iterations": result.get("agentic_iterations"),
             "companion_queries": result.get("companion_queries"),
             "companion_counts_by_query": result.get("companion_counts_by_query"),
             "evidence_by_document": result.get("evidence_by_document"),
@@ -582,7 +584,21 @@ class EnterpriseRAGEvalRunner:
         started_at: datetime,
         finished_at: datetime,
         output_paths: OutputPaths,
+        results_by_line: dict[int, "QuestionExecutionResult"] | None = None,
     ) -> dict[str, Any]:
+        agentic_iter_counts = [
+            r.diagnostics.get("agentic_iterations")
+            for r in (results_by_line or {}).values()
+            if r.diagnostics.get("agentic_iterations") is not None
+        ]
+        agentic_summary: dict[str, Any] = {}
+        if agentic_iter_counts:
+            agentic_summary = {
+                "agentic_questions": len(agentic_iter_counts),
+                "agentic_avg_iterations": round(sum(agentic_iter_counts) / len(agentic_iter_counts), 2),
+                "agentic_max_iterations": max(agentic_iter_counts),
+                "agentic_looped_count": sum(1 for n in agentic_iter_counts if n > 1),
+            }
         return {
             "run_id": run_id,
             "started_at": started_at.isoformat(),
@@ -604,6 +620,7 @@ class EnterpriseRAGEvalRunner:
             "failed": stats.failed,
             "skipped_malformed": stats.skipped_malformed,
             "blank_rows": stats.blank_rows,
+            **agentic_summary,
         }
 
     @staticmethod

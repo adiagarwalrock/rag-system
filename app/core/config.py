@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "text-embedding-3-large"
     EMBEDDING_OUTPUT_DIMENSION: int | None = None
     RESPONSE_INPUT_BUDGET_RATIO: float = 0.8
-    RESPONSE_MAX_OUTPUT_TOKENS: int = 2500
+    RESPONSE_MAX_OUTPUT_TOKENS: int = 6000
     RESPONSE_SYNTHESIS_TIMEOUT_SECONDS: int = 240  # max wait for main answer synthesis; gpt-5.2 reasoning_effort=high on cross-document questions can take 2+ minutes
     RESPONSE_PROMPT_CACHE_KEY: str = "vectera:grounded-answer:v2"
     RESPONSE_PROMPT_CACHE_RETENTION: str = "24h"

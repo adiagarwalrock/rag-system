@@ -51,6 +51,7 @@ Both call the same orchestration in `app/services/*` in-process. Streamlit uses 
 | Orchestration / business logic | `app/services/*` |
 | Ingestion & parsing | `app/ingestion/*` |
 | Retrieval pipeline | `app/retrieval/*` |
+| Agentic RAG (LangGraph) | `app/agents/*` |
 | Vector store | `app/indexing/vector_store.py`, `app/indexing/chat_history_store.py` |
 | Relational DB / session factory | `app/db/*` |
 | Config / AI init | `app/core/config.py`, `app/core/ai_provider.py` |
@@ -72,12 +73,16 @@ Both call the same orchestration in `app/services/*` in-process. Streamlit uses 
 ### Query / answer flow
 
 1. `ChatConversationService` manages session creation and message persistence.
-2. `VecteraRetriever` performs client-scoped hybrid Qdrant search (dense + sparse, with dense fallback).
-3. Optional query expansion for comparative/visual/conflict prompts.
-4. Cross-encoder reranker (`app/retrieval/cross_encoder_reranker.py`) + semantic/temporal/structural adjustments.
-5. `ConflictDetector` flags numeric disagreements across sources.
-6. Citations built from selected evidence; LLM synthesis produces grounded answer.
-7. Q/A pairs embedded into a dedicated chat-history Qdrant collection for cross-session semantic memory.
+2. **Dispatch**: `execute_query()` in `app/services/query_service.py` checks `ENABLE_AGENTIC_RAG`. When `true`, routes through `AgenticRetrieverAdapter` (`app/agents/adapter.py`); otherwise uses the deterministic pipeline below.
+3. **Deterministic path** (default): `VecteraRetriever` performs client-scoped hybrid Qdrant search → cross-encoder reranker → `ConflictDetector` → citations → LLM synthesis.
+4. **Agentic path** (`ENABLE_AGENTIC_RAG=true`): LangGraph graph in `app/agents/graph.py` runs `intent_router → vector_retrieval → evidence_evaluator` in a loop until evidence is sufficient or `AGENTIC_MAX_ITERATIONS` is reached, then `reranker → conflict_detector → citation_builder → synthesizer`.
+   - `evidence_evaluator` uses a deterministic entity-coverage check first, then OpenAI structured output (`EvidenceEvaluation`: `sufficient`, `gap`, `node_scores[]`).
+   - Gap string from evaluator becomes the Qdrant query on the next retrieval pass.
+5. Q/A pairs embedded into a dedicated chat-history Qdrant collection for cross-session semantic memory.
+
+### `invoke_llm_chat` structured output
+
+Pass `structured_output_schema=SomePydanticModel` to get a parsed model instance back instead of a raw `ChatResponse`. Uses the OpenAI Responses API (`response.output_text` + `model_validate_json`) when `OPENAI_USE_RESPONSES=true`, otherwise `beta.chat.completions.parse`. All other `invoke_llm_chat` callers are unaffected (parameter defaults to `None`).
 
 ## Configuration
 

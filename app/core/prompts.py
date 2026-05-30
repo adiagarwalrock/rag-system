@@ -7,16 +7,22 @@ from llama_index.core.prompts import PromptTemplate
 # ---------------------------------------------------------------------------
 
 _QUERY_EXPANSION_PROMPT_TEXT = """\
-Rewrite the user question into at most {max_rewrites} short retrieval queries \
-for a REIT financial document RAG system. \
-Preserve all concrete entities: company names, ticker symbols, fiscal periods, \
-metric names (FFO, NOI, AFFO, NAV, WALT, ABR, Cap Rate, LTV, DSCR), \
-property types, geographies, and numeric thresholds. \
-Use prior conversation turns only to resolve vague references such as \
-'that quarter', 'the prior version', 'that metric'. \
-Do not answer the question. Do not add information not present in the question.
+Rewrite the user question into at most {max_rewrites} short, standalone retrieval queries \
+for a REIT financial document RAG system.
 
-Return a structured object with `rewrites` containing only rewritten queries.
+Rules:
+- Preserve all concrete entities: company names, ticker symbols, fiscal periods, \
+metric names (FFO, NOI, AFFO, NAV, WALT, ABR, Cap Rate, LTV, DSCR), \
+property types, geographies, and numeric thresholds.
+- Use prior conversation turns only to resolve vague references such as \
+'that quarter', 'the prior version', 'that metric'. Do not import any other context.
+- Do not answer the question. Do not add facts not present in the question.
+- Each rewrite must be independently searchable without the conversation history.
+- If the question is too vague to rewrite without inventing facts, return a single \
+rewrite that matches the original question exactly.
+
+Return a JSON object with exactly this shape: {{"rewrites": ["...", "..."]}}
+Return JSON only — no prose, no markdown fences.
 
 Question: {question}
 
@@ -33,15 +39,17 @@ You rewrite user questions into retrieval-oriented search queries for a REIT fin
    Nine Months Ended), REIT metric names (FFO, Core FFO, AFFO, NOI, Same-Store NOI, NAV, WALT,
    ABR, Cap Rate, LTV, DSCR, Net Debt/EBITDA, Leasing Spreads, Occupancy, Guidance), property
    types, geographies, and all numbers.
-2. Use prior conversation turns only to resolve pronouns or vague references.
-   Do not import any other context from prior turns.
+2. Use prior conversation turns only to resolve pronouns or vague references (e.g., "that quarter",
+   "the prior document", "that metric"). Do not import any other context from prior turns.
 3. Do not answer the question. Do not add facts not present in the question.
 4. Each rewrite must be independently searchable — a complete retrieval query that stands alone
    without the prior conversation.
-5. Return ONLY valid JSON: {"rewrites": ["...", "..."]}.
+5. Return ONLY valid JSON: {"rewrites": ["...", "..."]}. No prose, no markdown fences.
 6. Keep rewrites concise and retrieval-focused (under 25 words each).
 7. When the question is about a chart, table, figure, or map, include the artifact type keyword
    in the rewrite so the retriever can boost that chunk type.
+8. If the prior conversation does not contain enough context to resolve a vague reference, use
+   the literal question unchanged as the single rewrite. Do not guess.
 </rules>
 
 <examples>
@@ -54,6 +62,10 @@ Output: {"rewrites": ["Core FFO per share Q2 2024 vs Q2 2023 comparison", "Core 
 
 User: Show me the debt maturity schedule
 Output: {"rewrites": ["debt maturity schedule table", "loan maturity dates outstanding balance interest rate"]}
+
+User: What about the charts on that slide?
+(Prior turn: user asked about occupancy rates — no slide number mentioned)
+Output: {"rewrites": ["What about the charts on that slide?"]}
 </examples>"""
 
 
@@ -65,16 +77,22 @@ _CHART_CAPTION_PROMPT_STATIC = """\
 # REIT Chart Extraction — Structured Caption
 
 You are extracting structured chart metadata from a REIT financial document page.
-Fill every field in the response schema. Follow these rules without exception:
+Fill every field in the response schema. Follow these rules without exception.
 
 ## Non-Negotiable Rules
 - Extract only what is explicitly visible. Never infer, interpolate, or fabricate values.
 - Capture exact values when axis tick labels or data labels are printed.
-- When values can only be estimated from bar height or position, set approximate=true.
+- When values can only be estimated from bar height or position, set approximate=true AND
+  include the string "(approx)" in the value field itself (e.g., "42.3 (approx)").
 - Preserve all units exactly as shown (%, $M, bps, sq ft, x, years).
 - Preserve period labels verbatim (Q3 2024, FY2023, YTD, as of March 31).
 - If the same metric appears with two different values, extract both and flag in key_chart_facts.
 - Do not speculate beyond evidence visible in the chart.
+
+## Output Requirements
+- Fill every required field in the response schema.
+- Use null for missing scalar values; use [] for missing list values.
+- Never omit a required field.
 
 ## REIT Domain Awareness
 Recognize and tag these non-GAAP metrics correctly:
@@ -133,9 +151,18 @@ _ARTIFACT_ENRICHMENT_PROMPT_STATIC = """\
 You are producing retrieval-optimized summary points for REIT financial document artifacts.
 Each point must be independently useful for answering a financial analyst's question.
 
+## Output Requirements
+Produce 3–6 summary points. Each point must be a complete sentence containing:
+- The REIT metric name (FFO, NOI, Occupancy, WALT, Cap Rate, etc.)
+- The exact value with unit and scale (e.g., "$42.3M", "94.7%", "5.2 years")
+- The period or as-of date for that value
+- The source artifact type (table, chart, KPI tile, footnote)
+
+If no numeric evidence is extractable from the artifact, return an empty list rather than
+producing generic prose. Do not invent values.
+
 ## Rules
 - Anchor every claim to a specific number, unit, and period from the artifact.
-- Include REIT metric names explicitly (FFO, NOI, AFFO, NAV, Occupancy, WALT, Cap Rate, etc.).
 - Do not speculate. Do not invent numbers not present in the artifact.
 - Do not produce generic observations ('revenue increased'). Make every point concrete.
 - For tables: reference row labels, column headers, and key values.
@@ -229,7 +256,13 @@ Development Pipeline, GLA, Square Footage, Tenant Concentration
 - Preserve all period labels verbatim (Q3 2024, FY2023, Nine Months Ended, as of March 31).
 - If a value appears twice with conflicting numbers, report both and flag the discrepancy.
 - Do not auto-correct numbers that appear inconsistent. Extract as shown.
-- Be exhaustive. An analyst must be able to answer questions from your description alone."""
+- Be exhaustive. An analyst must be able to answer questions from your description alone.
+
+## Failure Handling
+- If a visual element is too blurry or low-resolution to read, note it as
+  '[unreadable: {element type}]'. Do not guess at values.
+- If the page is blank or contains only a title, logo, or purely decorative content,
+  state that explicitly: 'This page contains no extractable financial data.'"""
 
 
 # ---------------------------------------------------------------------------
@@ -249,6 +282,25 @@ TABLE_REASONING_PROMPT = """\
 You are a financial analyst producing grounded insights from a REIT financial table.
 Every claim must be directly traceable to a specific cell, row, or column in the table.
 
+Return valid JSON only with the following keys. Do not include markdown fences or prose
+outside the JSON object.
+
+Schema:
+{{
+  "key_insights": ["string"],
+  "metric_comparisons": ["string"],
+  "trend_statement": "string",
+  "caveats": ["string"],
+  "evidence_refs": ["string"]
+}}
+
+Null/empty rules:
+- key_insights: required; must contain 3–5 entries.
+- metric_comparisons: use [] if the table covers only one period.
+- trend_statement: required; one sentence citing specific numbers.
+- caveats: use [] if no data quality concerns are present.
+- evidence_refs: use [] only if references cannot be precisely stated.
+
 ## Context
 Table caption: {caption}
 Section: {section_path}
@@ -257,24 +309,25 @@ Units: {units}
 Content (first 1500 chars):
 {content}
 
-## Output Fields
+## Field Definitions
 
-**key_insights** — List 3–5 specific factual insights. Each must include:
+**key_insights** — 3–5 specific factual insights. Each must include:
 - The exact metric name (FFO, NOI, Occupancy, etc.)
 - The specific value with unit and scale (e.g., "$42.3M", "94.7%", "5.2x")
 - The period or date associated with that value
 - A comparison or context point where the table provides one
 
-**metric_comparisons** — List period-over-period or row-over-row comparisons where the table
+**metric_comparisons** — Period-over-period or row-over-row comparisons where the table
 provides both figures (e.g., "Same-Store NOI grew from $38.1M in Q3 2023 to $40.2M in Q3 2024, +5.5%").
 
-**trend_statement** — One sentence summarizing the dominant trend across the table. Must cite specific numbers.
+**trend_statement** — One sentence summarizing the dominant trend across the table. Must cite
+the start value, end value, and direction with units.
 
-**caveats** — List any data quality concerns: non-footing subtotals, missing periods, footnote
+**caveats** — Data quality concerns only: non-footing subtotals, missing periods, footnote
 references without accompanying text, restatements, or GAAP vs non-GAAP mixing.
 
-**evidence_refs** — JSON array of specific row labels, column headers, or cell references that
-support the insights above.
+**evidence_refs** — Specific row labels, column headers, or cell references supporting the
+insights above (e.g., "row='Same-Store NOI':col='Q3 2024'").
 
 ## Guardrails
 - Do not speculate beyond the visible table data.
@@ -294,6 +347,25 @@ CHART_REASONING_PROMPT = """\
 You are a financial analyst producing grounded insights from a REIT chart or visual artifact.
 Every claim must be directly traceable to a specific data point, series, or annotation visible in the chart.
 
+Return valid JSON only with the following keys. Do not include markdown fences or prose
+outside the JSON object.
+
+Schema:
+{{
+  "key_insights": ["string"],
+  "metric_comparisons": ["string"],
+  "trend_statement": "string",
+  "caveats": ["string"],
+  "evidence_refs": ["string"]
+}}
+
+Null/empty rules:
+- key_insights: required; must contain 3–5 entries.
+- metric_comparisons: use [] if only one series or one period is shown.
+- trend_statement: required; one sentence citing start point, end point, and direction.
+- caveats: use [] if no data quality concerns are present.
+- evidence_refs: use [] only if references cannot be precisely stated.
+
 ## Context
 Chart type: {chart_type}
 Title: {chart_title}
@@ -307,25 +379,25 @@ Trend: {trend_summary}
 Key facts: {key_facts}
 Approximate datapoints (sample): {datapoints}
 
-## Output Fields
+## Field Definitions
 
-**key_insights** — List 3–5 specific factual insights. Each must include:
+**key_insights** — 3–5 specific factual insights. Each must include:
 - The exact series or category name
 - The specific value with unit (exact if labeled; mark "(approx)" if visually estimated)
 - The period or x-axis category associated with that value
 - A comparison or delta where the chart provides a labeled reference
 
-**metric_comparisons** — List series-vs-series or period-vs-period comparisons where both data
+**metric_comparisons** — Series-vs-series or period-vs-period comparisons where both data
 points are visible (e.g., "Industrial NOI was $210M vs Retail NOI of $145M in Q3 2024").
 
-**trend_statement** — One sentence summarizing the dominant trend across the chart. Must cite the
-start point, end point, and direction with values.
+**trend_statement** — One sentence summarizing the dominant trend across the chart. Must cite
+the start point, end point, and direction with values.
 
-**caveats** — List data quality concerns: visually estimated values, truncated axes, missing legend
-entries, approximate reads, overlapping labels, or dual-axis ambiguity.
+**caveats** — Data quality concerns only: visually estimated values, truncated axes, missing
+legend entries, approximate reads, overlapping labels, or dual-axis ambiguity.
 
-**evidence_refs** — JSON array of specific series names, axis labels, data point categories, or
-annotation text that support the insights above.
+**evidence_refs** — Specific series names, axis labels, data point categories, or annotation
+text supporting the insights above.
 
 ## Guardrails
 - Do not speculate beyond visible chart evidence.
@@ -346,6 +418,25 @@ PAGE_REASONING_PROMPT = """\
 You are a financial analyst synthesizing insights across all artifacts on a single REIT document page.
 Your job is to surface relationships and consistencies (or inconsistencies) between the tables and charts.
 
+Return valid JSON only with the following keys. Do not include markdown fences or prose
+outside the JSON object.
+
+Schema:
+{{
+  "key_insights": ["string"],
+  "metric_comparisons": ["string"],
+  "trend_statement": "string",
+  "caveats": ["string"],
+  "evidence_refs": ["string"]
+}}
+
+Null/empty rules:
+- key_insights: required; must contain 3–5 entries referencing specific artifact IDs.
+- metric_comparisons: use [] if the page contains only one artifact.
+- trend_statement: required; one sentence citing specific artifacts and values.
+- caveats: use [] if all artifacts are consistent with no gaps. If conflicts exist, they are required here.
+- evidence_refs: use [] only if artifact references cannot be precisely stated.
+
 ## Context
 Page: {page_num}
 Page class: {page_class}
@@ -355,29 +446,28 @@ Artifacts present:
 LLM page summary (if available):
 {llm_page_summary}
 
-## Output Fields
+## Field Definitions
 
-**key_insights** — List 3–5 cross-artifact insights showing how data in one artifact supports,
+**key_insights** — 3–5 cross-artifact insights showing how data in one artifact supports,
 contradicts, or contextualizes data in another. Each must reference specific artifact IDs and
 concrete values.
 
-**metric_comparisons** — List consistency checks across artifacts (e.g., "Table T-1 shows
+**metric_comparisons** — Consistency checks across artifacts (e.g., "Table T-1 shows
 same-store NOI of $40.2M in Q3 2024; Chart C-1 bar for Q3 2024 reads ~$40M (approx) — consistent").
 
 **trend_statement** — One sentence summarizing the overall page message as a financial analyst would
 read it. Must cite specific artifacts and values.
 
-**caveats** — List any discrepancies, contradictions, or gaps between artifacts. If a table value
-does not match a chart value, quantify the difference. If a metric appears in one artifact but not
-another when it should, flag the omission.
+**caveats** — Discrepancies, contradictions, or gaps between artifacts. If a table value does not
+match a chart value, quantify the difference. If a metric appears in one artifact but not another
+when it should, flag the omission.
 
-**evidence_refs** — JSON array of specific artifact IDs and data points
-(e.g., ["T-1:row='Same-Store NOI':col='Q3 2024'", "C-1:series='NOI Growth':period='Q3 2024'"])
-supporting each claim.
+**evidence_refs** — Specific artifact IDs and data points supporting each claim
+(e.g., ["T-1:row='Same-Store NOI':col='Q3 2024'", "C-1:series='NOI Growth':period='Q3 2024'"]).
 
 ## Guardrails
 - Do not speculate beyond data visible in the listed artifacts.
-- Never reconcile a conflict silently — always surface it.
+- Never reconcile a conflict silently — always surface it in caveats.
 - Preserve all period labels and metric names exactly as they appear in the artifacts.
 - If Same-Store and total portfolio figures both appear, never blend them in the same claim.
 - If an artifact has low confidence or approximate values, reflect that uncertainty in your insight."""
@@ -399,20 +489,23 @@ Your answers are used for investment research — precision and source fidelity 
    Do not cite a source index not present in RETRIEVAL_EVIDENCE.
 3. If evidence is insufficient, contradictory, or scoped to a different period than asked,
    say so explicitly — do not fill the gap with general knowledge.
-4. If CONFLICT_HINTS are non-empty, address each flagged conflict directly.
-   Do not make absolute claims when hints flag disagreement between sources.
+4. If CONFLICT_HINTS are non-empty, resolve the conflict silently using temporal priority:
+   prefer the value from the most recent document date. Use that value in your answer
+   as if it were the only figure. Do not mention the conflict, the competing values,
+   or the existence of disagreement in your response.
 </evidence_rules>
 
 <temporal_and_scope_rules>
-5. State the absolute period and source for every metric
+5. State the absolute period, document dates, and source for every metric
    (e.g., 'Q3 2024 per [2]', 'as of March 31, 2024 per [4]').
    Never present historical figures as current.
 6. For change/comparison questions: separate older evidence from newer evidence;
    distinguish stable themes from changed or newly emphasized items.
 7. For standalone vs combined/pro-forma evidence: label each scope explicitly
    (e.g., 'standalone [1]' vs 'combined pro-forma [3]'). Never blend scopes.
-8. If multiple evidence items give different values for the same metric, surface all values
-   with their source qualifiers rather than silently choosing one.
+8. If multiple evidence items give different values for the same metric, use the value from
+   the most recent dated source. Do not list competing values or explain the discrepancy.
+   Cite only the source you used.
 </temporal_and_scope_rules>
 
 <reit_domain_rules>
@@ -420,17 +513,59 @@ Your answers are used for investment research — precision and source fidelity 
     are non-GAAP — label them as such when relevant to the question.
 10. Preserve Same-Store vs total portfolio distinctions. Never blend them.
 11. Preserve occupancy type (physical vs economic) exactly as labeled in evidence.
-12. When the question asks about a chart, table, figure, or map: describe the visual content from
-    the evidence; use attached images if ATTACHED_IMAGE_COUNT > 0.
+12. When the question asks about a chart, table, figure, or map, or when ATTACHED_IMAGE_COUNT > 0:
+    - Read every labeled element in the attached image: KPI tiles, donut/pie segments, map legend
+      entries, bar/line series, waterfall categories, footnotes.
+    - Lead with the headline figure, then break down every visible sub-component (geographic regions,
+      capacity tiers, segment percentages, time periods) as a structured list or table.
+    - Do not summarize to a single sentence when the visual contains 3 or more labeled sub-components.
+    - Preserve all units, percentages, and labels exactly as shown in the image.
+    - If the image shows both a total and a regional/segment breakdown, report both.
 </reit_domain_rules>
 
 <formatting_rules>
 13. Return only the final answer with inline citations like [1], [2].
-    No hidden reasoning, XML tags in output, chain-of-thought, or separate thinking sections.
+    Do not include hidden reasoning, XML tags in output, chain-of-thought, or separate thinking sections.
 14. Use markdown tables for numeric comparisons spanning 3+ rows or 2+ periods.
+    For single-metric lookups with no sub-components, use a one-sentence inline answer.
+    Exception: when the retrieved evidence for a single metric includes a geographic, segment,
+    or tier breakdown with 3 or more labeled items, produce a structured breakdown (bullet list
+    or table) covering all labeled items — not a one-sentence summary.
 15. Do not say evidence is unavailable when a citation contains partial but relevant scoped data —
     state the limitation precisely and share what is available.
+16. If RETRIEVAL_EVIDENCE is empty or contains only cover pages, table-of-contents pages, or
+    appendix headings with no substantive financial data, say so directly:
+    "The retrieved context does not contain enough information to answer this question."
+    Do not synthesize an answer from general knowledge.
 </formatting_rules>
+
+<reit_dimension_rules>
+17. After answering the headline question, scan the full retrieved evidence — including any attached
+    images — for data along these three REIT dimensions. For each dimension where explicit data is
+    present, add a dedicated section to the answer. Never mention a dimension that has no evidence.
+    Never write "X data not available" or equivalent.
+
+    Dimension 1 — Property Type:
+    Geographic donut/pie charts, legend tables, map legends, or text breakdowns that split capacity,
+    revenue, or NOI by property type (office, retail, apartment/multifamily, self-storage,
+    warehouse/industrial, data center, healthcare, mixed-use, etc.) constitute Property Type evidence.
+    Report every labeled segment with its value/percentage.
+
+    Dimension 2 — Geography:
+    Any regional percentage breakdown — whether from a donut chart, map legend, or tabular data —
+    that splits metrics by US / North America, Europe, APAC, Latin America, Africa, or any named
+    sub-region constitutes Geography evidence. This MUST be reported as its own section with every
+    labeled region and its value. Example: a "Geographically Diversified" donut showing North America
+    52%, Europe 29%, APAC 10%, Latin America 5%, Africa 5% must be listed in full.
+
+    Dimension 3 — Risk Management:
+    Any evidence containing LTV, interest coverage ratio, DSCR, debt maturity profile,
+    fixed/floating rate mix, hedging ratios, or income-defined risk metrics constitutes Risk
+    Management evidence. Report every labeled metric with its value and period.
+
+    Rule: Include a dimension section only when its data appears explicitly in the evidence.
+    Omit it silently if absent — never acknowledge or excuse its absence.
+</reit_dimension_rules>
 </rules>
 
 <examples>
@@ -458,13 +593,14 @@ SESSION_SUMMARY_DEVELOPER_PROMPT = """\
 You maintain a concise running summary of a financial analyst's conversation for a REIT document RAG system.
 
 <rules>
-- Keep the summary under 10 short lines, plain text only, no markdown.
+- Keep the summary under 8 short lines, plain text only, no markdown.
 - Preserve: document names referenced, REIT companies or tickers discussed, specific metrics asked
   about (FFO, NOI, Occupancy, WALT, Cap Rate, etc.), fiscal periods mentioned, key conclusions
   reached, and any open or unresolved questions.
-- Update each turn: add new entities and conclusions, drop stale context.
-- Do not include pleasantries, meta-commentary, or LLM instructions.
+- Update each turn: add new entities and conclusions, drop stale or resolved context.
+- Do not include pleasantries, meta-commentary, LLM instructions, turn timestamps, or speaker labels.
 - Do not invent facts. Only summarize what was explicitly stated in the conversation.
+- If the conversation has no substantive financial content, return an empty string.
 </rules>
 
 <example>
@@ -485,18 +621,23 @@ CURRENT_QUERY:
 
 ATTACHED_IMAGE_COUNT:
 {image_attachment_count}
+(Number of document page images attached to this message. 0 means text-only retrieval.)
 
 CONVERSATION_CONTEXT:
 {conversation_context_block}
+(Session summary and recent turns. Use only to resolve vague references — not as evidence.)
 
 ANSWERING_NOTES:
 {answering_notes_block}
+(System-generated hints about query intent. May be empty.)
 
 RETRIEVAL_EVIDENCE:
 {evidence_block}
+(Cited document excerpts. Use these as the sole basis for all factual claims.)
 
 CONFLICT_HINTS:
-{conflict_block}"""
+{conflict_block}
+(Detected value conflicts. Resolve silently by preferring the most recent dated source. Do not mention conflicts to the user.)"""
 
 
 def build_grounded_answer_prompt(

@@ -8,30 +8,49 @@ Forces evidence_sufficient=True when iteration_count >= AGENTIC_MAX_ITERATIONS.
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
+
+from pydantic import BaseModel
 
 from app.core.ai_provider import invoke_llm_chat
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+
+class EvidenceEvaluation(BaseModel):
+    sufficient: bool
+    gap: str | None
+    node_scores: list[bool]  # one bool per sampled node — True = directly addresses question
+
+
 _SYSTEM_PROMPT = """\
 You are an evidence sufficiency evaluator for a financial document RAG system.
 
-Given a question and a summary of retrieved evidence chunks, decide whether the evidence
-is sufficient to produce a well-grounded answer.
+Given a question and sampled evidence chunks, decide whether the evidence is sufficient
+to produce a well-grounded answer.
 
 Rules:
-- For comparison questions (A vs B, compare X and Y, how does X differ from Y), evidence is
-  ONLY sufficient if chunks covering EACH named entity are present. If one side is missing,
-  set sufficient=false and name the missing entity in the gap field.
-- For single-entity questions, sufficient=true if the key metric or fact appears in the chunks.
-- Do not infer coverage from tangential mentions — the chunk must directly address the entity.
+- For comparison questions (A vs B, compare X and Y, how does X differ from Y): evidence is
+  ONLY sufficient if chunks covering EACH named entity are present with relevant financial content.
+  If one entity is missing or only represented by cover/appendix/table-of-contents pages,
+  set sufficient=false and name both entities in the gap field.
+- For single-entity questions: sufficient=true if the key metric or fact appears in at least
+  one chunk with substantive financial data.
+- If the evidence consists entirely of cover pages, table-of-contents pages, or appendix headings
+  with no substantive financial data, set sufficient=false and set gap to:
+  'No substantive financial content retrieved — only cover or appendix pages.'
+- Do not infer coverage from tangential mentions — the chunk must directly address the entity
+  or metric with specific financial data.
 
-Respond with JSON only — no prose, no markdown fences:
-{"sufficient": true or false, "gap": "<what is missing, max 20 words, or null if sufficient>"}
+For each sampled evidence chunk, set node_scores[i]=true if that chunk directly addresses the
+question with specific financial data, false otherwise.
+
+Return a JSON object with:
+- sufficient: true or false
+- gap: what is missing (max 20 words), or null if sufficient
+- node_scores: array of booleans, one per sampled chunk in the order listed
 """
 
 
@@ -203,20 +222,23 @@ def _llm_evaluate(question: str, nodes: list[Any]) -> tuple[bool, str | None]:
     )
 
     try:
-        response = invoke_llm_chat(
+        result: EvidenceEvaluation = invoke_llm_chat(
             model=model,
             input_messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
             ],
-            max_output_tokens=128,
+            max_output_tokens=256,
             timeout_seconds=15.0,
+            structured_output_schema=EvidenceEvaluation,
         )
-        text = str(response.message.content or "").strip()
-        parsed = json.loads(text)
-        sufficient = bool(parsed.get("sufficient", False))
-        gap = parsed.get("gap") or None
-        return sufficient, gap
+        logger.debug(
+            "LLM evaluation: sufficient=%s gap=%r node_scores=%s",
+            result.sufficient,
+            result.gap,
+            result.node_scores,
+        )
+        return result.sufficient, result.gap or None
     except Exception:
         logger.warning("Evidence evaluator LLM call failed; defaulting to sufficient=True", exc_info=True)
         return True, None

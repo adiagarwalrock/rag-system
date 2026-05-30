@@ -59,11 +59,9 @@ def _llm_response(route: str) -> MagicMock:
     return r
 
 
-def _llm_eval(sufficient: bool, gap=None) -> MagicMock:
-    import json
-    r = MagicMock()
-    r.message.content = json.dumps({"sufficient": sufficient, "gap": gap})
-    return r
+def _llm_eval(sufficient: bool, gap=None):
+    from app.agents.nodes.evidence_evaluator import EvidenceEvaluation
+    return EvidenceEvaluation(sufficient=sufficient, gap=gap, node_scores=[])
 
 
 def test_full_graph_internal_path(monkeypatch):
@@ -89,13 +87,11 @@ def test_graph_loops_on_insufficient_then_synthesizes(monkeypatch):
     eval_count = {"n": 0}
 
     def alternating_eval(**kw):
-        import json
+        from app.agents.nodes.evidence_evaluator import EvidenceEvaluation
         eval_count["n"] += 1
         # First eval: not sufficient. Second eval: sufficient.
         sufficient = eval_count["n"] >= 2
-        r = MagicMock()
-        r.message.content = json.dumps({"sufficient": sufficient, "gap": "more detail needed"})
-        return r
+        return EvidenceEvaluation(sufficient=sufficient, gap="more detail needed", node_scores=[])
 
     monkeypatch.setattr("app.agents.nodes.evidence_evaluator.settings.AGENTIC_MAX_ITERATIONS", 5)
     monkeypatch.setattr(

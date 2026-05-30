@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from logging import Logger, getLogger, DEBUG
-from typing import Any
+from typing import Any, TypeVar
+
+from pydantic import BaseModel
+
+_S = TypeVar("_S", bound=BaseModel)
 
 from llama_index.core import Settings as LlamaSettings
 from llama_index.core.base.llms.types import (
@@ -130,8 +134,22 @@ def invoke_llm_chat(
     safety_identifier: str | None = None,
     user_tag: str | None = None,
     timeout_seconds: float | None = None,
+    structured_output_schema: type[_S] | None = None,
 ) -> Any:
-    """Invoke a chat completion through the centralized LlamaIndex provider."""
+    """Invoke a chat completion through the centralized LlamaIndex provider.
+
+    When ``structured_output_schema`` is a Pydantic model class, the raw OpenAI
+    client is used directly (bypassing LlamaIndex) and the return value is a
+    parsed instance of that model rather than a LlamaIndex ChatResponse.
+    """
+    if structured_output_schema is not None:
+        return _invoke_structured(
+            model=model,
+            input_messages=input_messages,
+            schema=structured_output_schema,
+            max_output_tokens=max_output_tokens,
+            timeout_seconds=timeout_seconds,
+        )
     llm = get_llm(
         model=model,
         reasoning_effort=reasoning_effort,
@@ -148,6 +166,82 @@ def invoke_llm_chat(
         timeout_seconds=timeout_seconds,
     )
     return llm.chat(messages, **runtime_kwargs)
+
+
+def _add_additional_properties_false(schema: dict[str, Any]) -> dict[str, Any]:
+    """Recursively add additionalProperties=false to all object nodes in a JSON schema.
+
+    Required by OpenAI strict mode for the Responses API.
+    """
+    if schema.get("type") == "object":
+        schema = {**schema, "additionalProperties": False}
+    for key in ("properties", "definitions", "$defs"):
+        if key in schema:
+            schema = {**schema, key: {k: _add_additional_properties_false(v) for k, v in schema[key].items()}}
+    for key in ("items", "anyOf", "allOf", "oneOf"):
+        if key in schema:
+            val = schema[key]
+            if isinstance(val, list):
+                schema = {**schema, key: [_add_additional_properties_false(v) if isinstance(v, dict) else v for v in val]}
+            elif isinstance(val, dict):
+                schema = {**schema, key: _add_additional_properties_false(val)}
+    return schema
+
+
+def _invoke_structured(
+    *,
+    model: str,
+    input_messages: list[dict[str, Any]],
+    schema: type[_S],
+    max_output_tokens: int | None,
+    timeout_seconds: float | None,
+) -> _S:
+    """Call OpenAI structured output and return a parsed Pydantic instance.
+
+    Uses the Responses API when OPENAI_USE_RESPONSES=True, otherwise falls back
+    to the Chat Completions beta parse endpoint.
+    """
+    import openai
+
+    api_key = settings.ai_api_key
+    timeout = float(timeout_seconds) if timeout_seconds is not None else None
+    client = openai.OpenAI(api_key=api_key, **({"timeout": timeout} if timeout else {}))
+
+    if settings.OPENAI_USE_RESPONSES:
+        # Responses API: structured output via text.format = json_schema
+        # OpenAI strict mode requires additionalProperties=false at every object level.
+        json_schema = _add_additional_properties_false(schema.model_json_schema())
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "input": input_messages,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": schema.__name__,
+                    "schema": json_schema,
+                    "strict": True,
+                }
+            },
+        }
+        if max_output_tokens is not None:
+            kwargs["max_output_tokens"] = max_output_tokens
+        response = client.responses.create(**kwargs)
+        text = response.output_text
+        return schema.model_validate_json(text)
+
+    # Chat Completions beta parse endpoint
+    parse_kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": input_messages,
+        "response_format": schema,
+    }
+    if max_output_tokens is not None:
+        parse_kwargs["max_tokens"] = max_output_tokens
+    completion = client.beta.chat.completions.parse(**parse_kwargs)
+    parsed = completion.choices[0].message.parsed
+    if parsed is None:
+        raise ValueError("Structured output parse returned None")
+    return parsed
 
 
 def stream_invoke_llm_chat(

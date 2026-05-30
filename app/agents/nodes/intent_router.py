@@ -29,6 +29,11 @@ Classify the user query into exactly one route:
 - "hybrid"    → references a document topic but also requires external context
                 (current market rates, recent news, sector benchmarks, macro data)
 
+Additional guidance:
+- When the question is entirely about general financial concepts (definitions, accounting rules,
+  market theory) with no reference to specific documents or named companies, classify as "hybrid".
+- When in doubt, prefer "internal".
+
 Respond with JSON only — no prose, no markdown fences:
 {"route": "internal" or "hybrid", "reason": "<10 words max>"}
 """

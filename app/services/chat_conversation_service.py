@@ -363,8 +363,12 @@ def _build_summary_prompt(prior_summary: str, rows: list[ChatMessage]) -> str:
 
     turns_block = "\n".join(formatted_turns)
     return (
-        "Update the running summary for this conversation.\n"
-        "Keep specific entities, decisions, constraints, and unresolved questions.\n"
+        "Update the running summary for this financial analyst conversation.\n"
+        "Preserve: company names, tickers, document names, fiscal periods, metrics asked about "
+        "(FFO, NOI, Occupancy, WALT, Cap Rate, etc.), key conclusions reached, and open questions.\n"
+        "Drop: stale or resolved context, pleasantries, and verbatim assistant responses.\n"
+        "Do not repeat what the assistant said verbatim. Do not invent facts.\n"
+        "If there is nothing new to add, return the existing summary unchanged.\n"
         "Output plain text only, no markdown, max 8 lines.\n\n"
         f"Existing summary:\n{prior_summary or '(none)'}\n\n"
         f"Recent turns:\n{turns_block}\n\n"

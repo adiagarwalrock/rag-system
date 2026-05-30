@@ -12,6 +12,7 @@ Both entry points share the same service layer in `app/services/*`.
 - UI and API both use the same in-process business logic (no duplicated workflow code).
 - Ingestion runs through a background queue with worker threads.
 - Retrieval uses hybrid Qdrant search (dense + sparse) with dense fallback.
+- **Agentic RAG** (`ENABLE_AGENTIC_RAG=true`): LangGraph-based multi-pass retrieval loop with LLM evidence evaluation, automatic gap detection, and targeted re-retrieval before synthesis.
 - Session-aware chat is enabled, including cross-session semantic memory.
 - Access control is removed; runtime is internal single-tenant mode.
 - Runtime startup requires a valid OpenAI-compatible API key (`OPENAI_API_KEY` / `AI_API_KEY`).
@@ -102,8 +103,36 @@ See [architecture.md](./architecture.md) for the full system map. Current bounda
 - Orchestration: `app/services/*`
 - Ingestion/parsing: `app/ingestion/*`
 - Retrieval: `app/retrieval/*`
+- **Agentic RAG**: `app/agents/*` — LangGraph graph, nodes, state, and adapter
 - Vector store integration: `app/indexing/vector_store.py`
 - Relational data/session state: `app/db/*`
+
+### Agentic RAG (`app/agents/`)
+
+Enabled via `ENABLE_AGENTIC_RAG=true`. The query path is replaced with a LangGraph state machine:
+
+```
+intent_router → vector_retrieval → evidence_evaluator
+                      ↑                    │ not sufficient (gap detected)
+                      └────────────────────┘
+                                           │ sufficient or max iterations
+                                           ▼
+                           reranker → conflict_detector → citation_builder → synthesizer
+```
+
+Key behaviours:
+- **Deterministic coverage check**: detects comparison questions and verifies each named entity has ≥ 3 relevant nodes before calling the LLM evaluator.
+- **Structured evidence evaluation**: uses OpenAI structured output (`EvidenceEvaluation` Pydantic model) — returns `sufficient`, `gap`, and per-node `node_scores`.
+- **Gap-targeted re-retrieval**: on `sufficient=false`, uses the `gap` string as the query for the next Qdrant pass instead of repeating the original question.
+- **Node exclusion**: already-seen node IDs are tracked in state; duplicate nodes are filtered in Python after each retrieval pass.
+- **Max iterations guard**: `AGENTIC_MAX_ITERATIONS=5` (configurable); forces synthesis after N passes.
+
+Relevant config keys (add to `.env`):
+```bash
+ENABLE_AGENTIC_RAG=true
+AGENTIC_MAX_ITERATIONS=5
+AGENTIC_EVIDENCE_EVALUATOR_MODEL=   # defaults to QUERY_EXPANSION_MODEL
+```
 
 ## Environment and Integrations
 

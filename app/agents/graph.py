@@ -79,7 +79,6 @@ def build_graph() -> Any:
 
     compiled = graph.compile()
     mermaid = compiled.get_graph().draw_mermaid()
-    logger.info("Agentic RAG graph (Mermaid):\n%s", mermaid)
     with open("agent_graph.mmd", "w") as f:
         f.write(mermaid)
     return compiled
