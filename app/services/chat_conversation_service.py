@@ -37,6 +37,7 @@ class ChatConversationService:
         session_id: str | None = None,
         status_callback=None,
         reasoning_callback=None,
+        skip_conversation_context: bool = False,
     ) -> dict:
         session = self._resolve_session(client_id=client_id, session_id=session_id)
         next_turn_index = self._next_turn_index(session.id)
@@ -51,11 +52,15 @@ class ChatConversationService:
         self._touch_session(session, first_user_prompt=question)
         self.db.commit()
 
-        context_bundle = self.context_service.build_context_bundle(
-            client_id=client_id,
-            session_id=session.id,
-            current_question=question,
-        )
+        if skip_conversation_context:
+            conversation_context_dict: dict = {}
+        else:
+            context_bundle = self.context_service.build_context_bundle(
+                client_id=client_id,
+                session_id=session.id,
+                current_question=question,
+            )
+            conversation_context_dict = context_bundle.to_dict()
 
         try:
             result = execute_query(
@@ -65,7 +70,7 @@ class ChatConversationService:
                 reasoning_effort=reasoning_effort,
                 reasoning_summary=reasoning_summary,
                 session_id=session.id,
-                conversation_context=context_bundle.to_dict(),
+                conversation_context=conversation_context_dict,
                 status_callback=status_callback,
                 reasoning_callback=reasoning_callback,
             )

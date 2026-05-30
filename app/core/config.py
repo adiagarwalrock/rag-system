@@ -46,7 +46,7 @@ class Settings(BaseSettings):
             "HUGGINGFACE_HUB_TOKEN",
         ),
     )
-    LLM_MODEL: str = "gpt-5.2"
+    LLM_MODEL: str = "gpt-5.5"
     QUERY_EXPANSION_MODEL: str = "gpt-5.4-mini"
     SESSION_SUMMARY_MODEL: str = "gpt-5.4-mini"
     OPENAI_USE_RESPONSES: bool = True

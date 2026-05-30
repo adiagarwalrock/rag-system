@@ -268,7 +268,7 @@ def _temporal_adjustment(
         adjustment -= 0.05
 
     if is_superseded and prefer_latest:
-        adjustment -= 0.12
+        adjustment -= 0.05
 
     # Normalize version_rank to [0, 1] before scaling so month-encoded ranks
     # (e.g. 202512, 202603) retain their relative ordering instead of all being

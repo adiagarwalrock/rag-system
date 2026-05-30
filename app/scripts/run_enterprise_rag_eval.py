@@ -56,6 +56,7 @@ class EvalRunnerConfig:
     timestamped_output: bool
     debug_output_path: Path | None
     question_timeout_seconds: int
+    isolate: bool = False
 
 
 @dataclass
@@ -372,6 +373,7 @@ class EnterpriseRAGEvalRunner:
                         client_id=client_id,
                         question=item.question,
                         reasoning_effort=self.config.reasoning_effort,
+                        skip_conversation_context=self.config.isolate,
                     )
 
                 answer = str(result.get("answer", "")).strip() or "No answer generated."
@@ -609,6 +611,7 @@ class EnterpriseRAGEvalRunner:
             "client_name": self.config.client_name,
             "client_id": client_id,
             "reasoning_effort": self.config.reasoning_effort,
+            "isolation_mode": self.config.isolate,
             "workers": self.config.workers,
             "max_retries": self.config.max_retries,
             "initial_backoff_seconds": self.config.initial_backoff_seconds,
@@ -698,6 +701,15 @@ def _build_parser() -> argparse.ArgumentParser:
             "Questions exceeding this limit are marked failed instead of hanging."
         ),
     )
+    parser.add_argument(
+        "--isolate",
+        action="store_true",
+        default=False,
+        help=(
+            "Disable cross-session and in-session context injection for clean evaluation. "
+            "Each question is answered without influence from prior queries in the chat history."
+        ),
+    )
     return parser
 
 
@@ -739,6 +751,7 @@ def _validate_args(args: argparse.Namespace) -> EvalRunnerConfig:
         timestamped_output=bool(args.timestamped_output),
         debug_output_path=debug_output_path,
         question_timeout_seconds=int(args.question_timeout),
+        isolate=bool(args.isolate),
     )
 
 
@@ -764,6 +777,7 @@ def main() -> int:
     print(f"Manifest: {artifacts.manifest_path}")
     print(f"Client: {config.client_name} ({artifacts.client_id})")
     print(f"Reasoning effort: {config.reasoning_effort}")
+    print(f"Isolation mode: {config.isolate}")
     print(f"Workers: {config.workers}")
     print(f"Timestamped output: {config.timestamped_output}")
     print(f"Rows read (non-blank): {stats.total_rows}")

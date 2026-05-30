@@ -618,11 +618,13 @@ class VecteraRetriever:
     def _retrieve_with_mode(self, question: str, hybrid: bool) -> tuple[list, bool]:
         intent = analyze_retrieval_intent(question)
         self._last_retrieval_metadata = _empty_retrieval_intent_metadata(intent)
-        prefetch_top_k = (
-            self.prefetch_top_k + 10
-            if _is_conflict_focused_query(question) or intent.companion_queries
-            else self.prefetch_top_k
-        )
+        prefetch_top_k = self.prefetch_top_k
+        if _is_conflict_focused_query(question) or intent.companion_queries:
+            prefetch_top_k += 10
+        if intent.has("balanced_scope"):
+            # Cross-company questions need a deeper pool so every document's content
+            # pages (not just their section-divider headers) enter the candidate set.
+            prefetch_top_k += 20
         base_retriever = vector_store_manager.get_retriever(
             filters=self.filters,
             similarity_top_k=prefetch_top_k,
@@ -730,6 +732,12 @@ class VecteraRetriever:
             ranked_nodes=ranked_nodes,
             evidence_cap=evidence_cap,
         )
+        selected = _ensure_outlook_document_evidence(
+            intent=intent,
+            selected_nodes=selected,
+            ranked_nodes=ranked_nodes,
+            evidence_cap=evidence_cap,
+        )
         selected = _ensure_named_entity_evidence(
             question=question,
             intent=intent,
@@ -738,6 +746,12 @@ class VecteraRetriever:
             evidence_cap=evidence_cap,
         )
         selected = _ensure_outlook_scope_evidence(
+            intent=intent,
+            selected_nodes=selected,
+            ranked_nodes=ranked_nodes,
+            evidence_cap=evidence_cap,
+        )
+        selected = _ensure_caveat_page_diversity(
             intent=intent,
             selected_nodes=selected,
             ranked_nodes=ranked_nodes,
@@ -771,6 +785,13 @@ class VecteraRetriever:
         )
 
         selected = _ensure_multi_version_evidence(
+            selected_nodes=selected,
+            ranked_nodes=ranked_nodes,
+            evidence_cap=evidence_cap,
+        )
+
+        selected = _ensure_balanced_document_evidence(
+            intent=intent,
             selected_nodes=selected,
             ranked_nodes=ranked_nodes,
             evidence_cap=evidence_cap,
@@ -1357,6 +1378,33 @@ def _ensure_multi_version_evidence(
     )
 
 
+def _ensure_balanced_document_evidence(
+    *,
+    intent: RetrievalIntent,
+    selected_nodes: list[Any],
+    ranked_nodes: list[Any],
+    evidence_cap: int,
+) -> list[Any]:
+    """On balanced_scope queries ('for each REIT', 'each company in corpus', 'AI across sectors'),
+    guarantee at least 2 chunks per top-7 distinct documents. quota_per_group=2 (not 1) ensures
+    that when one chunk is a low-content section divider (e.g. an appendix header), the adjacent
+    content page from the same document is also included.
+    """
+    if not intent.has("balanced_scope"):
+        return selected_nodes
+    top_docs = _top_groups(ranked_nodes, _document_or_version_group_key, limit=7)
+    if len(top_docs) < 2:
+        return selected_nodes
+    return _ensure_group_quota(
+        selected_nodes=selected_nodes,
+        ranked_nodes=ranked_nodes,
+        evidence_cap=evidence_cap,
+        group_key_fn=_document_or_version_group_key,
+        target_groups=top_docs,
+        quota_per_group=2,
+    )
+
+
 def _ensure_temporal_delta_evidence(
     *,
     intent: RetrievalIntent,
@@ -1375,6 +1423,68 @@ def _ensure_temporal_delta_evidence(
             ranked_nodes, _document_or_version_group_key, limit=2
         ),
         quota_per_group=3,
+    )
+
+
+def _ensure_outlook_document_evidence(
+    *,
+    intent: RetrievalIntent,
+    selected_nodes: list[Any],
+    ranked_nodes: list[Any],
+    evidence_cap: int,
+) -> list[Any]:
+    """When outlook_scope fires (projected/guidance/forecast questions), guarantee
+    at least 2 chunks per top-2 distinct documents. Outlook figures often appear in
+    both an Investor Day deck and a later quarterly update — both need to surface so
+    the answer captures the full range (e.g. BXP 87.25-88% Investor Day vs 88% Q4).
+    """
+    if not intent.has("outlook_scope"):
+        return selected_nodes
+    top_docs = _top_groups(ranked_nodes, _document_or_version_group_key, limit=2)
+    if len(top_docs) < 2:
+        return selected_nodes
+    return _ensure_group_quota(
+        selected_nodes=selected_nodes,
+        ranked_nodes=ranked_nodes,
+        evidence_cap=evidence_cap,
+        group_key_fn=_document_or_version_group_key,
+        target_groups=top_docs,
+        quota_per_group=2,
+    )
+
+
+def _caveat_page_key(node: Any) -> str:
+    """Key by (version_label, page_num/slide_num) for within-version page diversity."""
+    metadata = node.node.metadata or {}
+    version = (metadata.get("version_label") or metadata.get("document_version_group") or "").strip().lower()
+    page = metadata.get("page_num") or metadata.get("slide_num") or ""
+    return f"{version}|page:{page}"
+
+
+def _ensure_caveat_page_diversity(
+    *,
+    intent: RetrievalIntent,
+    selected_nodes: list[Any],
+    ranked_nodes: list[Any],
+    evidence_cap: int,
+) -> list[Any]:
+    """When caveat_inconsistency fires (count/customer/intra-doc inconsistency questions),
+    ensure that for each top-2 document versions, at least 2 chunks come from DISTINCT pages.
+    Without this, both slots for a version may be filled by different chunks of the same slide,
+    leaving the contradicting slide (e.g. 5,000+ page vs 5,500+ page) unretrieved.
+    """
+    if not intent.has("caveat_inconsistency"):
+        return selected_nodes
+    top_page_keys = _top_groups(ranked_nodes, _caveat_page_key, limit=6)
+    if len(top_page_keys) < 2:
+        return selected_nodes
+    return _ensure_group_quota(
+        selected_nodes=selected_nodes,
+        ranked_nodes=ranked_nodes,
+        evidence_cap=evidence_cap,
+        group_key_fn=_caveat_page_key,
+        target_groups=top_page_keys,
+        quota_per_group=1,
     )
 
 

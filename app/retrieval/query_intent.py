@@ -62,6 +62,7 @@ def analyze_retrieval_intent(question: str) -> RetrievalIntent:
             (
                 f"{question} guidance outlook pro forma merger acquisition",
                 f"{question} ffo neutral accretive stabilization standalone",
+                f"{question} investor day prior year historical presentation baseline",
             )
         )
 
@@ -126,7 +127,16 @@ def _is_temporal_delta(normalized: str) -> bool:
             "2026",
         )
     )
-    return has_delta and has_temporal_anchor
+    if has_delta and has_temporal_anchor:
+        return True
+    # Projection/forecast questions implicitly span multiple documents: a projected figure
+    # from an Investor Day and the same metric updated in a later quarterly deck are both
+    # relevant answers. Treat "projected/forecast/expected + year" as temporal_delta so
+    # _ensure_temporal_delta_evidence fires and pulls both documents into evidence.
+    has_projection = any(
+        term in normalized for term in ("projected", "forecast", "expected")
+    )
+    return has_projection and has_temporal_anchor
 
 
 def _is_stale_source_sensitive(normalized: str) -> bool:
@@ -152,6 +162,12 @@ def _is_caveat_or_inconsistency_sensitive(normalized: str) -> bool:
             "conflict",
             "caveat",
             "footnote",
+            "changed between",
+            "change between",
+            "changed from",
+            "how has",
+            "methodology",
+            "basis changed",
         )
     ):
         return True
@@ -199,6 +215,12 @@ def _needs_balanced_scope(normalized: str) -> bool:
             "for each",
             "in the corpus",
             "corpus",
+            "for each reit",
+            "each company",
+            "each reit",
+            "per reit",
+            "per company",
+            "all reits",
         )
     )
 
