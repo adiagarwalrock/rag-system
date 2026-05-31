@@ -4,6 +4,7 @@ from llama_index.core.base.llms.types import TextBlock, ThinkingBlock
 from openai.types.responses import (
     ResponseCompletedEvent,
     ResponseReasoningSummaryTextDeltaEvent,
+    ResponseReasoningSummaryTextDoneEvent,
     ResponseReasoningTextDeltaEvent,
 )
 
@@ -428,6 +429,71 @@ def test_stream_invoke_llm_chat_yields_reasoning_summary_deltas(monkeypatch):
 
     assert any("Because prices" in (r or "") for r, a in reasoning_tuples)
     assert any("The answer." in (a or "") for r, a in answer_tuples)
+
+
+def test_stream_invoke_llm_chat_yields_reasoning_summary_done_text(monkeypatch):
+    """ResponseReasoningSummaryTextDoneEvent text is used when no deltas arrived."""
+    monkeypatch.setattr(ai_provider, "settings", _settings(OPENAI_USE_RESPONSES=True))
+
+    done_event = ResponseReasoningSummaryTextDoneEvent(
+        item_id="item-1",
+        output_index=0,
+        sequence_number=1,
+        summary_index=0,
+        text="Full summary from done event.",
+        type="response.reasoning_summary_text.done",
+    )
+
+    class FakeLLM:
+        def stream_chat(self, messages, **kwargs):
+            yield _make_stream_chunk(raw_event=done_event)
+            yield _make_stream_chunk(raw_event=SimpleNamespace(), delta="Answer here.")
+
+    monkeypatch.setattr(ai_provider, "get_llm", lambda **kw: FakeLLM())
+    monkeypatch.setattr(ai_provider, "OpenAIResponses", FakeLLM)
+
+    results = list(
+        ai_provider.stream_invoke_llm_chat(
+            model="gpt-5.2",
+            input_messages=[{"role": "user", "content": "question"}],
+        )
+    )
+
+    reasoning_tuples = [(r, a) for r, a in results if r is not None]
+    assert reasoning_tuples == [("Full summary from done event.", None)]
+
+
+def test_stream_invoke_llm_chat_handles_generic_reasoning_summary_events(monkeypatch):
+    """Generic raw event objects are accepted for gpt-5.x/LlamaIndex stream shapes."""
+    monkeypatch.setattr(ai_provider, "settings", _settings(OPENAI_USE_RESPONSES=True))
+
+    delta_event = SimpleNamespace(
+        type="response.reasoning_summary_text.delta",
+        delta="Generic summary ",
+    )
+    done_event = SimpleNamespace(
+        type="response.reasoning_summary_text.done",
+        text="Generic summary from done.",
+    )
+
+    class FakeLLM:
+        def stream_chat(self, messages, **kwargs):
+            yield _make_stream_chunk(raw_event=delta_event)
+            yield _make_stream_chunk(raw_event=done_event)
+            yield _make_stream_chunk(raw_event=SimpleNamespace(), delta="Answer here.")
+
+    monkeypatch.setattr(ai_provider, "get_llm", lambda **kw: FakeLLM())
+    monkeypatch.setattr(ai_provider, "OpenAIResponses", FakeLLM)
+
+    results = list(
+        ai_provider.stream_invoke_llm_chat(
+            model="gpt-5.5",
+            input_messages=[{"role": "user", "content": "question"}],
+        )
+    )
+
+    reasoning_tuples = [(r, a) for r, a in results if r is not None]
+    assert reasoning_tuples == [("Generic summary ", None)]
 
 
 def test_stream_invoke_llm_chat_yields_raw_reasoning_text_deltas(monkeypatch):

@@ -52,6 +52,7 @@ class QueryLogWriter:
             session_id=request.session_id,
             question=request.question,
             status="running",
+            reasoning_effort=request.reasoning_effort,
         )
         self.db.add(query_log)
         self.db.commit()
@@ -145,6 +146,7 @@ class QueryExecutionService:
 
         try:
             result = self._run_retrieval(request)
+            result.setdefault("reasoning_effort", request.reasoning_effort)
             latency_ms = self._latency_ms(start_time)
 
             citations = result.get("citations", [])

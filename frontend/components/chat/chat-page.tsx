@@ -6,13 +6,13 @@ import { ErrorState } from "@/components/common/error-state";
 import { MarkdownContent } from "@/components/common/markdown-content";
 import { StatusBadge } from "@/components/common/status-badge";
 import { apiClient } from "@/lib/api/client";
-import type { ChatMessage as ApiChatMessage, QueryRequest, QueryResponse } from "@/lib/api/schemas";
+import type { ChatMessage as ApiChatMessage, Citation, CitationImageAsset, QueryRequest, QueryResponse } from "@/lib/api/schemas";
 import { useSessionMessages } from "@/lib/hooks/use-chat";
 import { useClients } from "@/lib/hooks/use-clients";
 import { useWorkspaceStore } from "@/lib/state/workspace-store";
 import { cn, formatMessageTimestamp } from "@/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
-import { BookOpen, Brain, Check, ChevronDown, Copy, Printer, Share2, X } from "lucide-react";
+import { BookOpen, Brain, Check, ChevronDown, Copy, FileImage, Printer, Share2, X } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -674,12 +674,24 @@ function AnswerSourcesPanel({
         </button>
       </div>
       <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-4">
-        <InspectorSection label={`Citations // ${response.citations.length}`}>
+        <InspectorSection label={`Images // ${response.retrieval.image_assets_used.length}`} defaultOpen>
+          {response.retrieval.image_assets_used.length ? (
+            <ImageAssetsGrid assets={response.retrieval.image_assets_used} columns="three" />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              No model image evidence was returned with this response.
+            </p>
+          )}
+        </InspectorSection>
+
+        <InspectorSection label={`Citations // ${response.citations.length}`} defaultOpen>
           {response.citations.length ? (
             <div className="space-y-2">
               {response.citations.map((citation, index) => (
                 <div key={`${citation.filename}-${index}`} className="rounded-lg border border-border bg-background p-3">
                   <CitationChip citation={citation} index={index} />
+                  <CitationDetails citation={citation} />
+                  <CitationImages citation={citation} />
                   {citation.quote ? (
                     <MarkdownContent className="mt-2 text-sm leading-6 text-muted-foreground">
                       {citation.quote}
@@ -710,13 +722,27 @@ function AnswerSourcesPanel({
           )}
         </InspectorSection>
 
-        <InspectorSection label="Retrieval">
+        <InspectorSection label="Retrieval" defaultOpen>
           <div className="grid grid-cols-2 gap-2 text-xs">
             <TraceFact label="Mode" value={response.retrieval.mode} />
-            <TraceFact label="Sparse" value={response.retrieval.sparse_available === false ? "unavailable" : "available"} />
-            <TraceFact label="Top K" value={response.retrieval.top_k ?? "-"} />
-            <TraceFact label="Latency" value={`${response.latency_ms} ms`} />
+            <TraceFact label="Query expanded" value={formatBoolean(response.retrieval.query_expanded)} />
+            <TraceFact label="Image referenced" value={formatBoolean(response.retrieval.image_referenced)} />
+            <TraceFact label="Evidence / sources" value={`${response.retrieval.evidence_count ?? response.evidence_count} / ${response.retrieval.source_count ?? response.source_count}`} />
+            <TraceFact label="Image chunks" value={`${response.retrieval.evidence_image_chunk_count ?? 0} / ${response.retrieval.ranked_image_chunk_count ?? 0}`} />
+            <TraceFact label="Images sent" value={response.retrieval.images_used_count ?? response.images_used.length} />
+            <TraceFact label="Latency" value={formatLatency(response.latency_ms)} />
+            <TraceFact label="Intent" value={response.retrieval.intent_labels.length ? response.retrieval.intent_labels.join(", ") : "-"} />
           </div>
+          {response.retrieval.companion_queries.length ? (
+            <div className="mt-2 rounded-lg border border-border bg-background p-3">
+              <div className="mb-1 text-xs text-muted-foreground">Companion queries</div>
+              <div className="space-y-1 font-mono text-[11px] text-foreground">
+                {response.retrieval.companion_queries.map((query) => (
+                  <div key={query}>{query}</div>
+                ))}
+              </div>
+            </div>
+          ) : null}
           {response.retrieval.fallback_reason ? (
             <div className="mt-2 rounded-lg border border-border bg-background p-3">
               <MarkdownContent className="text-xs leading-5 text-muted-foreground">
@@ -733,12 +759,14 @@ function AnswerSourcesPanel({
 function InspectorSection({
   label,
   children,
+  defaultOpen = false,
 }: {
   label: string;
   children: React.ReactNode;
+  defaultOpen?: boolean;
 }) {
   return (
-    <details className="group mb-3 rounded-lg border border-border bg-card/60">
+    <details className="group mb-3 rounded-lg border border-border bg-card/60" open={defaultOpen}>
       <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground">
         <span>{label}</span>
         <span className="text-[11px] transition group-open:rotate-90">›</span>
@@ -755,6 +783,82 @@ function TraceFact({ label, value }: { label: string; value: React.ReactNode }) 
       <div className="mt-1 font-mono text-foreground">{value}</div>
     </div>
   );
+}
+
+function CitationDetails({ citation }: { citation: Citation }) {
+  const documentName = citation.document_name ?? citation.filename;
+  const details = [
+    ["document", documentName],
+    ["document_id", citation.document_id],
+    ["page", citation.page ?? citation.page_num],
+    ["artifact", citation.source_artifact_id],
+    ["type", citation.source_artifact_type],
+  ].filter(([, value]) => value !== undefined && value !== null && value !== "");
+
+  if (!details.length) return null;
+
+  return (
+    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 font-mono text-[11px] text-muted-foreground">
+      {details.map(([label, value]) => (
+        <span key={String(label)}>
+          {label}: {String(value)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function CitationImages({ citation }: { citation: Citation }) {
+  if (!citation.image_assets.length) return null;
+
+  return <ImageAssetsGrid assets={citation.image_assets} className="mt-3" />;
+}
+
+function ImageAssetsGrid({
+  assets,
+  className,
+  columns = "two",
+}: {
+  assets: CitationImageAsset[];
+  className?: string;
+  columns?: "two" | "three";
+}) {
+  return (
+    <div className={cn("grid gap-2", columns === "three" ? "grid-cols-3" : "grid-cols-2", className)}>
+      {assets.map((asset) => (
+        <a
+          key={`${asset.url}-${asset.source_artifact_id ?? asset.filename}`}
+          href={asset.url}
+          target="_blank"
+          rel="noreferrer"
+          className="group overflow-hidden rounded-md border border-border bg-muted/40"
+        >
+          <div className="aspect-[4/3] bg-background">
+            <img
+              src={asset.url}
+              alt={asset.filename}
+              className="h-full w-full object-contain transition group-hover:scale-[1.02]"
+              loading="lazy"
+            />
+          </div>
+          <div className="flex items-center gap-1.5 border-t border-border px-2 py-1.5 text-[11px] text-muted-foreground">
+            <FileImage className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">{asset.filename}</span>
+          </div>
+        </a>
+      ))}
+    </div>
+  );
+}
+
+function formatBoolean(value?: boolean | null) {
+  return value ? "yes" : "no";
+}
+
+function formatLatency(value?: number | null) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "-";
+  if (value >= 1000) return `${(value / 1000).toFixed(value >= 10_000 ? 1 : 2)} s`;
+  return `${Math.round(value)} ms`;
 }
 
 function clampInspectorWidth(width: number) {
@@ -788,9 +892,24 @@ function toThreadMessage(message: ApiChatMessage): ThreadMessage {
             ? "hybrid"
             : "dense_only",
         selected_chunks: message.result?.citations ?? [],
+        intent_labels: [],
+        companion_queries: [],
+        companion_counts_by_query: {},
+        image_referenced: false,
+        image_evidence_count: 0,
+        images_used_count: 0,
+        image_assets_used: [],
+        ranked_image_chunk_count: 0,
+        evidence_image_chunk_count: 0,
+        source_count: 0,
+        evidence_count: message.result?.citations?.length ?? 0,
       },
       memory_hits: [],
       latency_ms: 0,
+      source_count: 0,
+      evidence_count: message.result?.citations?.length ?? 0,
+      images_used: [],
+      image_evidence_count: 0,
       reasoning_effort: "medium",
       created_at: message.created_at ?? new Date().toISOString(),
       session_id: message.session_id,

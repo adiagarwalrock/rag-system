@@ -1561,15 +1561,15 @@ wheels = [
 
 [[package]]
 name = "llama-index-llms-openai"
-version = "0.7.5"
+version = "0.7.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "llama-index-core" },
     { name = "openai" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/65/27/18a7fd0873023aed145332dab5a09b95b298e4fff1c21685eaf22b629d87/llama_index_llms_openai-0.7.5.tar.gz", hash = "sha256:54123e679a7cddc1f2e969f278a4654050730daf84691731a0c53ae14feac3c7", size = 27423, upload-time = "2026-03-30T16:30:33.973Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b2/85/f07466d0f5c3f1e1f295a60f2d2e9d32163635ba39ae2fda22ce2fbac1c9/llama_index_llms_openai-0.7.9.tar.gz", hash = "sha256:f54a24b717134c86e724007057a06a84394f019d1f01e918b624894e208a86df", size = 27564, upload-time = "2026-05-29T15:32:37.141Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/63/62/a847e9a94c2f92926c30188259f9f86e019dcc45122bbb222dea35a74c02/llama_index_llms_openai-0.7.5-py3-none-any.whl", hash = "sha256:c302c6386873420df3714c3d538f45379b6de27ab6a531f30c67419b39a538f5", size = 28492, upload-time = "2026-03-30T16:30:32.979Z" },
+    { url = "https://files.pythonhosted.org/packages/62/c2/cfa341cff00154b58abed3fc559fb43c2531d5dd70eefb75f230704d4c3c/llama_index_llms_openai-0.7.9-py3-none-any.whl", hash = "sha256:0bc8f59faddf8dbc9f90c5576127ab2fa6d368be5078885dc7e611af129b5a79", size = 28648, upload-time = "2026-05-29T15:32:35.997Z" },
 ]
 
 [[package]]
@@ -3054,7 +3054,7 @@ wheels = [
 
 [[package]]
 name = "rag-system"
-version = "0.1.0"
+version = "1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "chonkie", extra = ["table"] },
@@ -3118,7 +3118,7 @@ requires-dist = [
     { name = "llama-index-embeddings-google-genai", specifier = ">=0.5.1" },
     { name = "llama-index-embeddings-openai", specifier = ">=0.6.0" },
     { name = "llama-index-llms-google-genai", specifier = ">=0.9.5" },
-    { name = "llama-index-llms-openai", specifier = ">=0.7.5" },
+    { name = "llama-index-llms-openai", specifier = ">=0.7.9" },
     { name = "llama-index-readers-file", specifier = ">=0.6.0" },
     { name = "llama-index-vector-stores-qdrant", specifier = ">=0.10.0" },
     { name = "openai", specifier = ">=2.31.0" },

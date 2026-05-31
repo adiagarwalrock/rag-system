@@ -256,6 +256,52 @@ def test_streaming_emits_final_event(client):
     assert isinstance(resp["citations"], list)
 
 
+def test_non_streaming_returns_retrieval_trace(client, monkeypatch, tmp_path):
+    parsed_root = tmp_path / "parsed"
+    image_path = parsed_root / "doc-1" / "screenshots" / "page_1.png"
+    image_path.parent.mkdir(parents=True)
+    image_path.write_bytes(b"fake image")
+    monkeypatch.setattr("app.retrieval.citation_builder.settings.PARSED_ARTIFACTS_DIR", str(parsed_root))
+
+    result = {
+        **FAKE_RESULT,
+        "retrieval_mode": "hybrid",
+        "query_expanded": True,
+        "intent_labels": ["visual_lookup"],
+        "companion_queries": ["show chart image"],
+        "companion_counts_by_query": {"show chart image": 2},
+        "images_used": [str(image_path)],
+        "image_evidence_count": 1,
+        "retrieval_diagnostics": {
+            "ranked_image_chunk_count": 4,
+            "evidence_image_chunk_count": 1,
+        },
+    }
+
+    with (
+        patch("app.api.routes_query.ClientLookupService") as MockLookup,
+        patch("app.api.routes_query.ChatConversationService") as MockSvc,
+    ):
+        MockLookup.return_value.require_client.return_value = MagicMock()
+        MockSvc.return_value.execute_client_query.return_value = result
+
+        response = client.post("/", json={**BASE_PAYLOAD, "stream": False})
+
+    assert response.status_code == 200
+    retrieval = response.json()["retrieval"]
+    assert retrieval["mode"] == "hybrid"
+    assert retrieval["query_expanded"] is True
+    assert retrieval["image_referenced"] is True
+    assert retrieval["images_used_count"] == 1
+    assert retrieval["ranked_image_chunk_count"] == 4
+    assert retrieval["evidence_image_chunk_count"] == 1
+    assert retrieval["image_assets_used"][0]["url"] == (
+        "/api/v1/artifacts/image?path=doc-1/screenshots/page_1.png"
+    )
+    assert retrieval["intent_labels"] == ["visual_lookup"]
+    assert retrieval["companion_counts_by_query"] == {"show chart image": 2}
+
+
 def test_streaming_final_event_replaces_non_finite_scores(client):
     result = {
         **FAKE_RESULT,

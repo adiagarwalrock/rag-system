@@ -90,6 +90,7 @@ class QueryResponse(BaseModel):
     evidence_count: int = 0
     images_used: List[str] = []
     image_evidence_count: int = 0
+    retrieval: Dict[str, Any] = {}
     reasoning_effort: Literal["low", "medium", "high"] = "medium"
     reasoning_effort_applied: bool = False
     session_id: Optional[str] = None

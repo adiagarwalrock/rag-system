@@ -20,6 +20,7 @@ def ensure_runtime_schema(engine: Engine) -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_query_logs_user_id(engine)
     _ensure_query_logs_session_id(engine)
+    _ensure_query_logs_reasoning_effort(engine)
     _ensure_chat_messages_reasoning(engine)
     _ensure_chat_messages_citations_json(engine)
     _drop_legacy_auth_tables(engine)
@@ -51,6 +52,12 @@ def _ensure_query_logs_session_id(engine: Engine) -> None:
         logger.info("Added query_logs.session_id runtime column.")
     except Exception:
         logger.exception("Failed to add query_logs.session_id runtime column")
+
+
+def _ensure_query_logs_reasoning_effort(engine: Engine) -> None:
+    _ensure_text_column(
+        engine, table_name="query_logs", column_name="reasoning_effort"
+    )
 
 
 def _ensure_query_logs_user_id(engine: Engine) -> None:

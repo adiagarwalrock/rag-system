@@ -51,6 +51,7 @@ class QueryHistoryService:
                     QueryLog.question.label("question"),
                     QueryLog.answer.label("answer"),
                     QueryLog.status.label("status"),
+                    QueryLog.reasoning_effort.label("reasoning_effort"),
                     QueryLog.latency_ms.label("latency_ms"),
                     func.count(func.distinct(RetrievalLog.id)).label("retrieval_count"),
                     func.count(func.distinct(ConflictLog.id)).label("conflict_count"),
@@ -67,6 +68,7 @@ class QueryHistoryService:
                 QueryLog.question,
                 QueryLog.answer,
                 QueryLog.status,
+                QueryLog.reasoning_effort,
                 QueryLog.latency_ms,
             )
             .order_by(QueryLog.created_at.desc())
@@ -89,6 +91,7 @@ class QueryHistoryService:
                     "question": row.question,
                     "answer": row.answer,
                     "status": row.status,
+                    "reasoning_effort": row.reasoning_effort or "medium",
                     "latency_ms": row.latency_ms,
                     "retrieval_count": int(row.retrieval_count or 0),
                     "conflict_count": int(row.conflict_count or 0),

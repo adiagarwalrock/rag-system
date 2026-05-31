@@ -1082,6 +1082,41 @@ def test_build_citations_includes_asset_refs_and_visual_metadata():
     assert citations[0]["chart_type"] == "line"
 
 
+def test_build_citations_adds_browser_safe_image_assets(monkeypatch, tmp_path):
+    parsed_root = tmp_path / "parsed"
+    image_path = parsed_root / "doc-1" / "screenshots" / "page 1.png"
+    image_path.parent.mkdir(parents=True)
+    image_path.write_bytes(b"fake image")
+    monkeypatch.setattr(settings, "PARSED_ARTIFACTS_DIR", str(parsed_root))
+
+    citations = build_citations(
+        [
+            _node(
+                "figure-1",
+                0.8,
+                {
+                    "document_id": "doc-1",
+                    "document_name": "Deck.pdf",
+                    "page_num": 1,
+                    "chunk_type": "figure_artifact",
+                    "source_artifact_type": "figure",
+                    "source_artifact_id": "figure-1",
+                    "asset_refs": [str(image_path)],
+                },
+            )
+        ]
+    )
+
+    image_asset = citations[0]["image_assets"][0]
+    assert image_asset["url"] == "/api/v1/artifacts/image?path=doc-1/screenshots/page%201.png"
+    assert image_asset["filename"] == "page 1.png"
+    assert image_asset["document_id"] == "doc-1"
+    assert image_asset["document_name"] == "Deck.pdf"
+    assert image_asset["page_num"] == 1
+    assert image_asset["source_artifact_id"] == "figure-1"
+    assert image_asset["source_artifact_type"] == "figure"
+
+
 def test_build_citations_carries_enriched_chart_facts_into_prompt_context():
     citations = build_citations(
         [

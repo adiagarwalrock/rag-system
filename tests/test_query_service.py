@@ -43,7 +43,7 @@ def test_execute_query_persists_query_retrieval_and_conflict_logs(
 
         def query(self, question: str, status_callback=None) -> dict:
             assert self.client_id == client.id
-            assert self.reasoning_effort == "medium"
+            assert self.reasoning_effort == "high"
             assert question == "What changed in v2?"
             return {
                 "answer": "Policy v2 changes renewal terms.",
@@ -69,16 +69,19 @@ def test_execute_query_persists_query_retrieval_and_conflict_logs(
         question="What changed in v2?",
         client_id=client.id,
         db=db_session,
+        reasoning_effort="high",
     )
 
     assert result["query_id"]
     assert result["latency_ms"] >= 0
     assert result["answer"] == "Policy v2 changes renewal terms."
+    assert result["reasoning_effort"] == "high"
 
     query_log = (
         db_session.query(QueryLog).filter(QueryLog.id == result["query_id"]).one()
     )
     assert query_log.status == "completed"
+    assert query_log.reasoning_effort == "high"
 
     retrieval_logs = (
         db_session.query(RetrievalLog)

@@ -6,6 +6,7 @@ import { ConflictAlert } from "@/components/chat/conflict-alert";
 import { RetrievalTraceView } from "@/components/chat/retrieval-trace";
 import { JsonViewer } from "@/components/common/json-viewer";
 import { scoreLabel } from "@/lib/utils";
+import { FileImage } from "lucide-react";
 
 const tabs = ["Sources", "Conflicts", "Retrieval", "Memory", "JSON"];
 
@@ -38,9 +39,26 @@ export function AnswerInspector({ response }: { response?: QueryResponse }) {
               <div className="flex flex-wrap items-center gap-2 text-xs">
                 <span className="font-medium text-foreground">{citation.filename}</span>
                 {citation.page && <span className="font-mono text-muted-foreground">page {citation.page}</span>}
+                {citation.document_id && <span className="font-mono text-muted-foreground">doc {citation.document_id}</span>}
+                {citation.source_artifact_id && <span className="font-mono text-muted-foreground">artifact {citation.source_artifact_id}</span>}
                 {citation.chunk_id && <span className="font-mono text-muted-foreground">{citation.chunk_id}</span>}
                 {citation.score !== undefined && <span className="font-mono text-blue-300">score {scoreLabel(citation.score)}</span>}
               </div>
+              {citation.image_assets.length ? (
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  {citation.image_assets.map((asset) => (
+                    <a key={`${asset.url}-${asset.filename}`} href={asset.url} target="_blank" rel="noreferrer" className="overflow-hidden rounded-md border border-border bg-background">
+                      <div className="aspect-[4/3]">
+                        <img src={asset.url} alt={asset.filename} className="h-full w-full object-contain" loading="lazy" />
+                      </div>
+                      <div className="flex items-center gap-1.5 border-t border-border px-2 py-1 text-[11px] text-muted-foreground">
+                        <FileImage className="h-3.5 w-3.5" />
+                        <span className="truncate">{asset.filename}</span>
+                      </div>
+                    </a>
+                  ))}
+                </div>
+              ) : null}
               {citation.quote && <p className="mt-2 text-sm text-muted-foreground">{citation.quote}</p>}
             </div>
           )) : <p className="text-sm text-muted-foreground">No citations returned.</p>}

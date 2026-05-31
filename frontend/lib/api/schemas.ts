@@ -19,6 +19,7 @@ export const retrievalModeSchema = z.enum(["hybrid", "dense_only", "auto"]);
 export const retrievalTraceModeSchema = z.enum([
   "hybrid",
   "dense_only",
+  "dense_fallback",
   "sparse_only",
 ]);
 
@@ -84,14 +85,31 @@ export const chatSessionSchema = z
   })
   .passthrough();
 
+export const citationImageAssetSchema = z
+  .object({
+    url: z.string(),
+    filename: z.string(),
+    page_num: z.number().nullish(),
+    document_id: z.string().nullish(),
+    document_name: z.string().nullish(),
+    source_artifact_id: z.string().nullish(),
+    source_artifact_type: z.string().nullish(),
+  })
+  .passthrough();
+
 export const citationSchema = z
   .object({
     document_id: z.string().optional(),
+    document_name: z.string().optional(),
     filename: z.string().default("Unknown source"),
     page: z.number().optional(),
+    page_num: z.number().optional(),
     chunk_id: z.string().optional(),
     quote: z.string().optional(),
     score: z.number().optional(),
+    source_artifact_id: z.string().nullish(),
+    source_artifact_type: z.string().nullish(),
+    image_assets: z.array(citationImageAssetSchema).default([]),
   })
   .passthrough();
 
@@ -115,6 +133,22 @@ export const retrievalTraceSchema = z
     sparse_available: z.boolean().optional(),
     fallback_reason: z.string().optional(),
     selected_chunks: z.array(citationSchema).optional(),
+    query_expanded: z.boolean().optional(),
+    intent_labels: z.array(z.string()).default([]),
+    companion_queries: z.array(z.string()).default([]),
+    companion_counts_by_query: z.record(z.number()).default({}),
+    image_referenced: z.boolean().optional(),
+    image_evidence_count: z.number().optional(),
+    images_used_count: z.number().optional(),
+    image_assets_used: z.array(citationImageAssetSchema).default([]),
+    ranked_image_chunk_count: z.number().optional(),
+    evidence_image_chunk_count: z.number().optional(),
+    source_count: z.number().optional(),
+    evidence_count: z.number().optional(),
+    ranked_document_count: z.number().optional(),
+    evidence_document_count: z.number().optional(),
+    ranked_chunk_types: record.optional(),
+    evidence_chunk_types: record.optional(),
   })
   .passthrough();
 
@@ -151,6 +185,10 @@ export const queryResponseSchema = z
     retrieval: retrievalTraceSchema,
     memory_hits: z.array(memoryHitSchema).default([]),
     latency_ms: z.number(),
+    source_count: z.number().default(0),
+    evidence_count: z.number().default(0),
+    images_used: z.array(z.string()).default([]),
+    image_evidence_count: z.number().default(0),
     reasoning_effort: reasoningEffortSchema,
     created_at: z.string(),
     session_id: z.string().nullish(),
@@ -283,6 +321,7 @@ export type Document = z.infer<typeof documentSchema>;
 export type IngestionJob = z.infer<typeof ingestionJobSchema>;
 export type ChatSession = z.infer<typeof chatSessionSchema>;
 export type ChatMessage = z.infer<typeof chatMessageSchema>;
+export type CitationImageAsset = z.infer<typeof citationImageAssetSchema>;
 export type Citation = z.infer<typeof citationSchema>;
 export type Conflict = z.infer<typeof conflictSchema>;
 export type RetrievalTrace = z.infer<typeof retrievalTraceSchema>;

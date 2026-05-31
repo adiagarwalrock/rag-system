@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Version
+
+**Current: v1.0** — focused on Traditional (deterministic) RAG. Agentic RAG (`ENABLE_AGENTIC_RAG`, `app/agents/*`, LangGraph graph) is deferred to **v2**; do not extend or activate it in v1 work.
+
 ## Commands
 
 ```bash
@@ -73,11 +77,9 @@ Both call the same orchestration in `app/services/*` in-process. Streamlit uses 
 ### Query / answer flow
 
 1. `ChatConversationService` manages session creation and message persistence.
-2. **Dispatch**: `execute_query()` in `app/services/query_service.py` checks `ENABLE_AGENTIC_RAG`. When `true`, routes through `AgenticRetrieverAdapter` (`app/agents/adapter.py`); otherwise uses the deterministic pipeline below.
-3. **Deterministic path** (default): `VecteraRetriever` performs client-scoped hybrid Qdrant search → cross-encoder reranker → `ConflictDetector` → citations → LLM synthesis.
-4. **Agentic path** (`ENABLE_AGENTIC_RAG=true`): LangGraph graph in `app/agents/graph.py` runs `intent_router → vector_retrieval → evidence_evaluator` in a loop until evidence is sufficient or `AGENTIC_MAX_ITERATIONS` is reached, then `reranker → conflict_detector → citation_builder → synthesizer`.
-   - `evidence_evaluator` uses a deterministic entity-coverage check first, then OpenAI structured output (`EvidenceEvaluation`: `sufficient`, `gap`, `node_scores[]`).
-   - Gap string from evaluator becomes the Qdrant query on the next retrieval pass.
+2. **Dispatch**: `execute_query()` in `app/services/query_service.py` checks `ENABLE_AGENTIC_RAG`. Keep this `false` in v1 — the agentic path is not actively developed or supported until v2.
+3. **Traditional path (v1, default)**: `VecteraRetriever` performs client-scoped hybrid Qdrant search → cross-encoder reranker → `ConflictDetector` → citations → LLM synthesis.
+4. **Agentic path (v2, not active)**: LangGraph graph in `app/agents/graph.py` — deferred. Do not extend or wire new features into `app/agents/*` in v1.
 5. Q/A pairs embedded into a dedicated chat-history Qdrant collection for cross-session semantic memory.
 
 ### `invoke_llm_chat` structured output

@@ -322,6 +322,32 @@ def stream_invoke_llm_chat(
                 yield (delta, None)
             continue
 
+        raw_event_type = _read_field(raw_event, "type")
+        if raw_event_type in {
+            "response.reasoning_summary_text.delta",
+            "response.reasoning_text.delta",
+        }:
+            reasoning_seen = True
+            delta = _read_field(raw_event, "delta")
+            if delta:
+                yield (str(delta), None)
+            continue
+
+        # Some Responses streams deliver the full reasoning summary only in the
+        # summary_text.done event. Emit it when no delta event already covered it.
+        if isinstance(raw_event, ResponseReasoningSummaryTextDoneEvent):
+            if not reasoning_seen and raw_event.text:
+                reasoning_seen = True
+                yield (raw_event.text, None)
+            continue
+
+        if raw_event_type == "response.reasoning_summary_text.done":
+            text = _read_field(raw_event, "text")
+            if not reasoning_seen and text:
+                reasoning_seen = True
+                yield (str(text), None)
+            continue
+
         # Incremental answer token.
         if chunk.delta:
             yield (None, chunk.delta)

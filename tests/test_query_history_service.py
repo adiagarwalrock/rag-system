@@ -39,6 +39,7 @@ def _seed_history_rows(db_session):
         question="What is the renewal deadline?",
         answer="Renewal is due in 30 days.",
         status="completed",
+        reasoning_effort="high",
         created_at=base_time,
         latency_ms=1450,
     )
@@ -48,6 +49,7 @@ def _seed_history_rows(db_session):
         question="Show policy v2 changes",
         answer="Error: upstream timeout",
         status="failed",
+        reasoning_effort="low",
         created_at=base_time + timedelta(minutes=1),
         latency_ms=2750,
     )
@@ -147,9 +149,11 @@ def test_list_query_history_returns_newest_first_with_aggregates(
     assert row_by_id["query-1"]["retrieval_count"] == 2
     assert row_by_id["query-1"]["conflict_count"] == 0
     assert row_by_id["query-1"]["session_id"] == "session-1"
+    assert row_by_id["query-1"]["reasoning_effort"] == "high"
     assert row_by_id["query-1"]["citations"][0]["filename"] == "policy_v1.pdf"
     assert row_by_id["query-1"]["citations"][0]["page_num"] == 3
     assert row_by_id["query-2"]["retrieval_count"] == 1
+    assert row_by_id["query-2"]["reasoning_effort"] == "low"
     assert row_by_id["query-2"]["conflict_count"] == 2
     assert row_by_id["query-2"]["citations"][0]["filename"] == "policy_v1.pdf"
     assert row_by_id["query-2"]["conflicts"] == [
@@ -167,6 +171,7 @@ def test_list_query_history_returns_newest_first_with_aggregates(
         },
     ]
     assert row_by_id["query-3"]["retrieval_count"] == 0
+    assert row_by_id["query-3"]["reasoning_effort"] == "medium"
     assert row_by_id["query-3"]["conflict_count"] == 0
 
 

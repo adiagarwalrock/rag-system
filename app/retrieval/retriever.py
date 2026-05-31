@@ -222,6 +222,11 @@ class GroundedAnswerSynthesizer:
             ).to_dict()
 
         image_paths = _collect_image_evidence_paths(citations)
+        logger.info(
+            "Image retrieval: collected=%d image_paths from %d citations",
+            len(image_paths),
+            len(citations),
+        )
 
         if settings.OPENAI_USE_RESPONSES:
             responses_result = self._try_responses_synthesis(
@@ -391,6 +396,7 @@ class GroundedAnswerSynthesizer:
     ) -> GroundedAnswerResult | None:
         llm = get_llm(
             reasoning_effort=self.reasoning_effort,
+            reasoning_summary=self.reasoning_summary,
             timeout_seconds=settings.RESPONSE_SYNTHESIS_TIMEOUT_SECONDS,
         )
         prompt = _build_grounded_prompt(
@@ -2485,6 +2491,10 @@ def _append_image_inputs(
         used_image_paths.append(path)
 
     if not image_inputs:
+        logger.info(
+            "Image LLM input: 0 images sent to LLM (all %d paths failed to encode)",
+            len(image_paths),
+        )
         return input_messages, []
 
     messages = [*input_messages]
@@ -2500,6 +2510,11 @@ def _append_image_inputs(
     multimodal_content.extend(image_inputs)
     user_message["content"] = multimodal_content
     messages[-1] = user_message
+    logger.info(
+        "Image LLM input: %d/%d images sent to LLM",
+        len(used_image_paths),
+        len(image_paths),
+    )
     return messages, used_image_paths
 
 

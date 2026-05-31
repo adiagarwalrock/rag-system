@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
-import { Check, Copy, Trash2 } from "lucide-react";
+import { Check, Copy, FileImage, Trash2 } from "lucide-react";
 import type { Citation, QueryHistoryItem } from "@/lib/api/schemas";
 import { ConflictAlert } from "@/components/chat/conflict-alert";
 import { RetrievalTraceView } from "@/components/chat/retrieval-trace";
@@ -203,8 +203,25 @@ function HistoryCitationList({ citations }: { citations: Citation[] }) {
             <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 font-mono text-[11px] text-muted-foreground">
               <span>document_id: {citation.document_id ?? "-"}</span>
               <span>chunk_id: {citation.chunk_id ?? "-"}</span>
+              {extras.source_artifact_id ? <span>artifact: {String(extras.source_artifact_id)}</span> : null}
+              {extras.source_artifact_type ? <span>type: {String(extras.source_artifact_type)}</span> : null}
               {documentName !== citation.filename ? <span>file: {citation.filename}</span> : null}
             </div>
+            {citation.image_assets.length ? (
+              <div className="mt-2 grid grid-cols-3 gap-2">
+                {citation.image_assets.map((asset) => (
+                  <a key={`${asset.url}-${asset.filename}`} href={asset.url} target="_blank" rel="noreferrer" className="overflow-hidden rounded-md border border-border bg-background">
+                    <div className="aspect-[4/3]">
+                      <img src={asset.url} alt={asset.filename} className="h-full w-full object-contain" loading="lazy" />
+                    </div>
+                    <div className="flex items-center gap-1 border-t border-border px-1.5 py-1 text-[10px] text-muted-foreground">
+                      <FileImage className="h-3 w-3 shrink-0" />
+                      <span className="truncate">{asset.filename}</span>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            ) : null}
           </div>
         );
       })}

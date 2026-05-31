@@ -31,6 +31,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.db.snowflake import get_db
+from app.retrieval.citation_builder import build_image_assets
 from app.schemas.document import QueryRequest, QueryResponse
 from app.services.chat_conversation_service import ChatConversationService
 from app.services.client_service import ClientLookupService
@@ -53,12 +54,50 @@ def _build_query_response(result: dict[str, Any]) -> QueryResponse:
         evidence_count=result.get("evidence_count", 0),
         images_used=result.get("images_used", []),
         image_evidence_count=result.get("image_evidence_count", 0),
+        retrieval=_build_retrieval_trace(result),
         reasoning_effort=result.get("reasoning_effort", "medium"),
         reasoning_effort_applied=result.get("reasoning_effort_applied", False),
         session_id=result.get("session_id"),
         user_message_id=result.get("user_message_id"),
         assistant_message_id=result.get("assistant_message_id"),
     )
+
+
+def _build_retrieval_trace(result: dict[str, Any]) -> dict[str, Any]:
+    diagnostics = result.get("retrieval_diagnostics")
+    if not isinstance(diagnostics, dict):
+        diagnostics = {}
+
+    images_used = result.get("images_used")
+    if not isinstance(images_used, list):
+        images_used = []
+
+    return {
+        "mode": result.get("retrieval_mode", "dense_only"),
+        "top_k": result.get("top_k"),
+        "fallback_reason": result.get("fallback_reason"),
+        "query_expanded": bool(result.get("query_expanded", False)),
+        "intent_labels": result.get("intent_labels")
+        or diagnostics.get("intent_labels")
+        or [],
+        "companion_queries": result.get("companion_queries", []),
+        "companion_counts_by_query": result.get("companion_counts_by_query", {}),
+        "image_referenced": bool(images_used),
+        "image_evidence_count": result.get("image_evidence_count", 0),
+        "images_used_count": len(images_used),
+        "image_assets_used": build_image_assets(
+            asset_refs=[str(path) for path in images_used],
+            document_name="Model image evidence",
+        ),
+        "ranked_image_chunk_count": diagnostics.get("ranked_image_chunk_count", 0),
+        "evidence_image_chunk_count": diagnostics.get("evidence_image_chunk_count", 0),
+        "source_count": result.get("source_count", 0),
+        "evidence_count": result.get("evidence_count", 0),
+        "ranked_document_count": diagnostics.get("ranked_document_count"),
+        "evidence_document_count": diagnostics.get("evidence_document_count"),
+        "ranked_chunk_types": diagnostics.get("ranked_chunk_types", {}),
+        "evidence_chunk_types": diagnostics.get("evidence_chunk_types", {}),
+    }
 
 
 def _sse_chunk(event_type: str, data: Any) -> str:

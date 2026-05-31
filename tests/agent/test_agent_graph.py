@@ -76,6 +76,27 @@ def test_full_graph_internal_path(monkeypatch):
     assert final["iteration_count"] == 1
 
 
+def test_full_graph_preserves_synthesizer_reasoning(monkeypatch):
+    _patch_all_nodes(monkeypatch, sufficient=True)
+    monkeypatch.setattr(
+        "app.agents.nodes.synthesizer.GroundedAnswerSynthesizer.synthesize",
+        lambda self, **kw: {
+            "answer": "The FFO is $3.50.",
+            "reasoning": "The model compared the selected evidence.",
+            "images_used": [],
+            "reasoning_effort_applied": True,
+        },
+    )
+
+    from app.agents.graph import build_graph
+
+    graph = build_graph()
+    final = graph.invoke(make_state(reasoning_effort="high", reasoning_summary="auto"))
+
+    assert final["reasoning"] == "The model compared the selected evidence."
+    assert final["reasoning_effort_applied"] is True
+
+
 def test_graph_loops_on_insufficient_then_synthesizes(monkeypatch):
     """Graph should loop once when evidence is insufficient, then synthesize."""
     call_count = {"n": 0}

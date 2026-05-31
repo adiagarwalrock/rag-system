@@ -145,6 +145,44 @@ function normalizeDocument(raw: unknown): Document {
   });
 }
 
+function toFiniteNumber(value: unknown): number | undefined {
+  const numberValue = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numberValue) ? numberValue : undefined;
+}
+
+function normalizeImageUrl(url: unknown): string | undefined {
+  if (typeof url !== "string" || !url.trim()) return undefined;
+  try {
+    return new URL(url, apiBaseUrl).toString();
+  } catch {
+    return url;
+  }
+}
+
+function normalizeImageAssets(
+  rawAssets: unknown,
+  citation: Record<string, unknown>,
+) {
+  if (!Array.isArray(rawAssets)) return [];
+  return rawAssets
+    .map((raw) => {
+      const asset = raw as Record<string, unknown>;
+      const url = normalizeImageUrl(asset.url);
+      if (!url) return undefined;
+      return {
+        ...asset,
+        url,
+        filename: String(asset.filename ?? "image"),
+        page_num: toFiniteNumber(asset.page_num ?? citation.page_num ?? citation.page),
+        document_id: asset.document_id ?? citation.document_id,
+        document_name: asset.document_name ?? citation.document_name ?? citation.filename,
+        source_artifact_id: asset.source_artifact_id ?? citation.source_artifact_id,
+        source_artifact_type: asset.source_artifact_type ?? citation.source_artifact_type,
+      };
+    })
+    .filter(Boolean);
+}
+
 function normalizeCitation(raw: unknown) {
   const value = raw as Record<string, unknown>;
   const score =
@@ -160,9 +198,11 @@ function normalizeCitation(raw: unknown) {
       value.citation_label ??
       "Unknown source",
     page: value.page ?? value.page_num ?? value.slide_num,
+    page_num: value.page_num ?? value.page ?? value.slide_num,
     chunk_id: value.chunk_id ?? value.node_id,
     quote: value.quote ?? value.text,
     score,
+    image_assets: normalizeImageAssets(value.image_assets, value),
   });
 }
 
@@ -184,6 +224,92 @@ function normalizeConflict(raw: unknown) {
       ? item.documents.map(String)
       : undefined,
     values: Array.isArray(item.values) ? item.values.map(String) : undefined,
+  };
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+}
+
+function normalizeNumberRecord(value: unknown): Record<string, number> {
+  if (!isRecord(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([key, raw]) => [key, toFiniteNumber(raw)] as const)
+      .filter((entry): entry is readonly [string, number] => entry[1] !== undefined),
+  );
+}
+
+function normalizeRetrievalTrace(
+  value: Record<string, unknown>,
+  request: QueryRequest | undefined,
+  citations: ReturnType<typeof normalizeCitation>[],
+) {
+  const rawRetrieval = isRecord(value.retrieval) ? value.retrieval : {};
+  const diagnostics = isRecord(value.retrieval_diagnostics)
+    ? value.retrieval_diagnostics
+    : {};
+  const rawImagesUsed = Array.isArray(value.images_used) ? value.images_used : [];
+  const imagesUsedCount =
+    toFiniteNumber(rawRetrieval.images_used_count) ??
+    toFiniteNumber(value.images_used_count) ??
+    rawImagesUsed.length;
+  const imageEvidenceCount =
+    toFiniteNumber(rawRetrieval.image_evidence_count) ??
+    toFiniteNumber(value.image_evidence_count) ??
+    toFiniteNumber(diagnostics.evidence_image_chunk_count);
+
+  return {
+    ...rawRetrieval,
+    mode:
+      rawRetrieval.mode ??
+      value.retrieval_mode ??
+      request?.retrieval_mode ??
+      "dense_only",
+    sparse_available: rawRetrieval.sparse_available ?? value.sparse_available,
+    fallback_reason: rawRetrieval.fallback_reason ?? value.fallback_reason,
+    selected_chunks: citations,
+    query_expanded: Boolean(
+      rawRetrieval.query_expanded ?? value.query_expanded ?? false,
+    ),
+    intent_labels: normalizeStringArray(
+      rawRetrieval.intent_labels ?? value.intent_labels ?? diagnostics.intent_labels,
+    ),
+    companion_queries: normalizeStringArray(
+      rawRetrieval.companion_queries ?? value.companion_queries,
+    ),
+    companion_counts_by_query: normalizeNumberRecord(
+      rawRetrieval.companion_counts_by_query ?? value.companion_counts_by_query,
+    ),
+    image_referenced: Boolean(
+      rawRetrieval.image_referenced ?? value.image_referenced ?? imagesUsedCount > 0,
+    ),
+    image_evidence_count: imageEvidenceCount,
+    images_used_count: imagesUsedCount,
+    image_assets_used: normalizeImageAssets(
+      rawRetrieval.image_assets_used ?? value.image_assets_used,
+      {},
+    ),
+    ranked_image_chunk_count:
+      toFiniteNumber(rawRetrieval.ranked_image_chunk_count) ??
+      toFiniteNumber(diagnostics.ranked_image_chunk_count),
+    evidence_image_chunk_count:
+      toFiniteNumber(rawRetrieval.evidence_image_chunk_count) ??
+      toFiniteNumber(diagnostics.evidence_image_chunk_count),
+    source_count:
+      toFiniteNumber(rawRetrieval.source_count) ?? toFiniteNumber(value.source_count),
+    evidence_count:
+      toFiniteNumber(rawRetrieval.evidence_count) ?? toFiniteNumber(value.evidence_count),
+    ranked_document_count:
+      toFiniteNumber(rawRetrieval.ranked_document_count) ??
+      toFiniteNumber(diagnostics.ranked_document_count),
+    evidence_document_count:
+      toFiniteNumber(rawRetrieval.evidence_document_count) ??
+      toFiniteNumber(diagnostics.evidence_document_count),
+    ranked_chunk_types:
+      rawRetrieval.ranked_chunk_types ?? diagnostics.ranked_chunk_types,
+    evidence_chunk_types:
+      rawRetrieval.evidence_chunk_types ?? diagnostics.evidence_chunk_types,
   };
 }
 
@@ -276,14 +402,13 @@ function normalizeQueryResponse(raw: unknown, request?: QueryRequest): QueryResp
     answer: answerEnvelope.answer,
     citations,
     conflicts,
-    retrieval: {
-      mode: value.retrieval_mode ?? request?.retrieval_mode ?? "dense_only",
-      sparse_available: value.sparse_available,
-      fallback_reason: value.fallback_reason,
-      selected_chunks: citations,
-    },
+    retrieval: normalizeRetrievalTrace(value, request, citations),
     memory_hits: value.memory_hits ?? [],
     latency_ms: value.latency_ms ?? 0,
+    source_count: toFiniteNumber(value.source_count) ?? 0,
+    evidence_count: toFiniteNumber(value.evidence_count) ?? citations.length,
+    images_used: Array.isArray(value.images_used) ? value.images_used.map(String) : [],
+    image_evidence_count: toFiniteNumber(value.image_evidence_count) ?? 0,
     reasoning_effort: value.reasoning_effort ?? request?.reasoning_effort ?? "medium",
     reasoning: value.reasoning ?? answerEnvelope.envelope?.reasoning,
     created_at: value.created_at ?? new Date().toISOString(),
@@ -330,12 +455,22 @@ function normalizeHistoryItem(raw: unknown): QueryHistoryItem {
     session_id: value.session_id,
     citations,
     conflicts,
-    retrieval: {
-      mode: "dense_only",
-      top_k: Number(value.retrieval_count ?? 0) || undefined,
-      selected_chunks: citations,
-    },
+    retrieval: normalizeRetrievalTrace(
+      {
+        ...value,
+        retrieval: {
+          ...(isRecord(value.retrieval) ? value.retrieval : {}),
+          top_k: toFiniteNumber(value.retrieval_count),
+        },
+      },
+      undefined,
+      citations,
+    ),
     latency_ms: Number(value.latency_ms ?? 0),
+    source_count: toFiniteNumber(value.source_count) ?? 0,
+    evidence_count: toFiniteNumber(value.evidence_count) ?? citations.length,
+    images_used: Array.isArray(value.images_used) ? value.images_used.map(String) : [],
+    image_evidence_count: toFiniteNumber(value.image_evidence_count) ?? 0,
     reasoning_effort: value.reasoning_effort ?? "medium",
     created_at: value.created_at ?? new Date().toISOString(),
     raw: value,
