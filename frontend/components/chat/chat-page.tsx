@@ -64,6 +64,8 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
   const submittedQuestionIdRef = useRef<string | null>(null);
   const suppressNextHistoryScrollRef = useRef(false);
   const inFlightRef = useRef(false);
+  const pendingPersistedAssistantMessageIdRef = useRef<string | null>(null);
+  const pendingPersistedSessionIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const stored = Number(localStorage.getItem(inspectorWidthKey));
@@ -91,6 +93,17 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
     }
     // Skip sync while streaming to avoid overwriting optimistic messages mid-flight.
     if (sessionMessages.data && !isStreaming && !inFlightRef.current) {
+      const pendingAssistantMessageId = pendingPersistedAssistantMessageIdRef.current;
+      const pendingSessionId = pendingPersistedSessionIdRef.current;
+      if (
+        pendingAssistantMessageId &&
+        (!pendingSessionId || pendingSessionId === sessionId) &&
+        !sessionMessages.data.some((message) => message.id === pendingAssistantMessageId)
+      ) {
+        return;
+      }
+      pendingPersistedAssistantMessageIdRef.current = null;
+      pendingPersistedSessionIdRef.current = null;
       scrollIntentRef.current = suppressNextHistoryScrollRef.current ? "none" : "bottom";
       suppressNextHistoryScrollRef.current = false;
       setMessages(sessionMessages.data.map(toThreadMessage));
@@ -185,38 +198,16 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
     return message.pinToTop ? { ...message, pinToTop: false } : message;
   }
 
-  async function applyFallback(
-    input: QueryRequest,
-    assistantId: string,
-    signal: AbortSignal,
-  ) {
-    const fallback = await apiClient.query(input, signal);
-    setResolvedSession(fallback.session_id ?? undefined);
-    suppressNextHistoryScrollRef.current = true;
-    setMessages((current) =>
-      current.map((message) =>
-        message.id === assistantId
-          ? {
-              ...message,
-              content: fallback.answer,
-              createdAt: fallback.created_at ?? message.createdAt,
-              response: fallback,
-              reasoning: fallback.reasoning ?? message.reasoning,
-              streaming: false,
-            }
-          : releasePinnedQuestion(message),
-      ),
-    );
-  }
-
   async function submit(question: string) {
-    if (!workspaceId) return;
+    if (!workspaceId || inFlightRef.current) return;
     const controller = new AbortController();
     const submittedAt = new Date().toISOString();
     const userId = crypto.randomUUID();
     const assistantId = crypto.randomUUID();
     abortRef.current = controller;
     inFlightRef.current = true;
+    pendingPersistedAssistantMessageIdRef.current = null;
+    pendingPersistedSessionIdRef.current = null;
     submittedQuestionIdRef.current = userId;
     scrollIntentRef.current = "submitted-question";
     setError(null);
@@ -245,37 +236,57 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
     };
 
     let finalFromStream: QueryResponse | undefined;
+    let streamStarted = false;
+    let streamedAnswer = "";
+    let resolvedStreamSessionId = sessionId || undefined;
     try {
       await apiClient.streamQuery(
         input,
         {
-          onStatus: (phase) =>
+          onSession: (session) => {
+            streamStarted = true;
+            resolvedStreamSessionId = session.session_id ?? resolvedStreamSessionId;
+            setResolvedSession(resolvedStreamSessionId);
+          },
+          onStatus: (phase) => {
+            streamStarted = true;
             setMessages((current) =>
               current.map((message) =>
                 message.id === assistantId
                   ? { ...message, phases: [...(message.phases ?? []), phase] }
                   : message,
               ),
-            ),
-          onReasoning: (delta) =>
+            );
+          },
+          onReasoning: (delta) => {
+            streamStarted = true;
             setMessages((current) =>
               current.map((message) =>
                 message.id === assistantId
                   ? { ...message, reasoning: (message.reasoning ?? "") + delta }
                   : message,
               ),
-            ),
-          onText: (chunk) =>
+            );
+          },
+          onText: (chunk) => {
+            streamStarted = true;
+            streamedAnswer += chunk;
             setMessages((current) =>
               current.map((message) =>
                 message.id === assistantId
                   ? { ...message, content: message.content + chunk, streaming: true }
                   : message,
               ),
-            ),
+            );
+          },
           onFinal: (final) => {
+            streamStarted = true;
             finalFromStream = final;
-            setResolvedSession(final.session_id ?? undefined);
+            resolvedStreamSessionId = final.session_id ?? resolvedStreamSessionId;
+            pendingPersistedAssistantMessageIdRef.current =
+              final.assistant_message_id ?? null;
+            pendingPersistedSessionIdRef.current = resolvedStreamSessionId ?? null;
+            setResolvedSession(resolvedStreamSessionId);
             suppressNextHistoryScrollRef.current = true;
             setMessages((current) =>
               current.map((message) =>
@@ -293,23 +304,72 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
               ),
             );
           },
+          onError: (message) => {
+            streamStarted = true;
+            throw new Error(message);
+          },
         },
         controller.signal,
       );
-      if (!finalFromStream) {
-        await applyFallback(input, assistantId, controller.signal);
-      }
-    } catch {
-      try {
-        await applyFallback(input, assistantId, controller.signal);
-      } catch (queryError) {
-        setError(queryError);
+      if (!finalFromStream && streamedAnswer) {
+        suppressNextHistoryScrollRef.current = true;
         setMessages((current) =>
-          current
-            .filter((message) => message.id !== assistantId)
-            .map(releasePinnedQuestion),
+          current.map((message) =>
+            message.id === assistantId
+              ? {
+                  ...message,
+                  content: streamedAnswer,
+                  streaming: false,
+                  phases: undefined,
+                }
+              : releasePinnedQuestion(message),
+          ),
         );
+        if (resolvedStreamSessionId) {
+          queryClient.invalidateQueries({
+            queryKey: ["session-messages", workspaceId, resolvedStreamSessionId],
+          });
+        }
+      } else if (!finalFromStream) {
+        throw new Error("The query stream ended before sending a final answer.");
       }
+    } catch (queryError) {
+      if (!streamStarted && !(queryError instanceof DOMException && queryError.name === "AbortError")) {
+        try {
+          const fallback = await apiClient.query(input, controller.signal);
+          resolvedStreamSessionId = fallback.session_id ?? resolvedStreamSessionId;
+          pendingPersistedAssistantMessageIdRef.current =
+            fallback.assistant_message_id ?? null;
+          pendingPersistedSessionIdRef.current = resolvedStreamSessionId ?? null;
+          setResolvedSession(resolvedStreamSessionId);
+          suppressNextHistoryScrollRef.current = true;
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === assistantId
+                ? {
+                    ...message,
+                    content: fallback.answer,
+                    createdAt: fallback.created_at ?? message.createdAt,
+                    response: fallback,
+                    reasoning: fallback.reasoning ?? message.reasoning,
+                    streaming: false,
+                  }
+                : releasePinnedQuestion(message),
+            ),
+          );
+          return;
+        } catch (fallbackError) {
+          queryError = fallbackError;
+        }
+      }
+      setError(queryError);
+      pendingPersistedAssistantMessageIdRef.current = null;
+      pendingPersistedSessionIdRef.current = null;
+      setMessages((current) =>
+        current
+          .filter((message) => message.id !== assistantId)
+          .map(releasePinnedQuestion),
+      );
     } finally {
       setIsStreaming(false);
       inFlightRef.current = false;

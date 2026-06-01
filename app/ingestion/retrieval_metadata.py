@@ -55,6 +55,7 @@ CANONICAL_RETRIEVAL_METADATA_FIELDS = (
     "effective_to",
     "published_at",
     "is_current",
+    "document_type",
     "document_date",
     "as_of_date",
     "metric_basis",

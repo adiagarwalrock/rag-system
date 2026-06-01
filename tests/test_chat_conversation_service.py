@@ -16,6 +16,7 @@ def test_execute_client_query_creates_session_and_persists_turns(
     captured: dict = {}
     indexed: dict = {}
     status_events: list[str] = []
+    session_events: list[dict] = []
 
     def _fake_execute_query(
         question: str,
@@ -84,19 +85,36 @@ def test_execute_client_query_creates_session_and_persists_turns(
         lambda response: "Updated session summary",
     )
 
+    def _session_callback(payload: dict) -> None:
+        status_events.append("session_callback")
+        session_events.append(payload.copy())
+        persisted_user_message = (
+            db_session.query(ChatMessage)
+            .filter(ChatMessage.id == payload["user_message_id"])
+            .one()
+        )
+        assert persisted_user_message.session_id == payload["session_id"]
+
     result = service.execute_client_query(
         client_id=client.id,
         question="What changed in policy v2?",
         reasoning_effort="high",
         status_callback=status_events.append,
+        session_callback=_session_callback,
     )
 
     assert result["session_id"]
     assert captured["session_id"] == result["session_id"]
+    assert session_events == [
+        {
+            "session_id": result["session_id"],
+            "user_message_id": result["user_message_id"],
+        }
+    ]
     assert captured["client_id"] == client.id
     assert captured["reasoning_effort"] == "high"
     assert captured["conversation_context"]["session_summary"] == "Summary"
-    assert status_events[:2] == ["build_context", "execute_query"]
+    assert status_events[:3] == ["session_callback", "build_context", "execute_query"]
 
     sessions = (
         db_session.query(ChatSession).filter(ChatSession.client_id == client.id).all()

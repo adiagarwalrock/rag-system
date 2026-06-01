@@ -44,14 +44,28 @@ BASE_PAYLOAD = {
 
 
 @pytest.fixture()
-def client():
+def client(monkeypatch):
     app = FastAPI()
     app.include_router(router)
+    monkeypatch.setattr("app.api.routes_query.SessionLocal", lambda: MagicMock())
     return TestClient(app, raise_server_exceptions=False)
 
 
-def _mock_service(status_callback=None, reasoning_callback=None, answer_callback=None, **_kwargs):
+def _mock_service(
+    status_callback=None,
+    reasoning_callback=None,
+    answer_callback=None,
+    session_callback=None,
+    **_kwargs,
+):
     """Simulate the service emitting phase events then returning FAKE_RESULT."""
+    if session_callback:
+        session_callback(
+            {
+                "session_id": FAKE_RESULT["session_id"],
+                "user_message_id": FAKE_RESULT["user_message_id"],
+            }
+        )
     if status_callback:
         status_callback("🔍 Retrieving relevant chunks…")
         status_callback("📊 Reranking 10 candidate chunks…")
@@ -63,6 +77,17 @@ def _mock_service(status_callback=None, reasoning_callback=None, answer_callback
     if answer_callback:
         answer_callback("There are ")
         answer_callback("17 indulgences.")
+    return FAKE_RESULT
+
+
+def _mock_silent_service(session_callback=None, **_kwargs):
+    if session_callback:
+        session_callback(
+            {
+                "session_id": FAKE_RESULT["session_id"],
+                "user_message_id": FAKE_RESULT["user_message_id"],
+            }
+        )
     return FAKE_RESULT
 
 
@@ -194,13 +219,34 @@ def test_streaming_emits_final_without_status_when_service_is_silent(client):
         patch("app.api.routes_query.ChatConversationService") as MockSvc,
     ):
         MockLookup.return_value.require_client.return_value = MagicMock()
-        MockSvc.return_value.execute_client_query.return_value = FAKE_RESULT
+        MockSvc.return_value.execute_client_query.side_effect = _mock_silent_service
 
         response = client.post("/", json={**BASE_PAYLOAD, "stream": True})
 
     events = _collect_sse_events(response)
     types = [event.get("type") for event in events]
-    assert types == ["final"]
+    assert types == ["session", "final"]
+
+
+def test_streaming_emits_session_before_reasoning_answer_and_final(client):
+    with (
+        patch("app.api.routes_query.ClientLookupService") as MockLookup,
+        patch("app.api.routes_query.ChatConversationService") as MockSvc,
+    ):
+        MockLookup.return_value.require_client.return_value = MagicMock()
+        MockSvc.return_value.execute_client_query.side_effect = _mock_service
+
+        response = client.post("/", json={**BASE_PAYLOAD, "stream": True})
+
+    events = _collect_sse_events(response)
+    types = [event.get("type") for event in events]
+    assert types[0] == "session"
+    assert types.index("session") < types.index("reasoning")
+    assert types.index("session") < types.index("answer")
+    assert types.index("session") < types.index("final")
+    session = events[0]["data"]
+    assert session["session_id"] == FAKE_RESULT["session_id"]
+    assert session["user_message_id"] == FAKE_RESULT["user_message_id"]
 
 
 def test_streaming_emits_reasoning_events(client):
@@ -320,7 +366,17 @@ def test_streaming_final_event_replaces_non_finite_scores(client):
         patch("app.api.routes_query.ChatConversationService") as MockSvc,
     ):
         MockLookup.return_value.require_client.return_value = MagicMock()
-        MockSvc.return_value.execute_client_query.return_value = result
+        def _service_with_nan(session_callback=None, **_kwargs):
+            if session_callback:
+                session_callback(
+                    {
+                        "session_id": result["session_id"],
+                        "user_message_id": result["user_message_id"],
+                    }
+                )
+            return result
+
+        MockSvc.return_value.execute_client_query.side_effect = _service_with_nan
 
         response = client.post("/", json={**BASE_PAYLOAD, "stream": True})
 
@@ -336,7 +392,7 @@ def test_streaming_final_event_replaces_non_finite_scores(client):
 
 
 def test_streaming_event_order(client):
-    """Status events must precede the final event."""
+    """Session and status events must precede the final event."""
     with (
         patch("app.api.routes_query.ClientLookupService") as MockLookup,
         patch("app.api.routes_query.ChatConversationService") as MockSvc,
@@ -348,11 +404,11 @@ def test_streaming_event_order(client):
 
     events = _collect_sse_events(response)
     types = [e.get("type") for e in events]
+    assert types[0] == "session"
     assert "final" in types
     final_index = types.index("final")
-    # All status events must come before the final event
     for i, t in enumerate(types):
-        if t == "status":
+        if t in {"session", "status", "reasoning", "answer"}:
             assert i < final_index
 
 
@@ -375,3 +431,4 @@ def test_streaming_passes_callbacks_to_service(client):
     assert callable(captured.get("status_callback"))
     assert callable(captured.get("reasoning_callback"))
     assert callable(captured.get("answer_callback"))
+    assert callable(captured.get("session_callback"))

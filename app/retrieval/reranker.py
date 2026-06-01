@@ -31,6 +31,14 @@ TABLE_QUERY_TERMS = (
     "breakdown",
     "top ",
     "top-",
+    "largest",
+    "ranked",
+    "ranking",
+    "tenant",
+    "same-store",
+    "same store",
+    "occupancy",
+    "portfolio metrics",
     "portfolio composition",
     "market mix",
 )
@@ -48,7 +56,22 @@ CHART_QUERY_TERMS = (
     "bar",
     "line",
 )
-IMAGE_QUERY_TERMS = ("image", "images", "screenshot", "screenshots", "visual")
+IMAGE_QUERY_TERMS = (
+    "image",
+    "images",
+    "screenshot",
+    "screenshots",
+    "visual",
+    "asset list",
+    "property list",
+    "named assets",
+    "named properties",
+    "property names",
+    "which markets",
+    "u.s. region",
+    "us region",
+    "regions",
+)
 NUMERIC_QUERY_TERMS = (
     "how many",
     "how much",
@@ -104,6 +127,50 @@ METRIC_VALUE_PATTERN = re.compile(
     r"(?:global\s+)?(?P<subject>[a-z][a-z-]+)s?\b",
     re.IGNORECASE,
 )
+SEMANTIC_METADATA_FIELDS = (
+    "questions_this_excerpt_can_answer",
+    "excerpt_keywords",
+    "section_summary",
+    "prev_section_summary",
+    "table_title",
+    "chart_title",
+    "trend_summary",
+    "key_chart_facts",
+    "claims",
+)
+QUERY_TOKEN_STOPWORDS = {
+    "about",
+    "according",
+    "across",
+    "after",
+    "among",
+    "and",
+    "are",
+    "between",
+    "company",
+    "companies",
+    "does",
+    "each",
+    "from",
+    "have",
+    "into",
+    "is",
+    "its",
+    "of",
+    "per",
+    "reit",
+    "reits",
+    "show",
+    "shown",
+    "the",
+    "their",
+    "these",
+    "this",
+    "what",
+    "which",
+    "who",
+    "with",
+}
 
 
 def rerank_nodes(
@@ -368,8 +435,116 @@ def _structural_adjustment(metadata: dict, query: str | None, text: str = "") ->
         adjustment += _count_metric_adjustment(metadata, normalized_query, text)
     if wants_structured and (is_table_chunk or is_chart_chunk):
         adjustment += 0.06
+    adjustment += _semantic_metadata_adjustment(metadata, normalized_query)
+    adjustment += _payload_quality_adjustment(
+        metadata=metadata,
+        wants_table=wants_table,
+        wants_chart=wants_chart,
+        wants_image=wants_image,
+        wants_numeric=wants_numeric,
+    )
 
     return max(min(adjustment, 0.6), -0.25)
+
+
+def _semantic_metadata_adjustment(metadata: dict, normalized_query: str) -> float:
+    """Use parser/LLM metadata as a lightweight lexical relevance signal.
+
+    Qdrant payloads include answerable questions, keywords, and summaries for nearly every
+    point. A bounded overlap boost helps surface chunks whose extracted metadata matches
+    the user's intent even when the raw chunk text is sparse (common for visual/table pages).
+    """
+    query_terms = _query_content_terms(normalized_query)
+    if len(query_terms) < 2:
+        return 0.0
+
+    metadata_text = _metadata_semantic_text(metadata)
+    if not metadata_text:
+        return 0.0
+
+    overlap = sum(1 for term in query_terms if term in metadata_text)
+    ratio = overlap / len(query_terms)
+    if ratio >= 0.6:
+        return 0.08
+    if ratio >= 0.35:
+        return 0.05
+    if ratio >= 0.2:
+        return 0.025
+    return 0.0
+
+
+def _payload_quality_adjustment(
+    *,
+    metadata: dict,
+    wants_table: bool,
+    wants_chart: bool,
+    wants_image: bool,
+    wants_numeric: bool,
+) -> float:
+    adjustment = 0.0
+
+    page_class = str(metadata.get("page_class") or "")
+    if wants_table and page_class == "table_heavy_page":
+        adjustment += 0.035
+    if (wants_chart or wants_image) and page_class == "visual_heavy_page":
+        adjustment += 0.035
+
+    if wants_numeric:
+        density = safe_float(metadata.get("numeric_density"), 0.0) or 0.0
+        if density >= 0.25:
+            adjustment += 0.045
+        elif density >= 0.08:
+            adjustment += 0.025
+
+    if wants_table or wants_chart or wants_image:
+        enrichment_confidence = safe_float(
+            metadata.get("llm_enrichment_confidence"), None
+        )
+        if enrichment_confidence is not None:
+            if enrichment_confidence >= 0.85:
+                adjustment += 0.025
+            elif enrichment_confidence < 0.65:
+                adjustment -= 0.03
+
+    layout_confidence = safe_float(metadata.get("layout_confidence"), None)
+    if layout_confidence is not None:
+        if layout_confidence < 0.8:
+            adjustment -= 0.04
+        elif layout_confidence < 0.9:
+            adjustment -= 0.02
+
+    if safe_bool(metadata.get("page_parse_degraded"), False):
+        adjustment -= 0.04
+
+    return adjustment
+
+
+def _query_content_terms(normalized_query: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z][a-z0-9-]+", normalized_query)
+        if len(token) >= 4 and token not in QUERY_TOKEN_STOPWORDS
+    }
+
+
+def _metadata_semantic_text(metadata: dict) -> str:
+    parts: list[str] = []
+    for field_name in SEMANTIC_METADATA_FIELDS:
+        value = metadata.get(field_name)
+        if value in (None, "", [], {}, "None"):
+            continue
+        parts.append(_stringify_metadata_value(value))
+    return " ".join(parts).lower()
+
+
+def _stringify_metadata_value(value) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return " ".join(_stringify_metadata_value(v) for v in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return " ".join(_stringify_metadata_value(v) for v in value)
+    return str(value)
 
 
 def _is_count_metric_query(normalized_query: str) -> bool:

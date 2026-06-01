@@ -44,6 +44,7 @@ def test_query_expansion_routes_broad_and_version_questions_only():
     assert should_expand_query("Summarize trends across the uploaded reports")
     assert should_expand_query("Show me the chart for quarterly revenue")
     assert should_expand_query("How did customer count change over time?")
+    assert should_expand_query("Which markets does NorthStar operate in, ranked by importance?")
     assert should_expand_query(
         {
             "current_question": "What about that one?",
@@ -174,10 +175,11 @@ def test_intent_detection_adds_companions_for_remaining_quality_gaps():
 
     assert "temporal_delta" in bxp_delta.labels
     assert any(
-        "older prior presentation" in query for query in bxp_delta.companion_queries
+        "prior" in query or "baseline" in query or "investor day" in query
+        for query in bxp_delta.companion_queries
     )
     assert any(
-        "newer latest quarterly update" in query
+        "latest" in query or "quarterly" in query or "update" in query
         for query in bxp_delta.companion_queries
     )
     assert "stale_source" in simon_stale.labels
@@ -338,6 +340,69 @@ def test_cross_encoder_blends_metadata_rank_with_model_score():
     assert direct_metric.node.metadata["retrieval_score"] == 10.0
     assert direct_metric.node.metadata["cross_encoder_score"] == 0.0
     assert semantic_favorite.node.metadata["cross_encoder_score"] == 10.0
+
+
+def test_reranker_uses_semantic_payload_metadata_as_bounded_relevance_signal():
+    semantic_payload_match = _node(
+        "payload-match",
+        0.5,
+        {
+            "section_summary": "Industrial portfolio strategy focused on infill markets and tenant demand.",
+            "excerpt_keywords": "industrial portfolio, infill markets, tenant demand",
+        },
+    )
+    raw_score_favorite = _node(
+        "raw-score-favorite",
+        0.54,
+        {
+            "section_summary": "General company overview and historical background.",
+            "excerpt_keywords": "overview, background",
+        },
+    )
+
+    ranked = reranker_module.rerank_nodes(
+        [raw_score_favorite, semantic_payload_match],
+        top_k=2,
+        query="What is the industrial portfolio strategy in infill markets?",
+    )
+
+    assert ranked[0].node.node_id == "payload-match"
+
+
+def test_reranker_uses_payload_quality_signals_for_structured_numeric_queries():
+    high_quality_table = _node(
+        "high-quality-table",
+        0.5,
+        {
+            "chunk_type": "full_table",
+            "page_class": "table_heavy_page",
+            "contains_numeric_data": True,
+            "numeric_density": 0.3,
+            "layout_confidence": 0.97,
+            "llm_enrichment_confidence": 0.93,
+        },
+    )
+    degraded_table = _node(
+        "degraded-table",
+        0.54,
+        {
+            "chunk_type": "full_table",
+            "page_class": "table_heavy_page",
+            "contains_numeric_data": True,
+            "numeric_density": 0.02,
+            "layout_confidence": 0.74,
+            "page_parse_degraded": True,
+            "llm_enrichment_confidence": 0.55,
+        },
+    )
+
+    ranked = reranker_module.rerank_nodes(
+        [degraded_table, high_quality_table],
+        top_k=2,
+        query="What percentage is shown in the portfolio metrics table?",
+    )
+
+    assert ranked[0].node.node_id == "high-quality-table"
 
 
 def test_latest_query_promotes_all_chunks_from_newest_version_group():
@@ -1196,6 +1261,85 @@ def test_answering_notes_warn_on_same_metric_variants_and_scope():
     assert "Separate standalone guidance" in outlook_notes
 
 
+def test_answering_notes_add_temporal_vantage_for_multi_version_metric():
+    citations = [
+        {
+            "document_name": "BXP Investor Day 2025.pdf",
+            "document_id": "bxp-investor-day",
+            "version_group": "bxp-investor-presentation",
+            "version_label": "Investor Day 2025",
+            "document_date": "2025-06-30",
+            "as_of_date": "2025-06-30",
+            "metric_basis": "NOI share",
+            "text": "CBD markets represented 90.5% of NOI as of Q2 2025.",
+        },
+        {
+            "document_name": "BXP Q4 2025 Update.pdf",
+            "document_id": "bxp-q4-update",
+            "version_group": "bxp-investor-presentation",
+            "version_label": "Q4 2025",
+            "document_date": "2026-03-20",
+            "as_of_date": "2025-12-31",
+            "metric_basis": "NOI share excluding termination income",
+            "text": "CBD markets represented 90.8% of NOI as of Q4 2025.",
+        },
+    ]
+
+    notes = _build_answering_notes(
+        "What percentage of BXP's portfolio is in CBD markets?",
+        citations,
+    )
+
+    assert "multiple dated/versioned vantage points" in notes
+    assert "latest applicable source" in notes
+    assert "earlier/baseline" in notes
+    assert "metric basis/scope" in notes
+
+
+def test_answering_notes_skip_temporal_vantage_for_single_period_lookup():
+    citations = [
+        {
+            "document_name": "BXP Q4 2025 Update.pdf",
+            "document_id": "bxp-q4-update",
+            "version_group": "bxp-investor-presentation",
+            "version_label": "Q4 2025",
+            "document_date": "2026-03-20",
+            "as_of_date": "2025-12-31",
+            "text": "CBD markets represented 90.8% of NOI as of Q4 2025.",
+        }
+    ]
+
+    notes = _build_answering_notes(
+        "What percentage of BXP's portfolio is in CBD markets?",
+        citations,
+    )
+
+    assert "multiple dated/versioned vantage points" not in notes
+
+
+def test_citations_include_concise_semantic_payload_metadata():
+    citations = build_citations(
+        [
+            _node(
+                "semantic-payload",
+                0.8,
+                {
+                    "table_title": "Portfolio metrics",
+                    "chart_title": "Demand trend",
+                    "excerpt_keywords": "portfolio metrics, occupancy, same-store",
+                    "questions_this_excerpt_can_answer": "This intentionally long field stays out of prompt facts.",
+                },
+            )
+        ]
+    )
+
+    enriched = citations[0]["enriched_metadata"]
+    assert enriched["table_title"] == "Portfolio metrics"
+    assert enriched["chart_title"] == "Demand trend"
+    assert enriched["excerpt_keywords"] == "portfolio metrics, occupancy, same-store"
+    assert "questions_this_excerpt_can_answer" not in enriched
+
+
 def test_build_citations_dedupes_asset_refs_across_citations():
     citations = build_citations(
         [
@@ -1443,6 +1587,16 @@ def test_grounded_answer_prompt_does_not_request_literal_thinking_tags():
     assert "Do not include hidden reasoning" in GROUNDED_ANSWER_DEVELOPER_PROMPT
     assert "document dates" in GROUNDED_ANSWER_DEVELOPER_PROMPT
     assert "different values for the same metric" in GROUNDED_ANSWER_DEVELOPER_PROMPT
+
+
+def test_grounded_prompt_allows_temporal_contrast_without_forcing_every_answer():
+    prompt = GROUNDED_ANSWER_DEVELOPER_PROMPT
+
+    assert "Temporal vantage" in prompt
+    assert "multiple dated documents, as-of periods, or document versions" in prompt
+    assert "Lead with the latest applicable source" in prompt
+    assert "not apples-to-apples" in prompt
+    assert "Do not force a trend narrative" in prompt
 
 
 def test_query_calls_status_callback_at_each_pipeline_stage(monkeypatch):
@@ -1854,3 +2008,401 @@ def test_extract_answer_and_reasoning_from_chat_falls_back_to_message_content():
 
     assert answer == "Tagged answer"
     assert reasoning == "Hidden reasoning"
+
+
+# ---------------------------------------------------------------------------
+# corpus_wide_scope intent + evidence selection
+# ---------------------------------------------------------------------------
+
+def test_corpus_wide_scope_fires_for_which_company_questions():
+    intent = analyze_retrieval_intent("Which company appears most dependent on gaming real estate?")
+    assert intent.has("corpus_wide_scope")
+
+
+def test_corpus_wide_scope_fires_for_superlative_questions():
+    intent = analyze_retrieval_intent("Which document provides the strongest case for operational transformation?")
+    assert intent.has("corpus_wide_scope")
+
+
+def test_corpus_wide_scope_does_not_fire_for_named_pair_comparison():
+    # Two named entities — handled by comparative path, not corpus_wide_scope
+    intent = analyze_retrieval_intent(
+        "VICI and Realty Income both mention gaming exposure. How are their gaming portfolios different?"
+    )
+    assert not intent.has("corpus_wide_scope")
+
+
+def test_corpus_wide_scope_does_not_fire_for_single_doc_question():
+    intent = analyze_retrieval_intent("What is BXP's FFO per share guidance for 2026?")
+    assert not intent.has("corpus_wide_scope")
+
+
+def test_corpus_wide_evidence_cap_exceeds_comparative():
+    retriever = VecteraRetriever("client-1", top_k=15)
+    assert retriever.corpus_wide_evidence_limit > retriever.comparative_evidence_limit
+
+
+def test_corpus_wide_scope_spreads_evidence_across_all_documents():
+    retriever = VecteraRetriever("client-1", top_k=15)
+    # Simulate 5 distinct documents with 6 nodes each
+    doc_names = ["Alpha REIT.pdf", "Beta REIT.pdf", "Gamma REIT.pdf", "Delta REIT.pdf", "Epsilon REIT.pdf"]
+    ranked = []
+    for i, name in enumerate(doc_names):
+        for j in range(6):
+            ranked.append(
+                _node(
+                    f"doc{i}-node{j}",
+                    1.0 - (i * 0.1) - (j * 0.01),
+                    {"document_id": f"doc-{i}", "document_name": name},
+                )
+            )
+    question = "Which company appears most directly positioned to benefit from AI-driven demand?"
+    evidence = retriever._select_evidence_nodes(question, ranked)
+    # Each document should have at least 1 chunk in evidence
+    represented_docs = {
+        (n.node.metadata.get("document_name") or "unknown")
+        for n in evidence
+    }
+    assert len(represented_docs) == len(doc_names), (
+        f"Expected all {len(doc_names)} docs represented; got {len(represented_docs)}: {represented_docs}"
+    )
+
+
+def test_multi_version_lookup_intent_fires_for_dividend_and_strategy():
+    for q in [
+        "What is Digital Realty's total IT capacity?",
+        "What is BXP's dividend yield?",
+        "What is BXP's key strategy?",
+        "What are the headline stats and occupancy for Realty Income?",
+        "What is NorthStar REIT's total development capacity?",
+        "What are Acme Properties' quick facts and dividend yield?",
+    ]:
+        intent = analyze_retrieval_intent(q)
+        assert intent.has("multi_version_lookup"), f"Expected multi_version_lookup for: {q}"
+
+
+def test_multi_version_lookup_does_not_fire_for_cross_entity_comparisons():
+    for q in [
+        "What is the portfolio metric difference between Alpha Storage and Beta Storage's same-store portfolios?",
+        "Among the major self-storage REITs, what is each company's same-store NOI growth and NOI margin?",
+    ]:
+        intent = analyze_retrieval_intent(q)
+        assert not intent.has("multi_version_lookup"), f"Unexpected multi_version_lookup for: {q}"
+
+
+def test_temporal_delta_ignores_non_temporal_vs_with_annualized_metric():
+    intent = analyze_retrieval_intent(
+        "What share of Realty Income's annualized base rent comes from each U.S. region vs Europe?"
+    )
+    assert not intent.has("temporal_delta")
+    assert intent.has("visual_detail")
+
+
+def test_scope_and_as_of_metric_questions_get_caveat_companions():
+    for q in [
+        "What was BXP's actual market dividend yield as of August 29, 2025?",
+        "How big is EastGroup's portfolio?",
+        "What percentage of BXP's portfolio is in CBD markets?",
+        "What share of Acme REIT's rent comes from urban infill markets?",
+        "How big is Harbor Industrial's square-foot portfolio?",
+    ]:
+        intent = analyze_retrieval_intent(q)
+        assert intent.has("caveat_inconsistency"), f"Expected caveat intent for: {q}"
+        assert any("definition scope qualifier basis" in query for query in intent.companion_queries)
+
+
+def test_visual_detail_intent_fires_for_ranked_visual_lookup_shapes():
+    for q in [
+        "Which markets does EastGroup operate in, ranked by importance?",
+        "What named assets are shown in Harbor REIT's downtown portfolio map?",
+        "What property names are shown in Harbor REIT's downtown asset list?",
+    ]:
+        intent = analyze_retrieval_intent(q)
+        assert intent.has("visual_detail"), f"Expected visual_detail for: {q}"
+        assert any("map figure table labels" in query for query in intent.companion_queries)
+
+
+def test_visual_detail_queries_keep_deeper_reranked_pool():
+    retriever = VecteraRetriever("client-1", top_k=10)
+    nodes = [
+        _node(
+            f"node-{i}",
+            1.0 - i * 0.01,
+            {
+                "chunk_type": "body_text",
+                "document_id": f"doc-{i}",
+            },
+        )
+        for i in range(30)
+    ]
+
+    ranked = retriever._rank_nodes(
+        "Which markets does NorthStar operate in, ranked by importance?",
+        nodes,
+    )
+
+    assert len(ranked) > retriever.top_k
+
+
+def test_multi_version_lookup_increases_quota_when_two_versions_present():
+    retriever = VecteraRetriever("client-1", top_k=15)
+    # Simulate two versions of the same issuer with one dominating semantically
+    ranked = [
+        _node(f"v2-{i}", 1.0 - i * 0.01, {"document_name": "BXP Q4 2025.pdf", "version_label": "bxp-q4-2025"})
+        for i in range(20)
+    ] + [
+        _node(f"v1-{i}", 0.4 - i * 0.01, {"document_name": "BXP Investor Day.pdf", "version_label": "bxp-id-2025"})
+        for i in range(8)
+    ]
+    question = "What is BXP's dividend yield?"
+    evidence = retriever._select_evidence_nodes(question, ranked)
+    v1_count = sum(1 for n in evidence if "Investor Day" in (n.node.metadata.get("document_name") or ""))
+    assert v1_count >= 4, f"Expected >=4 Investor Day chunks; got {v1_count}"
+
+
+def test_named_pair_balance_forces_4_chunks_each_for_two_doc_pool():
+    retriever = VecteraRetriever("client-1", top_k=15)
+    # One dominant doc (16 nodes), one minority doc (6 nodes)
+    ranked = [
+        _node(f"vici-{i}", 1.0 - i * 0.01, {"document_name": "VICI Investor Presentation.pdf", "document_id": "vici"})
+        for i in range(16)
+    ] + [
+        _node(f"realty-{i}", 0.5 - i * 0.01, {"document_name": "Realty Income Presentation.pdf", "document_id": "realty"})
+        for i in range(6)
+    ]
+    question = "VICI and Realty Income both mention gaming exposure. How are their gaming portfolios different?"
+    evidence = retriever._select_evidence_nodes(question, ranked)
+    realty_count = sum(1 for n in evidence if "Realty" in (n.node.metadata.get("document_name") or ""))
+    assert realty_count >= 4, f"Expected >=4 Realty Income chunks; got {realty_count}"
+
+
+def test_corpus_wide_scope_fires_for_corpus_scan_phrases():
+    intent = analyze_retrieval_intent(
+        "How is AI affecting demand across the different real estate sectors represented in these documents?"
+    )
+    assert intent.has("corpus_wide_scope")
+
+
+def test_corpus_wide_scope_answering_note_lists_doc_names(monkeypatch):
+    from app.retrieval.retriever import _build_answering_notes
+    citations = [
+        {"document_name": "Alpha REIT.pdf", "excerpt": "Some text"},
+        {"document_name": "Beta REIT.pdf", "excerpt": "Other text"},
+    ]
+    question = "Which company appears most directly positioned to benefit from AI demand?"
+    note = _build_answering_notes(question, citations)
+    assert "corpus_wide" in note.lower() or "every named entity" in note.lower() or "Alpha REIT" in note
+
+
+# ── Same-issuer version quota tests ──────────────────────────────────────────
+
+def _make_10_doc_pool():
+    """Return a ranked-node list mirroring the real 10-doc REIT corpus.
+
+    BXP Q4 dominates (score 0.92+), BXP Investor Day is near the bottom (score 0.38-).
+    8 other REIT docs occupy the middle range so the global top-2 version keys are
+    BXP Q4 + DLR Mar — NOT BXP Investor Day.
+    """
+    bxp_q4 = [
+        _node(
+            f"bxp-q4-{i}",
+            0.92 - i * 0.01,
+            {
+                "document_name": "BXP Q4 2025 Investor Presentation with Appendix 3.20.2026.pdf",
+                "document_id": "doc-bxp-q4",
+                "version_label": "Q4 2025",
+                "document_version_group": "bxp_investor_presentation_with_appendix_",
+            },
+        )
+        for i in range(15)
+    ]
+    bxp_id = [
+        _node(
+            f"bxp-id-{i}",
+            0.38 - i * 0.01,
+            {
+                "document_name": "BXP Morning Session Deck web.pdf",
+                "document_id": "doc-bxp-id",
+                "version_label": None,
+                "document_version_group": "bxp_morning_session_deck_web",
+            },
+        )
+        for i in range(8)
+    ]
+    others = []
+    for idx, (name, doc_id) in enumerate([
+        ("Digital Realty_Investor Presentation March 2026.pdf", "doc-dlr-mar"),
+        ("EGP_2026_February_Roadshow_3.1_(Resize).pdf", "doc-egp"),
+        ("PSA Company-Update-Mar-26-vF.pdf", "doc-psa"),
+        ("VICI-Investor-Presentation-Mar-26_.pdf", "doc-vici"),
+        ("Realty Incom q4-2025-investor-presentation.pdf", "doc-ri"),
+        ("Simon The Impact of Brick and Mortar Shopping.pdf", "doc-simon"),
+        ("PSA Merger-Presentation-vF.pdf", "doc-psa-merger"),
+        ("Digital Realty_Investor Presentation December 2025.pdf", "doc-dlr-dec"),
+    ]):
+        others.extend(
+            _node(
+                f"other-{idx}-{j}",
+                0.45 - idx * 0.03 - j * 0.01,
+                {"document_name": name, "document_id": doc_id},
+            )
+            for j in range(3)
+        )
+    return bxp_q4 + others + bxp_id
+
+
+def test_same_issuer_version_quota_rescues_bxp_investor_day_in_10_doc_pool():
+    """BXP Investor Day (ranked 10th of 10 docs) must get ≥3 evidence chunks when the
+    question explicitly names BXP — even though it never appears in the global top-2
+    version keys picked by _ensure_multi_version_evidence."""
+    retriever = VecteraRetriever("client-1", top_k=15)
+    ranked = _make_10_doc_pool()
+    evidence = retriever._select_evidence_nodes("What is BXP's dividend yield?", ranked)
+    bxp_id_count = sum(
+        1 for n in evidence
+        if "Morning Session" in (n.node.metadata.get("document_name") or "")
+    )
+    assert bxp_id_count >= 3, (
+        f"Expected ≥3 BXP Investor Day chunks; got {bxp_id_count}. "
+        f"Counts: {retriever_module._node_counts_by_document(evidence)}"
+    )
+
+
+def test_same_issuer_version_quota_rescues_bxp_investor_day_for_cbd_query():
+    """Q13-equivalent: CBD % query must surface the BXP Investor Day deck."""
+    retriever = VecteraRetriever("client-1", top_k=15)
+    ranked = _make_10_doc_pool()
+    evidence = retriever._select_evidence_nodes(
+        "What percentage of BXP's portfolio is in CBD markets?", ranked
+    )
+    bxp_id_count = sum(
+        1 for n in evidence
+        if "Morning Session" in (n.node.metadata.get("document_name") or "")
+    )
+    assert bxp_id_count >= 3, (
+        f"Expected ≥3 BXP Investor Day chunks; got {bxp_id_count}. "
+        f"Counts: {retriever_module._node_counts_by_document(evidence)}"
+    )
+
+
+def test_same_issuer_version_quota_rescues_dlr_dec_in_10_doc_pool():
+    """Q1-equivalent: DLR Dec 2025 (ranked 10th) must get ≥3 evidence chunks when the
+    question names Digital Realty."""
+    retriever = VecteraRetriever("client-1", top_k=15)
+    dlr_mar = [
+        _node(
+            f"dlr-mar-{i}",
+            0.95 - i * 0.01,
+            {
+                "document_name": "Digital Realty_Investor Presentation March 2026.pdf",
+                "document_id": "doc-dlr-mar",
+                "version_label": "March 2026",
+                "document_version_group": "digital_realty_investor_presentation_",
+            },
+        )
+        for i in range(12)
+    ]
+    dlr_dec = [
+        _node(
+            f"dlr-dec-{i}",
+            0.35 - i * 0.01,
+            {
+                "document_name": "Digital Realty_Investor Presentation December 2025.pdf",
+                "document_id": "doc-dlr-dec",
+                "version_label": "December 2025",
+                "document_version_group": "digital_realty_investor_presentation_",
+            },
+        )
+        for i in range(6)
+    ]
+    others = [
+        _node(f"other-{i}", 0.50 - i * 0.04, {"document_name": f"Other REIT {i}.pdf", "document_id": f"doc-other-{i}"})
+        for i in range(8)
+    ]
+    ranked = dlr_mar + others + dlr_dec
+    evidence = retriever._select_evidence_nodes(
+        "What is Digital Realty total IT capacity?", ranked
+    )
+    dlr_dec_count = sum(
+        1 for n in evidence
+        if "December 2025" in (n.node.metadata.get("document_name") or "")
+    )
+    assert dlr_dec_count >= 3, (
+        f"Expected ≥3 DLR Dec 2025 chunks; got {dlr_dec_count}. "
+        f"Counts: {retriever_module._node_counts_by_document(evidence)}"
+    )
+
+
+def test_same_issuer_version_quota_does_not_fire_for_unmentioned_issuer():
+    """When the question names PSA but not BXP, the BXP Investor Day must NOT receive
+    quota-boosted slots (the question-token check must prevent the spurious match)."""
+    retriever = VecteraRetriever("client-1", top_k=15)
+    ranked = _make_10_doc_pool()
+    # PSA-only question — BXP not mentioned
+    evidence = retriever._select_evidence_nodes(
+        "What is PSA's 2026 same-store NOI guidance?", ranked
+    )
+    bxp_id_count = sum(
+        1 for n in evidence
+        if "Morning Session" in (n.node.metadata.get("document_name") or "")
+    )
+    # BXP ID was ranked last (score 0.38-) and shouldn't be rescued for a PSA question
+    assert bxp_id_count <= 1, (
+        f"Expected ≤1 BXP Investor Day chunks for PSA-only question; got {bxp_id_count}"
+    )
+
+
+def test_temporal_delta_companions_carry_topic_phrase():
+    """Companions for a temporal-delta question must include the core topic phrase,
+    not just the generic 'investor day presentation' string verbatim."""
+    intent = analyze_retrieval_intent(
+        "What's changed in BXP's strategy between the 2025 Investor Day and the Q4 2025 update?"
+    )
+    assert intent.has("temporal_delta")
+    # At least one companion should reference the subject matter (BXP or strategy),
+    # not just be the full original question with a generic suffix appended verbatim.
+    companions = intent.companion_queries
+    assert len(companions) >= 2
+    full_q_lower = "what's changed in bxp's strategy between the 2025 investor day and the q4 2025 update?"
+    # Companions should differ from just appending to the full question — they should
+    # be shorter and topic-focused (not start with the full comparison-framing sentence).
+    assert not all(c.lower().startswith(full_q_lower) for c in companions), (
+        "All companions still start with the full question — topic extraction not working"
+    )
+
+
+def test_cbd_percentage_query_fires_multi_version_lookup():
+    """Q13-equivalent: a CBD market-share percentage question must trigger
+    multi_version_lookup so both BXP decks get their quota enforced."""
+    intent = analyze_retrieval_intent(
+        "What percentage of BXP's portfolio is in CBD markets?"
+    )
+    assert intent.has("multi_version_lookup"), (
+        f"Expected multi_version_lookup for CBD % query; got labels: {intent.labels}"
+    )
+
+
+def test_document_type_inferred_from_version_resolver():
+    """document_type must be correctly classified from filenames."""
+    from app.ingestion.version_resolver import resolve_version
+
+    cases = [
+        # Explicit investor-day signals in filename
+        ("Acme REIT Investor Day 2025 Presentation.pdf", "investor-day"),
+        ("Harbor Properties Analyst Day Deck.pdf", "investor-day"),
+        # Quarter signal in filename
+        ("BXP Q4 2025 Investor Presentation with Appendix 3.20.2026.pdf", "quarterly-update"),
+        ("Realty Incom q4-2025-investor-presentation.pdf", "quarterly-update"),
+        # Merger signal
+        ("PSA Merger-Presentation-vF.pdf", "merger-presentation"),
+        # No reliable signal — should return None
+        ("BXP Morning Session Deck web.pdf", None),
+        ("Digital Realty_Investor Presentation December 2025.pdf", None),
+        ("Digital Realty_Investor Presentation March 2026.pdf", None),
+    ]
+    for filename, expected_type in cases:
+        result = resolve_version(filename)
+        assert result.get("document_type") == expected_type, (
+            f"{filename}: expected document_type={expected_type!r}, "
+            f"got {result.get('document_type')!r}"
+        )

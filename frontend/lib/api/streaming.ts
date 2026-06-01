@@ -4,6 +4,7 @@ export type StreamHandlers<TFinal = unknown> = {
   onText?: (chunk: string) => void;
   onStatus?: (phase: string) => void;
   onReasoning?: (delta: string) => void;
+  onSession?: (session: { session_id?: string; user_message_id?: string }) => void;
   onFinal?: (response: TFinal) => void;
   onError?: (message: string, detail?: unknown) => void;
 };
@@ -71,10 +72,19 @@ function consumeStreamEvent(event: string, handlers: StreamHandlers) {
       result?: unknown;
       detail?: string;
       message?: string;
+      session_id?: string;
+      user_message_id?: string;
     };
 
     const resolvedType = eventType ?? decoded.type;
 
+    if (resolvedType === "session") {
+      handlers.onSession?.({
+        session_id: decoded.session_id,
+        user_message_id: decoded.user_message_id,
+      });
+      return;
+    }
     if (resolvedType === "status" || resolvedType === "phase") {
       handlers.onStatus?.(decoded.delta ?? "");
       return;

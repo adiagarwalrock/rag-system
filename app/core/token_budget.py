@@ -7,6 +7,7 @@ from typing import Any
 import tiktoken
 
 from app.core.config import settings
+from app.core.prompts import build_budgeted_grounded_answer_prompt
 
 KNOWN_CONTEXT_WINDOWS: dict[str, int] = {
     "gpt-5.2": 200000,
@@ -198,6 +199,7 @@ class ResponsesInputBudgeter:
         session_summary: str,
         cross_session_lines: list[str],
         evidence_lines: list[str],
+        answering_notes_lines: list[str],
         conflict_lines: list[str],
     ) -> tuple[list[dict[str, Any]], str, BudgetMetrics]:
         total_budget = self.input_budget_tokens
@@ -214,37 +216,31 @@ class ResponsesInputBudgeter:
         summary_budget = int(remaining * SUMMARY_BUDGET_RATIO)
         cross_budget = int(remaining * CROSS_BUDGET_RATIO)
         conflict_budget = int(remaining * CONFLICT_BUDGET_RATIO)
+        answering_notes_budget = int(remaining * CONFLICT_BUDGET_RATIO)
         evidence_budget = max(
             MIN_EVIDENCE_BUDGET_TOKENS,
             remaining
             - history_budget
             - summary_budget
             - cross_budget
-            - conflict_budget,
+            - conflict_budget
+            - answering_notes_budget,
         )
 
         history_messages = self.trim_recent_history(recent_turns, history_budget)
         summary_text = self.truncate_to_tokens(session_summary, summary_budget)
         cross_text = self._fit_lines(cross_session_lines, cross_budget)
         conflict_text = self._fit_lines(conflict_lines, conflict_budget)
+        answering_notes_text = self._fit_lines(answering_notes_lines, answering_notes_budget)
         evidence_text = self._fit_lines(evidence_lines, evidence_budget)
 
-        user_context = "\n\n".join(
-            [
-                f"CURRENT_QUERY:\n{question}",
-                f"SESSION_SUMMARY:\n{summary_text or '(none)'}",
-                "CURRENT_SESSION_RECENT_TURNS:\n"
-                + (
-                    "\n".join(
-                        f"- {msg['role'].upper()}: {msg['content']}" for msg in history_messages
-                    )
-                    if history_messages
-                    else "- (none)"
-                ),
-                f"CROSS_SESSION_RELEVANT_QA:\n{cross_text or '- (none)'}",
-                f"RETRIEVAL_EVIDENCE:\n{evidence_text or '- (none)'}",
-                f"CONFLICT_HINTS:\n{conflict_text or '- (none)'}",
-            ]
+        user_context = build_budgeted_grounded_answer_prompt(
+            question=question,
+            session_summary=summary_text,
+            cross_session_block=cross_text,
+            answering_notes_block=answering_notes_text,
+            evidence_block=evidence_text,
+            conflict_block=conflict_text,
         )
 
         # Final hard trim to guarantee <= budget.

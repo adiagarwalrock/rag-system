@@ -54,10 +54,12 @@ from app.retrieval.reranker import rerank_nodes
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_EVIDENCE_LIMIT = 15
+DEFAULT_EVIDENCE_LIMIT = 25
 COMPARATIVE_EVIDENCE_LIMIT = 20
 CONFLICT_EVIDENCE_LIMIT = 20
-MAX_MULTIMODAL_IMAGES = 6
+TEMPORAL_DELTA_EVIDENCE_LIMIT = 22
+CORPUS_WIDE_EVIDENCE_LIMIT = 25
+MAX_MULTIMODAL_IMAGES = 8
 SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 REASONING_CHUNK_TYPES = {
     "reasoning_table",
@@ -127,6 +129,16 @@ VISUAL_QUERY_TERMS = (
     "screenshot",
     "screenshots",
     "visual",
+    "ranked",
+    "asset list",
+    "property list",
+    "named assets",
+    "named properties",
+    "property names",
+    "which markets",
+    "u.s. region",
+    "us region",
+    "regions",
 )
 TABLE_EVIDENCE_TERMS = (
     "table",
@@ -134,6 +146,14 @@ TABLE_EVIDENCE_TERMS = (
     "tabular",
     "top ",
     "top-",
+    "largest",
+    "ranked",
+    "ranking",
+    "tenant",
+    "same-store",
+    "same store",
+    "occupancy",
+    "portfolio metrics",
     "breakdown",
     "market mix",
     "portfolio composition",
@@ -281,6 +301,7 @@ class GroundedAnswerSynthesizer:
                 session_summary=sections["session_summary"],
                 cross_session_lines=sections["cross_session_lines"],
                 evidence_lines=sections["evidence_lines"],
+                answering_notes_lines=sections["answering_notes_lines"],
                 conflict_lines=sections["conflict_lines"],
             )
             logger.info(
@@ -468,6 +489,8 @@ class VecteraRetriever:
         self.evidence_limit = DEFAULT_EVIDENCE_LIMIT
         self.comparative_evidence_limit = COMPARATIVE_EVIDENCE_LIMIT
         self.conflict_evidence_limit = CONFLICT_EVIDENCE_LIMIT
+        self.temporal_delta_evidence_limit = TEMPORAL_DELTA_EVIDENCE_LIMIT
+        self.corpus_wide_evidence_limit = CORPUS_WIDE_EVIDENCE_LIMIT
         self._last_retrieval_metadata: dict[str, Any] = {}
         self.filters = MetadataFilters(
             filters=[ExactMatchFilter(key="client_id", value=self.client_id)]
@@ -580,9 +603,13 @@ class VecteraRetriever:
         comparative_query = _is_comparison_or_conflict_query(question)
         balanced_query = _needs_balanced_evidence_query(question)
         conflict_focused_query = _is_conflict_focused_query(question)
+        corpus_wide_query = intent.has("corpus_wide_scope")
+        # Corpus-wide queries ("which company…") must not suppress older docs: recency
+        # bias would unfairly demote documents from the same issuer filed earlier.
         prefer_latest = not (
             comparative_query
             or balanced_query
+            or corpus_wide_query
             or intent.has("temporal_delta")
             or _is_time_anchored_query(question)
         )
@@ -597,6 +624,7 @@ class VecteraRetriever:
             conflict_focused_query=conflict_focused_query,
             high_diversity_query=_is_high_diversity_intent(intent)
             or corpus_entity_count >= 2,
+            corpus_wide_query=corpus_wide_query,
         )
         return rerank_nodes(
             source_nodes,
@@ -640,6 +668,10 @@ class VecteraRetriever:
             # Cross-company questions need a deeper pool so every document's content
             # pages (not just their section-divider headers) enter the candidate set.
             prefetch_top_k += 20
+        if intent.has("corpus_wide_scope"):
+            # Corpus-spanning questions ("which company", superlatives) need even more
+            # candidates so every document has representation in the pool.
+            prefetch_top_k += 30
         base_retriever = vector_store_manager.get_retriever(
             filters=self.filters,
             similarity_top_k=prefetch_top_k,
@@ -717,12 +749,18 @@ class VecteraRetriever:
         comparative_query = _is_comparison_or_conflict_query(question)
         balanced_query = _needs_balanced_evidence_query(question)
         conflict_focused_query = _is_conflict_focused_query(question)
+        corpus_wide_query = intent.has("corpus_wide_scope")
+        temporal_delta_query = intent.has("temporal_delta") and not (
+            comparative_query or balanced_query or intent.has("outlook_scope")
+        )
         evidence_cap = self._resolve_evidence_cap(
             comparative_query=comparative_query
             or balanced_query
             or intent.has("temporal_delta")
             or intent.has("outlook_scope"),
             conflict_focused_query=conflict_focused_query,
+            corpus_wide_query=corpus_wide_query,
+            temporal_delta_query=temporal_delta_query,
         )
         candidate_nodes = self._prioritize_conflict_candidates(
             ranked_nodes=ranked_nodes,
@@ -803,9 +841,30 @@ class VecteraRetriever:
             selected_nodes=selected,
             ranked_nodes=ranked_nodes,
             evidence_cap=evidence_cap,
+            force=intent.has("multi_version_lookup"),
+        )
+
+        selected = _ensure_same_issuer_version_quota(
+            selected_nodes=selected,
+            ranked_nodes=ranked_nodes,
+            evidence_cap=evidence_cap,
+            question=question,
         )
 
         selected = _ensure_balanced_document_evidence(
+            intent=intent,
+            selected_nodes=selected,
+            ranked_nodes=ranked_nodes,
+            evidence_cap=evidence_cap,
+        )
+
+        selected = _ensure_named_pair_document_balance(
+            selected_nodes=selected,
+            ranked_nodes=ranked_nodes,
+            evidence_cap=evidence_cap,
+        )
+
+        selected = _ensure_corpus_wide_document_coverage(
             intent=intent,
             selected_nodes=selected,
             ranked_nodes=ranked_nodes,
@@ -819,9 +878,15 @@ class VecteraRetriever:
         *,
         comparative_query: bool,
         conflict_focused_query: bool,
+        corpus_wide_query: bool = False,
+        temporal_delta_query: bool = False,
     ) -> int:
         if conflict_focused_query:
             return self.conflict_evidence_limit
+        if corpus_wide_query:
+            return self.corpus_wide_evidence_limit
+        if temporal_delta_query:
+            return self.temporal_delta_evidence_limit
         if comparative_query:
             return self.comparative_evidence_limit
         return self.evidence_limit
@@ -832,9 +897,12 @@ class VecteraRetriever:
         comparative_query: bool,
         conflict_focused_query: bool,
         high_diversity_query: bool = False,
+        corpus_wide_query: bool = False,
     ) -> int:
         if conflict_focused_query:
             return max(self.top_k + 8, self.conflict_evidence_limit)
+        if corpus_wide_query:
+            return max(self.top_k + 30, self.corpus_wide_evidence_limit * 2)
         if high_diversity_query:
             return max(self.top_k + 25, self.comparative_evidence_limit * 2)
         if comparative_query:
@@ -1065,6 +1133,7 @@ def _is_high_diversity_intent(intent: RetrievalIntent) -> bool:
         for label in (
             "temporal_delta",
             "outlook_scope",
+            "visual_detail",
             "named_entity_comparison",
         )
     )
@@ -1367,6 +1436,7 @@ def _ensure_multi_version_evidence(
     selected_nodes: list[Any],
     ranked_nodes: list[Any],
     evidence_cap: int,
+    force: bool = False,
 ) -> list[Any]:
     """When ranked_nodes span 2+ document vintages for the same issuer, guarantee at
     least 2 chunks per top-2 vintages are present in selected_nodes.
@@ -1374,17 +1444,21 @@ def _ensure_multi_version_evidence(
     This fires unconditionally (no comparative-intent requirement) so that questions
     like "What is X's total IT capacity?" still surface both the Dec 2025 and Mar 2026
     slides for comparison, rather than collapsing to the most-recent-only result.
+
+    When force=True (multi_version_lookup intent), the quota is raised to 4 so both
+    vintages are robustly represented even when one document dominates the semantic scores.
     """
     if _distinct_version_count(ranked_nodes) < 2:
         return selected_nodes
     top_versions = _top_groups(ranked_nodes, _version_label_key, limit=2)
+    quota = 4 if force else 2
     return _ensure_group_quota(
         selected_nodes=selected_nodes,
         ranked_nodes=ranked_nodes,
         evidence_cap=evidence_cap,
         group_key_fn=_version_label_key,
         target_groups=top_versions,
-        quota_per_group=2,
+        quota_per_group=quota,
     )
 
 
@@ -1437,6 +1511,131 @@ def _ensure_balanced_document_evidence(
     )
 
 
+def _ensure_named_pair_document_balance(
+    *,
+    selected_nodes: list[Any],
+    ranked_nodes: list[Any],
+    evidence_cap: int,
+) -> list[Any]:
+    """When exactly two distinct documents appear in the ranked pool, guarantee at least
+    4 chunks from each.
+
+    This handles the common case of a two-entity comparison (e.g. "VICI and Realty Income
+    on gaming") where one document semantically dominates and the other gets only 1-2 slots
+    after the diversity pass.  quota_per_group=4 ensures meaningful bilateral coverage.
+
+    Does NOT fire when 3+ documents are present (handled by balanced/corpus-wide logic).
+    """
+    all_docs = _top_groups(ranked_nodes, _document_or_version_group_key, limit=20)
+    if len(all_docs) != 2:
+        return selected_nodes
+    return _ensure_group_quota(
+        selected_nodes=selected_nodes,
+        ranked_nodes=ranked_nodes,
+        evidence_cap=evidence_cap,
+        group_key_fn=_document_or_version_group_key,
+        target_groups=all_docs,
+        quota_per_group=4,
+    )
+
+
+def _ensure_corpus_wide_document_coverage(
+    *,
+    intent: RetrievalIntent,
+    selected_nodes: list[Any],
+    ranked_nodes: list[Any],
+    evidence_cap: int,
+) -> list[Any]:
+    """On corpus_wide_scope queries, guarantee at least 1 chunk per distinct document.
+
+    "Which company…" and superlative/comparison questions must surface evidence from every
+    document in the retrieval pool — otherwise the answer can only mention documents whose
+    content happened to win the semantic race for the top slots.  We use quota_per_group=1
+    (not 2) because we only need a representative page per document; we prioritise breadth
+    over depth here.
+    """
+    if not intent.has("corpus_wide_scope"):
+        return selected_nodes
+    # Expand to all distinct documents in the ranked pool (not just top-N)
+    all_docs = _top_groups(ranked_nodes, _document_or_version_group_key, limit=20)
+    if len(all_docs) < 2:
+        return selected_nodes
+    return _ensure_group_quota(
+        selected_nodes=selected_nodes,
+        ranked_nodes=ranked_nodes,
+        evidence_cap=evidence_cap,
+        group_key_fn=_document_or_version_group_key,
+        target_groups=all_docs,
+        quota_per_group=1,
+    )
+
+
+def _ensure_same_issuer_version_quota(
+    *,
+    selected_nodes: list[Any],
+    ranked_nodes: list[Any],
+    evidence_cap: int,
+    question: str,
+) -> list[Any]:
+    """Guarantee ≥3 evidence chunks from each document in a same-issuer version pair
+    mentioned in the question, regardless of the document's global rank in the pool.
+
+    _ensure_multi_version_evidence only protects the globally top-2 ranked version keys.
+    In a 10-doc corpus a minority-version document (e.g. BXP Investor Day ranked 10th)
+    never appears in the global top-2 and gets 0 slots despite being directly relevant.
+
+    Two documents are treated as same-issuer when their document_names share ≥1 significant
+    token after stop-word removal (reusing _extract_entity_label).  The question must also
+    contain that token so unrelated same-token coincidences don't force spurious quotas.
+    """
+    question_lower = question.lower()
+
+    # Collect: version_label_key -> issuer label tokens (from _extract_entity_label)
+    key_to_issuer: dict[str, tuple[str, ...]] = {}
+    for node in ranked_nodes:
+        meta = node.node.metadata or {}
+        vl_key = _version_label_key(node)
+        if vl_key in key_to_issuer:
+            continue
+        doc_name = meta.get("document_name") or meta.get("file_name") or ""
+        extracted = _extract_entity_label(doc_name)
+        key_to_issuer[vl_key] = extracted[1] if extracted else ()
+
+    keys = list(key_to_issuer.keys())
+    processed: set[str] = set()
+    for i, key_a in enumerate(keys):
+        if key_a in processed:
+            continue
+        aliases_a = key_to_issuer[key_a]
+        if not aliases_a:
+            continue
+        # Find partner keys that share at least one alias token with key_a
+        partners = [
+            key_b
+            for key_b in keys[i + 1 :]
+            if key_b not in processed
+            and bool(set(aliases_a) & set(key_to_issuer[key_b]))
+        ]
+        if not partners:
+            continue
+        # Require the shared token to appear in the question (avoids spurious matches)
+        shared = set(aliases_a) & set(key_to_issuer[partners[0]])
+        if not any(tok in question_lower for tok in shared):
+            continue
+        target_pair = [key_a, partners[0]]
+        selected_nodes = _ensure_group_quota(
+            selected_nodes=selected_nodes,
+            ranked_nodes=ranked_nodes,
+            evidence_cap=evidence_cap,
+            group_key_fn=_version_label_key,
+            target_groups=target_pair,
+            quota_per_group=3,
+        )
+        processed.update(target_pair)
+
+    return selected_nodes
+
+
 def _ensure_temporal_delta_evidence(
     *,
     intent: RetrievalIntent,
@@ -1454,7 +1653,7 @@ def _ensure_temporal_delta_evidence(
         target_groups=_top_groups(
             ranked_nodes, _document_or_version_group_key, limit=2
         ),
-        quota_per_group=3,
+        quota_per_group=5,
     )
 
 
@@ -2133,7 +2332,7 @@ def _build_grounded_prompt(
     evidence_block = "\n".join(evidence_lines)
     conversation_block = _build_conversation_context_block(conversation_context or {})
 
-    return build_grounded_answer_prompt(
+    user_prompt = build_grounded_answer_prompt(
         question=question,
         image_attachment_count=image_attachment_count,
         evidence_block=evidence_block,
@@ -2141,6 +2340,12 @@ def _build_grounded_prompt(
         conversation_context_block=conversation_block,
         answering_notes_block=_build_answering_notes(question, citations),
     )
+
+    with open("user_prmpt.txt", "w") as f:
+        print("=== USER PROMPT ===")
+        f.write(user_prompt)
+
+    return user_prompt
 
 
 def _build_labeled_context_sections(
@@ -2157,10 +2362,8 @@ def _build_labeled_context_sections(
         "session_summary": summary,
         "cross_session_lines": _build_context_cross_session_lines(cross_session_pairs),
         "evidence_lines": _build_context_evidence_lines(citations),
-        "conflict_lines": [
-            *_build_answering_notes(question, citations).splitlines(),
-            *_build_context_conflict_lines(conflicts),
-        ],
+        "answering_notes_lines": _build_answering_notes(question, citations).splitlines(),
+        "conflict_lines": _build_context_conflict_lines(conflicts),
     }
 
 
@@ -2228,6 +2431,14 @@ def _build_answering_notes(question: str, citations: list[dict[str, Any]]) -> st
             "newer/update evidence, then stable vs changed or newly emphasized items."
         )
 
+    if _has_temporal_vantage_evidence(citations):
+        notes.append(
+            "- Selected evidence includes multiple dated/versioned vantage points for the "
+            "same likely issuer/topic. Lead with the latest applicable source; briefly mention "
+            "material earlier/baseline values or status only if they clarify change, progress/"
+            "regression, supersession, or changed metric basis/scope."
+        )
+
     if intent.has("stale_source") or _citations_have_source_dates(citations):
         notes.append(
             "- State absolute source/date scope for dated evidence; if figures describe "
@@ -2259,7 +2470,125 @@ def _build_answering_notes(question: str, citations: list[dict[str, Any]]) -> st
             "partial scope evidence should be used with a precise limitation."
         )
 
+    if intent.has("corpus_wide_scope"):
+        doc_names = _distinct_citation_doc_names(citations)
+        notes.append(
+            "- This question asks for a cross-corpus comparison or 'which company' conclusion. "
+            "Survey EVERY named entity present in the evidence. "
+            "For each entity, state what the evidence shows (or explicitly note if no relevant "
+            "evidence was retrieved for that entity). "
+            "Then give your evidence-grounded conclusion. "
+            f"Documents in evidence: {', '.join(doc_names) if doc_names else 'see citations'}."
+        )
+
+    if intent.has("multi_version_lookup"):
+        notes.append(
+            "- Multiple document versions may exist for the same issuer. "
+            "If evidence from different presentation dates gives different values for the same "
+            "metric, present each version's value with its document date — do not collapse to "
+            "one number without noting the version history."
+        )
+
     return "\n".join(notes)
+
+
+def _has_temporal_vantage_evidence(citations: list[dict[str, Any]]) -> bool:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for citation in citations:
+        key = _temporal_vantage_group_key(citation)
+        if not key:
+            continue
+        groups.setdefault(key, []).append(citation)
+
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        signatures = {
+            signature
+            for citation in group
+            if (signature := _temporal_vantage_signature(citation))
+        }
+        if len(signatures) >= 2:
+            return True
+    return False
+
+
+def _temporal_vantage_group_key(citation: dict[str, Any]) -> str:
+    version_group = str(citation.get("version_group") or "").strip().lower()
+    if version_group and version_group != "unknown":
+        return f"version_group:{version_group}"
+
+    document_name = str(citation.get("document_name") or "").strip()
+    tokens = re.findall(r"[a-zA-Z]+", Path(document_name).stem.lower())
+    topic_tokens = [
+        token
+        for token in tokens
+        if token
+        not in {
+            "investor",
+            "presentation",
+            "presentations",
+            "appendix",
+            "company",
+            "update",
+            "quarterly",
+            "annual",
+            "roadshow",
+            "supplemental",
+            "with",
+            "and",
+            "the",
+            "pdf",
+        }
+    ]
+    if not topic_tokens:
+        return ""
+    return "document_topic:" + " ".join(topic_tokens[:2])
+
+
+def _temporal_vantage_signature(citation: dict[str, Any]) -> tuple[str, ...]:
+    enriched = citation.get("enriched_metadata")
+    enriched_dates: list[str] = []
+    if isinstance(enriched, dict):
+        enriched_dates = [
+            str(enriched.get(key) or "").strip()
+            for key in ("document_date", "as_of_date")
+            if enriched.get(key)
+        ]
+
+    values = [
+        citation.get("document_date"),
+        citation.get("as_of_date"),
+        citation.get("effective_from"),
+        citation.get("effective_to"),
+        citation.get("version_label"),
+        *enriched_dates,
+    ]
+    signature = tuple(
+        str(value).strip().lower()
+        for value in values
+        if str(value or "").strip().lower() not in {"", "unknown", "none"}
+    )
+    if signature:
+        return signature
+
+    version_group = str(citation.get("version_group") or "").strip()
+    document_id = str(citation.get("document_id") or "").strip()
+    if version_group and document_id:
+        return (f"document_id:{document_id.lower()}",)
+    return ()
+
+
+def _distinct_citation_doc_names(citations: list[dict[str, Any]]) -> list[str]:
+    """Return deduplicated document names from the citation list, in order of first appearance."""
+    seen: set[str] = set()
+    names: list[str] = []
+    for c in citations:
+        name = str(c.get("document_name") or c.get("source_file") or "")
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names
 
 
 def _citations_have_source_dates(citations: list[dict[str, Any]]) -> bool:

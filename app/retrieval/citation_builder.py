@@ -29,6 +29,9 @@ RICH_CHUNK_TYPES = {
     "reasoning_page",
 }
 ENRICHED_METADATA_FIELDS = (
+    "table_title",
+    "chart_title",
+    "excerpt_keywords",
     "key_chart_facts",
     "approx_datapoints",
     "trend_summary",

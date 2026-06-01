@@ -125,6 +125,7 @@ NON_SEMANTIC_EMBED_METADATA_KEYS = (
     "document_date",
     "as_of_date",
     "metric_basis",
+    "document_type",
 )
 
 NON_SEMANTIC_LLM_METADATA_KEYS = (
@@ -406,6 +407,7 @@ def _document_version_metadata(version_info: dict[str, Any]) -> dict[str, Any]:
         "document_version_group": version_info.get("version_group"),
         "effective_from": _isoformat_or_none(version_info.get("effective_from")),
         "effective_to": _isoformat_or_none(version_info.get("effective_to")),
+        "document_type": version_info.get("document_type"),
     }
 
 

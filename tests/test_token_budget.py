@@ -17,6 +17,8 @@ def test_budgeted_sections_fit_within_input_budget():
     evidence_lines = [f"[{i}] evidence " + ("e" * 800) for i in range(20)]
     conflict_lines = [f"- conflict {i} " + ("c" * 200) for i in range(6)]
 
+    answering_notes_lines = [f"- note {i}" for i in range(4)]
+
     messages, user_context, metrics = budgeter.build_budgeted_sections(
         developer_prompt="Static developer instructions",
         question="What changed in the latest policy?",
@@ -24,14 +26,16 @@ def test_budgeted_sections_fit_within_input_budget():
         session_summary="Summary " + ("s" * 1200),
         cross_session_lines=cross_lines,
         evidence_lines=evidence_lines,
+        answering_notes_lines=answering_notes_lines,
         conflict_lines=conflict_lines,
     )
 
     assert messages[0]["role"] == "developer"
     assert messages[-1]["role"] == "user"
-    assert "CURRENT_QUERY" in user_context
-    assert "SESSION_SUMMARY" in user_context
-    assert "CROSS_SESSION_RELEVANT_QA" in user_context
-    assert "RETRIEVAL_EVIDENCE" in user_context
-    assert "CONFLICT_HINTS" in user_context
+    assert "<CURRENT_QUERY>" in user_context
+    assert "<SESSION_SUMMARY>" in user_context
+    assert "<CROSS_SESSION_RELEVANT_QA>" in user_context
+    assert "<RETRIEVAL_EVIDENCE>" in user_context
+    assert "<CONFLICT_HINTS>" in user_context
+    assert "<ANSWERING_NOTES>" in user_context
     assert metrics.total_input_tokens <= metrics.input_budget_tokens

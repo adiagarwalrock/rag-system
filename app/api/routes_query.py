@@ -7,6 +7,7 @@ Supports two response modes controlled by the ``stream`` field in the request bo
 * ``stream: true`` — Server-Sent Events stream.  Each SSE event has a named
   ``event`` field so clients can filter by type without parsing JSON:
 
+    event: session    data: {"session_id": "...", "user_message_id": "..."}
     event: status     data: {"delta": "<phase message>"}
     event: reasoning  data: {"delta": "<reasoning token>"}
     event: final      data: {<QueryResponse fields>}
@@ -30,7 +31,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.db.snowflake import get_db
+from app.db.snowflake import SessionLocal, get_db
 from app.retrieval.citation_builder import build_image_assets
 from app.schemas.document import QueryRequest, QueryResponse
 from app.services.chat_conversation_service import ChatConversationService
@@ -165,9 +166,13 @@ async def query_documents(
     _reasoning_cb = _delta_cb("reasoning")
     _answer_cb = _delta_cb("answer")
 
+    def _session_cb(payload: dict[str, Any]) -> None:
+        event_queue.put(_sse_chunk("session", payload))
+
     def _run_service() -> None:
+        worker_db = SessionLocal()
         try:
-            result = ChatConversationService(db).execute_client_query(
+            result = ChatConversationService(worker_db).execute_client_query(
                 question=request.question,
                 client_id=request.client_id,
                 reasoning_effort=request.reasoning_effort,
@@ -176,6 +181,7 @@ async def query_documents(
                 status_callback=_status_cb,
                 reasoning_callback=_reasoning_cb,
                 answer_callback=_answer_cb,
+                session_callback=_session_cb,
             )
             event_queue.put(
                 _sse_chunk("final", _build_query_response(result).model_dump())
@@ -183,6 +189,7 @@ async def query_documents(
         except Exception as exc:
             event_queue.put(_sse_chunk("error", {"detail": str(exc)}))
         finally:
+            worker_db.close()
             event_queue.put(_DONE)
 
     # Start the worker thread before returning the response so the queue is

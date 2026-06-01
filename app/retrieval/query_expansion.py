@@ -58,6 +58,17 @@ EXPANSION_TRIGGERS = (
     "diagram",
     "image",
     "screenshot",
+    "largest",
+    "ranked",
+    "ranking",
+    "tenant",
+    "markets",
+    "regions",
+    "asset list",
+    "property list",
+    "named assets",
+    "named properties",
+    "property names",
 )
 
 FOLLOW_UP_PHRASES = (

@@ -38,6 +38,7 @@ class ChatConversationService:
         status_callback=None,
         reasoning_callback=None,
         answer_callback=None,
+        session_callback=None,
         skip_conversation_context: bool = False,
     ) -> dict:
         session = self._resolve_session(client_id=client_id, session_id=session_id)
@@ -52,6 +53,16 @@ class ChatConversationService:
         )
         self._touch_session(session, first_user_prompt=question)
         self.db.commit()
+        if session_callback is not None:
+            try:
+                session_callback(
+                    {
+                        "session_id": session.id,
+                        "user_message_id": user_message.id,
+                    }
+                )
+            except Exception:
+                logger.exception("Session callback failed for session %s", session.id)
 
         if skip_conversation_context:
             conversation_context_dict: dict = {}
