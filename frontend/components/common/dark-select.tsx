@@ -7,6 +7,8 @@ import { cn } from "@/lib/utils";
 export type DarkSelectOption<T extends string = string> = {
   value: T;
   label: string;
+  disabled?: boolean;
+  hint?: string;
 };
 
 export function DarkSelect<T extends string>({
@@ -82,9 +84,11 @@ export function DarkSelect<T extends string>({
             <button
               key={option.value}
               type="button"
+              disabled={option.disabled}
               className={cn(
                 "flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground",
                 option.value === value && "bg-muted text-foreground",
+                option.disabled && "cursor-not-allowed opacity-40 hover:bg-transparent hover:text-muted-foreground",
               )}
               onClick={() => {
                 onChange(option.value);
@@ -92,7 +96,10 @@ export function DarkSelect<T extends string>({
               }}
             >
               <span className="min-w-0 truncate">{option.label}</span>
-              {option.value === value ? <Check className="h-3.5 w-3.5 shrink-0 text-blue-300" /> : null}
+              <span className="shrink-0">
+                {option.value === value ? <Check className="h-3.5 w-3.5 text-blue-300" /> : null}
+                {option.disabled && option.hint ? <span className="text-[10px] text-muted-foreground/60">{option.hint}</span> : null}
+              </span>
             </button>
           ))}
         </div>

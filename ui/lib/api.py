@@ -112,6 +112,7 @@ class VecteraCore:
         client_id: str,
         file_name: str,
         file_content: bytes,
+        parser_preference: str | None = None,
     ) -> dict:
         with SessionLocal() as db:
             # Need client_name for ingestion service metadata
@@ -124,6 +125,7 @@ class VecteraCore:
                 client_id=client_id,
                 client_name=client_name,
                 db=db,
+                parser_preference=parser_preference,
             )
             return {
                 "id": doc.id,
@@ -131,6 +133,12 @@ class VecteraCore:
                 "status": doc.status,
                 "ingestion_job_id": job.id,
             }
+
+    def list_available_parsers(self) -> list[dict]:
+        """Return all parsers with their availability given current config."""
+        from app.ingestion.parser.registry import get_available_parsers
+
+        return get_available_parsers()
 
     def get_document_status(self, document_id: str) -> dict:
         with SessionLocal() as db:

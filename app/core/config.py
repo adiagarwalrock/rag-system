@@ -128,6 +128,10 @@ class Settings(BaseSettings):
     # chain-of-thought tokens against max_output_tokens, starving the JSON output.
     REASONING_MODEL: str | None = "gpt-5.4-mini"
 
+    # Server-wide default reasoning effort.  Requests that omit reasoning_effort fall back to this.
+    # Valid values: "low", "medium", "high".
+    REASONING_EFFORT: str = "medium"
+
     # OpenAI reasoning summary verbosity: "auto", "concise", "detailed", or None to disable.
     # Only applied when OPENAI_USE_RESPONSES=True and a reasoning_effort is set.
     # Must be explicitly opted in — OpenAI does not return reasoning summaries unless reasoning.summary is set.

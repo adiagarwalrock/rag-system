@@ -27,17 +27,49 @@ class DocumentListResponse(BaseModel):
     file_type: str
     status: str
     document_family: Optional[str] = None
+    parser_used: Optional[str] = None
+    vector_point_count: int = 0
     created_at: datetime
 
     class Config:
         from_attributes = True
 
 
+class ParserInfo(BaseModel):
+    id: str
+    label: str
+    available: bool
+    description: str
+
+
+class ParserListResponse(BaseModel):
+    parsers: List[ParserInfo]
+
+
+class DocumentStatusResponse(BaseModel):
+    document_id: str
+    name: str
+    status: str
+    ingestion_job_id: Optional[str] = None
+    ingestion_job_status: Optional[str] = None
+    vector_point_count: int = 0
+    document_family: Optional[str] = None
+    version_label: Optional[str] = None
+    version_group: Optional[str] = None
+    is_current_version: Optional[bool] = None
+
+
+class DeleteResponse(BaseModel):
+    status: str
+    message: str
+
+
 class QueryRequest(BaseModel):
     client_id: str
     question: str
     session_id: Optional[str] = None
-    reasoning_effort: Literal["low", "medium", "high"] = "medium"
+    reasoning_effort: Optional[Literal["low", "medium", "high"]] = None
+    """Per-request effort override.  ``None`` defers to the server ``REASONING_EFFORT`` default."""
     reasoning_summary: Optional[Literal["auto", "concise", "detailed"]] = None
     """OpenAI reasoning summary verbosity for this request.  ``None`` (default) falls back
     to the ``REASONING_SUMMARY`` environment variable.  Only effective when
@@ -93,6 +125,7 @@ class QueryResponse(BaseModel):
     retrieval: Dict[str, Any] = {}
     reasoning_effort: Literal["low", "medium", "high"] = "medium"
     reasoning_effort_applied: bool = False
+    reasoning_summary: Optional[Literal["auto", "concise", "detailed"]] = None
     session_id: Optional[str] = None
     user_message_id: Optional[str] = None
     assistant_message_id: Optional[str] = None

@@ -16,6 +16,19 @@ from ui.components.utils import (
 )
 
 
+@st.cache_data(ttl=None, show_spinner=False)
+def _get_parser_options() -> list[dict]:
+    """Return parser availability list. Cached for the process lifetime — config doesn't change at runtime."""
+    try:
+        from app.ingestion.parser.registry import get_available_parsers
+        return get_available_parsers()
+    except Exception:
+        return [
+            {"id": "auto", "label": "Auto (recommended)", "available": True},
+            {"id": "legacy", "label": "Legacy", "available": True},
+        ]
+
+
 def _format_dt(value: str | None) -> str:
     if not value:
         return "n/a"
@@ -145,18 +158,46 @@ def render_documents():
                 label_visibility="collapsed",
             )
 
+            parser_options_raw = _get_parser_options()
+
+            parser_label_to_id: dict[str, str] = {}
+            parser_id_available: dict[str, bool] = {}
+            parser_display_labels: list[str] = []
+            for p in parser_options_raw:
+                available = bool(p.get("available"))
+                display = p["label"] if available else f"{p['label']} (not configured)"
+                parser_label_to_id[display] = p["id"]
+                parser_id_available[p["id"]] = available
+                parser_display_labels.append(display)
+
+            selected_parser_label = st.selectbox(
+                "Parser",
+                options=parser_display_labels,
+                help="Choose which parser to use. Unconfigured parsers are shown but cannot be selected.",
+                key="document_parser_selector",
+            )
+            selected_parser_id = parser_label_to_id[selected_parser_label]
+            parser_unavailable = not parser_id_available.get(selected_parser_id, False)
+            if parser_unavailable:
+                st.warning(
+                    f"**{selected_parser_label}** is not configured. Select a different parser or configure the required API key.",
+                    icon=":material/warning:",
+                )
+
             if st.button(
                 "Queue ingestion",
                 type="primary",
                 icon=":material/upload:",
                 key="upload_and_ingest",
                 width="stretch",
+                disabled=parser_unavailable,
             ):
                 if not uploaded_files:
                     st.error("Select at least one file to upload.")
                 else:
                     queued = 0
                     failed = 0
+                    parser_pref = None if selected_parser_id == "auto" else selected_parser_id
                     with st.status("Queueing uploads...", expanded=True):
                         for uploaded_file in uploaded_files:
                             st.write(f":material/description: {uploaded_file.name}")
@@ -166,6 +207,7 @@ def render_documents():
                                     active_client_id,
                                     uploaded_file.name,
                                     content,
+                                    parser_preference=parser_pref,
                                 )
                                 queued += 1
                             except Exception as exc:

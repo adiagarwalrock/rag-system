@@ -2341,10 +2341,6 @@ def _build_grounded_prompt(
         answering_notes_block=_build_answering_notes(question, citations),
     )
 
-    with open("user_prmpt.txt", "w") as f:
-        print("=== USER PROMPT ===")
-        f.write(user_prompt)
-
     return user_prompt
 
 

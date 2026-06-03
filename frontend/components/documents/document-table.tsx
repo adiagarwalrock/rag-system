@@ -20,7 +20,7 @@ export function DocumentTable({
 }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[980px] text-left text-sm">
+      <table className="w-full min-w-[860px] text-left text-sm">
         <thead className="border-b border-border text-xs text-muted-foreground">
           <tr>
             <th className="py-2 pr-3 font-medium">Filename</th>
@@ -29,7 +29,6 @@ export function DocumentTable({
             <th className="py-2 pr-3 font-medium">Family</th>
             <th className="py-2 pr-3 font-medium">Parser</th>
             <th className="py-2 pr-3 font-medium">Vectors</th>
-            <th className="py-2 pr-3 font-medium">Collection</th>
             <th className="py-2 pr-3 font-medium">Uploaded</th>
             <th className="py-2 text-right font-medium">Actions</th>
           </tr>
@@ -43,7 +42,6 @@ export function DocumentTable({
               <td className="max-w-[180px] truncate py-3 pr-3 font-mono text-xs text-muted-foreground">{document.document_family}</td>
               <td className="py-3 pr-3 font-mono text-xs text-muted-foreground">{document.parser_used ?? "-"}</td>
               <td className="py-3 pr-3 font-mono text-xs">{formatNumber(document.vector_points)}</td>
-              <td className="max-w-[180px] truncate py-3 pr-3 font-mono text-xs text-muted-foreground">{document.active_collection ?? "-"}</td>
               <td className="py-3 pr-3 font-mono text-xs text-muted-foreground">{formatDate(document.uploaded_at)}</td>
               <td className="py-3">
                 <div className="flex justify-end gap-1">

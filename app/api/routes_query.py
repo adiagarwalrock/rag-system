@@ -31,6 +31,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.snowflake import SessionLocal, get_db
 from app.retrieval.citation_builder import build_image_assets
 from app.schemas.document import QueryRequest, QueryResponse
@@ -58,6 +59,7 @@ def _build_query_response(result: dict[str, Any]) -> QueryResponse:
         retrieval=_build_retrieval_trace(result),
         reasoning_effort=result.get("reasoning_effort", "medium"),
         reasoning_effort_applied=result.get("reasoning_effort_applied", False),
+        reasoning_summary=result.get("reasoning_summary"),
         session_id=result.get("session_id"),
         user_message_id=result.get("user_message_id"),
         assistant_message_id=result.get("assistant_message_id"),
@@ -136,12 +138,14 @@ async def query_documents(
     except ValueError:
         raise HTTPException(status_code=404, detail="Client not found")
 
+    effort = request.reasoning_effort or settings.REASONING_EFFORT
+
     if not request.stream:
-        # ── Non-streaming path (unchanged behaviour) ──────────────────────
+        # ── Non-streaming path ────────────────────────────────────────────
         result = ChatConversationService(db).execute_client_query(
             question=request.question,
             client_id=request.client_id,
-            reasoning_effort=request.reasoning_effort,
+            reasoning_effort=effort,
             reasoning_summary=request.reasoning_summary,
             session_id=request.session_id,
         )
@@ -175,7 +179,7 @@ async def query_documents(
             result = ChatConversationService(worker_db).execute_client_query(
                 question=request.question,
                 client_id=request.client_id,
-                reasoning_effort=request.reasoning_effort,
+                reasoning_effort=effort,
                 reasoning_summary=request.reasoning_summary,
                 session_id=request.session_id,
                 status_callback=_status_cb,

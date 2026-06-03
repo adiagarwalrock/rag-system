@@ -45,8 +45,9 @@ export const documentSchema = z
     document_family: z.string().default("default"),
     version: stringish.default("1"),
     parser_used: z
-      .enum(["reducto", "llamaparse", "layout_pdf", "legacy"])
-      .optional(),
+      .string()
+      .nullish()
+      .transform((value) => value ?? undefined),
     uploaded_at: z.string(),
     updated_at: z.string().optional(),
     vector_points: z.number().optional(),
@@ -167,7 +168,7 @@ export const queryRequestSchema = z.object({
   question: z.string().min(1),
   client_id: z.string().min(1),
   session_id: z.string().optional(),
-  reasoning_effort: reasoningEffortSchema,
+  reasoning_effort: reasoningEffortSchema.optional(),
   reasoning_summary: z.enum(["auto", "concise", "detailed"]).optional(),
   retrieval_mode: retrievalModeSchema.optional(),
   include_memory: z.boolean().optional(),
@@ -190,6 +191,7 @@ export const queryResponseSchema = z
     images_used: z.array(z.string()).default([]),
     image_evidence_count: z.number().default(0),
     reasoning_effort: reasoningEffortSchema,
+    reasoning_summary: z.enum(["auto", "concise", "detailed"]).optional(),
     created_at: z.string(),
     session_id: z.string().nullish(),
     user_message_id: z.string().optional(),
@@ -287,6 +289,176 @@ export const qdrantPointSchema = z
   })
   .passthrough();
 
+export const qdrantNodeSchema = z
+  .object({
+    id: z.string(),
+    collection: z.string(),
+    document_id: z.string().nullish(),
+    document_name: z.string().nullish(),
+    client_id: z.string().nullish(),
+    parser_name: z.string().nullish(),
+    parser_version: z.string().nullish(),
+    chunk_id: z.string().nullish(),
+    chunk_type: z.string().nullish(),
+    page_num: z.number().nullish(),
+    page_nums: z.array(z.number()).default([]),
+    section_path: z.string().nullish(),
+    citation_label: z.string().nullish(),
+    text: z.string().nullish(),
+    text_preview: z.string().nullish(),
+    text_length: z.number().default(0),
+    node_metadata: record.default({}),
+    top_level_metadata: record.default({}),
+    raw_payload: record.optional(),
+  })
+  .passthrough();
+
+export const qdrantNodeFacetsSchema = z
+  .object({
+    documents: z
+      .array(
+        z
+          .object({
+            id: z.string().nullish(),
+            title: z.string(),
+            count: z.number(),
+          })
+          .passthrough(),
+      )
+      .default([]),
+    parsers: z
+      .array(
+        z
+          .object({
+            name: z.string(),
+            count: z.number(),
+          })
+          .passthrough(),
+      )
+      .default([]),
+    chunk_types: z
+      .array(
+        z
+          .object({
+            name: z.string(),
+            count: z.number(),
+          })
+          .passthrough(),
+      )
+      .default([]),
+  })
+  .passthrough();
+
+export const qdrantNodeListResponseSchema = z
+  .object({
+    nodes: z.array(qdrantNodeSchema).default([]),
+    facets: qdrantNodeFacetsSchema.default({
+      documents: [],
+      parsers: [],
+      chunk_types: [],
+    }),
+    total: z.number().default(0),
+  })
+  .passthrough();
+
+export const qdrantNodeCompareResponseSchema = z
+  .object({
+    nodes: z.array(qdrantNodeSchema).default([]),
+  })
+  .passthrough();
+
+export const qdrantDocumentCandidateSchema = z
+  .object({
+    document_key: z.string(),
+    collection: z.string(),
+    client_id: z.string().nullish(),
+    document_id: z.string().nullish(),
+    document_name: z.string().nullish(),
+    parser_name: z.string().nullish(),
+    parser_version: z.string().nullish(),
+    node_count: z.number().default(0),
+    page_count: z.number().default(0),
+    text_length: z.number().default(0),
+    preview: z.string().nullish(),
+  })
+  .passthrough();
+
+export const qdrantDocumentFacetsSchema = z
+  .object({
+    documents: z
+      .array(
+        z
+          .object({
+            id: z.string().nullish(),
+            title: z.string(),
+            count: z.number(),
+          })
+          .passthrough(),
+      )
+      .default([]),
+    clients: z
+      .array(
+        z
+          .object({
+            id: z.string(),
+            count: z.number(),
+          })
+          .passthrough(),
+      )
+      .default([]),
+    parsers: z
+      .array(
+        z
+          .object({
+            name: z.string(),
+            count: z.number(),
+          })
+          .passthrough(),
+      )
+      .default([]),
+  })
+  .passthrough();
+
+export const qdrantDocumentListResponseSchema = z
+  .object({
+    documents: z.array(qdrantDocumentCandidateSchema).default([]),
+    facets: qdrantDocumentFacetsSchema.default({
+      documents: [],
+      clients: [],
+      parsers: [],
+    }),
+    total: z.number().default(0),
+  })
+  .passthrough();
+
+export const qdrantDocumentSourceNodeSchema = z
+  .object({
+    id: z.string().nullish(),
+    chunk_id: z.string().nullish(),
+    chunk_type: z.string().nullish(),
+    page_num: z.number().nullish(),
+    page_nums: z.array(z.number()).default([]),
+    section_path: z.string().nullish(),
+    citation_label: z.string().nullish(),
+    text_length: z.number().default(0),
+    text_preview: z.string().nullish(),
+  })
+  .passthrough();
+
+export const qdrantDocumentCompareItemSchema = qdrantDocumentCandidateSchema
+  .extend({
+    markdown: z.string().default(""),
+    source_nodes: z.array(qdrantDocumentSourceNodeSchema).default([]),
+    metadata_summary: record.default({}),
+  })
+  .passthrough();
+
+export const qdrantDocumentCompareResponseSchema = z
+  .object({
+    documents: z.array(qdrantDocumentCompareItemSchema).default([]),
+  })
+  .passthrough();
+
 export const qualityTestSchema = z
   .object({
     id: z.string(),
@@ -316,6 +488,19 @@ export const qualityRunSchema = z
   })
   .passthrough();
 
+export const parserInfoSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  available: z.boolean(),
+  description: z.string(),
+});
+export const parserListResponseSchema = z.object({
+  parsers: z.array(parserInfoSchema),
+});
+
+export type ParserInfo = z.infer<typeof parserInfoSchema>;
+export type ParserListResponse = z.infer<typeof parserListResponseSchema>;
+
 export type Client = z.infer<typeof clientSchema>;
 export type Document = z.infer<typeof documentSchema>;
 export type IngestionJob = z.infer<typeof ingestionJobSchema>;
@@ -332,5 +517,12 @@ export type QueryHistoryItem = z.infer<typeof queryHistoryItemSchema>;
 export type RuntimeStatus = z.infer<typeof runtimeStatusSchema>;
 export type QdrantCollection = z.infer<typeof qdrantCollectionSchema>;
 export type QdrantPoint = z.infer<typeof qdrantPointSchema>;
+export type QdrantNode = z.infer<typeof qdrantNodeSchema>;
+export type QdrantNodeListResponse = z.infer<typeof qdrantNodeListResponseSchema>;
+export type QdrantNodeCompareResponse = z.infer<typeof qdrantNodeCompareResponseSchema>;
+export type QdrantDocumentCandidate = z.infer<typeof qdrantDocumentCandidateSchema>;
+export type QdrantDocumentListResponse = z.infer<typeof qdrantDocumentListResponseSchema>;
+export type QdrantDocumentCompareItem = z.infer<typeof qdrantDocumentCompareItemSchema>;
+export type QdrantDocumentCompareResponse = z.infer<typeof qdrantDocumentCompareResponseSchema>;
 export type QualityTest = z.infer<typeof qualityTestSchema>;
 export type QualityRun = z.infer<typeof qualityRunSchema>;

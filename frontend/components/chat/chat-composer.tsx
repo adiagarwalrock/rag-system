@@ -163,13 +163,12 @@ export function ChatComposer({
             label="Reasoning effort"
             value={reasoningEffort ?? "medium"}
             options={[
-              { value: "low", label: "low" },
-              { value: "medium", label: "medium" },
-              { value: "high", label: "high" },
+              { value: "low", label: "Low" },
+              { value: "medium", label: "Medium" },
+              { value: "high", label: "High" },
             ]}
             onChange={(value) => onReasoningEffortChange?.(value)}
-            className="hidden md:block"
-            buttonClassName="min-w-24"
+            buttonClassName="min-w-[6rem]"
             menuSide="top"
           />
           {streaming ? (

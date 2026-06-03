@@ -5,7 +5,7 @@ Document and ingestion API routes.
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from sqlalchemy import true
+from sqlalchemy import func, true
 from sqlalchemy.orm import Session
 
 from app.db.models.document import (
@@ -15,7 +15,14 @@ from app.db.models.document import (
     VectorNodeRegistry,
 )
 from app.db.snowflake import get_db
-from app.schemas.document import DocumentListResponse, DocumentResponse
+from app.ingestion.parser.registry import get_available_parsers, validate_parser_preference
+from app.schemas.document import (
+    DeleteResponse,
+    DocumentListResponse,
+    DocumentResponse,
+    DocumentStatusResponse,
+    ParserListResponse,
+)
 from app.services.client_service import ClientLookupService
 from app.services.ingest_service import (
     delete_document,
@@ -24,6 +31,7 @@ from app.services.ingest_service import (
 )
 
 router = APIRouter()
+_LEGACY_JOB_PARSER_NAME = "rag_ingestion_pipeline"
 
 
 @router.get("/", response_model=List[DocumentListResponse])
@@ -35,7 +43,72 @@ def list_documents(
     query = db.query(Document)
     if client_id:
         query = query.filter(Document.client_id == client_id)
-    return query.order_by(Document.created_at.desc()).all()
+    documents = query.order_by(Document.created_at.desc()).all()
+    return _enrich_document_list(documents, db)
+
+
+@router.get("/parsers", response_model=ParserListResponse)
+def list_parsers():
+    """List available document parsers given current server configuration."""
+    return {"parsers": get_available_parsers()}
+
+
+def _enrich_document_list(
+    documents: list[Document],
+    db: Session,
+) -> list[dict]:
+    if not documents:
+        return []
+
+    document_ids = [document.id for document in documents]
+    vector_counts = {
+        row.document_id: int(row.count or 0)
+        for row in (
+            db.query(
+                VectorNodeRegistry.document_id,
+                func.count(VectorNodeRegistry.id).label("count"),
+            )
+            .filter(
+                VectorNodeRegistry.document_id.in_(document_ids),
+                VectorNodeRegistry.is_active == true(),
+            )
+            .group_by(VectorNodeRegistry.document_id)
+            .all()
+        )
+    }
+
+    latest_parser_by_doc: dict[str, str | None] = {}
+    jobs = (
+        db.query(IngestionJob)
+        .filter(IngestionJob.document_id.in_(document_ids))
+        .order_by(IngestionJob.started_at.desc(), IngestionJob.id.desc())
+        .all()
+    )
+    for job in jobs:
+        if job.document_id in latest_parser_by_doc:
+            continue
+        latest_parser_by_doc[job.document_id] = _display_parser_name(job.parser_name)
+
+    return [
+        {
+            "id": document.id,
+            "client_id": document.client_id,
+            "name": document.name,
+            "file_type": document.file_type,
+            "status": document.status,
+            "document_family": document.document_family,
+            "parser_used": latest_parser_by_doc.get(document.id),
+            "vector_point_count": vector_counts.get(document.id, 0),
+            "created_at": document.created_at,
+        }
+        for document in documents
+    ]
+
+
+def _display_parser_name(parser_name: str | None) -> str | None:
+    if not parser_name or parser_name == _LEGACY_JOB_PARSER_NAME:
+        return None
+    return parser_name
 
 
 @router.get("/{document_id}", response_model=DocumentResponse)
@@ -50,7 +123,7 @@ def get_document(
     return doc
 
 
-@router.get("/{document_id}/status")
+@router.get("/{document_id}/status", response_model=DocumentStatusResponse)
 def get_document_status(
     document_id: str,
     db: Session = Depends(get_db),
@@ -101,9 +174,15 @@ def get_document_status(
 async def ingest_doc(
     file: UploadFile = File(...),
     client_id: str = Form(...),
+    parser: str | None = Form(None),
     db: Session = Depends(get_db),
 ):
     """Upload and ingest a document."""
+    try:
+        validate_parser_preference(parser)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
     try:
         client = ClientLookupService(db).require_client(client_id)
     except ValueError:
@@ -118,6 +197,7 @@ async def ingest_doc(
         client_id=client_id,
         client_name=client.name,
         db=db,
+        parser_preference=parser,
     )
     return {
         "id": result.id,
@@ -146,7 +226,7 @@ def retry_doc_ingestion(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.delete("/{document_id}")
+@router.delete("/{document_id}", response_model=DeleteResponse)
 def delete_doc(
     document_id: str,
     hard: bool = Query(False),

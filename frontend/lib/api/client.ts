@@ -8,7 +8,12 @@ import {
   clientSchema,
   documentSchema,
   ingestionJobSchema,
+  parserListResponseSchema,
   qdrantCollectionSchema,
+  qdrantDocumentCompareResponseSchema,
+  qdrantDocumentListResponseSchema,
+  qdrantNodeCompareResponseSchema,
+  qdrantNodeListResponseSchema,
   qdrantPointSchema,
   qualityRunSchema,
   qualityTestSchema,
@@ -21,7 +26,12 @@ import {
   type Client,
   type Document,
   type IngestionJob,
+  type ParserListResponse,
   type QdrantCollection,
+  type QdrantDocumentCompareItem,
+  type QdrantDocumentListResponse,
+  type QdrantNode,
+  type QdrantNodeListResponse,
   type QdrantPoint,
   type QualityRun,
   type QualityTest,
@@ -38,6 +48,25 @@ const apiBaseUrl =
 
 type RequestOptions = RequestInit & {
   fallbackPaths?: string[];
+};
+
+export type QdrantNodeFilters = {
+  clientId?: string;
+  documentId?: string;
+  documentTitle?: string;
+  parserName?: string;
+  chunkType?: string;
+  pageNum?: number;
+  search?: string;
+  limit?: number;
+};
+
+export type QdrantDocumentFilters = {
+  clientId?: string;
+  documentTitle?: string;
+  parserName?: string;
+  search?: string;
+  limit?: number;
 };
 
 async function requestJson<T>(
@@ -129,7 +158,14 @@ function friendlyHttpMessage(status: number, path: string, body: unknown) {
 }
 
 function normalizeClient(raw: unknown): Client {
-  return clientSchema.parse(raw);
+  const value = raw as Record<string, unknown>;
+  return clientSchema.parse({
+    ...value,
+    document_count: toFiniteNumber(value.document_count) ?? 0,
+    query_count: toFiniteNumber(value.query_count) ?? 0,
+    session_count: toFiniteNumber(value.session_count) ?? 0,
+    memory_point_count: toFiniteNumber(value.memory_point_count) ?? 0,
+  });
 }
 
 function normalizeDocument(raw: unknown): Document {
@@ -612,16 +648,23 @@ export const apiClient = {
     return raw.map(normalizeDocument);
   },
 
-  async uploadDocument(clientId: string, file: File, signal?: AbortSignal) {
+  async uploadDocument(clientId: string, file: File, parserPreference?: string, signal?: AbortSignal) {
     const form = new FormData();
     form.append("file", file);
     form.append("client_id", clientId);
+    if (parserPreference && parserPreference !== "auto") {
+      form.append("parser", parserPreference);
+    }
     const raw = await requestJson("/documents/ingest", z.unknown(), {
       method: "POST",
       body: form,
       signal,
     });
     return normalizeDocument(raw);
+  },
+
+  async listParsers(signal?: AbortSignal): Promise<ParserListResponse> {
+    return requestJson("/documents/parsers", parserListResponseSchema, { signal });
   },
 
   async getDocument(clientId: string, documentId: string, signal?: AbortSignal) {
@@ -791,6 +834,83 @@ export const apiClient = {
       qdrantPointSchema,
       { signal },
     );
+  },
+
+  async listQdrantNodes(
+    collection: string,
+    filters: QdrantNodeFilters = {},
+    signal?: AbortSignal,
+  ): Promise<QdrantNodeListResponse> {
+    const params = new URLSearchParams();
+    if (filters.clientId) params.set("client_id", filters.clientId);
+    if (filters.documentId) params.set("document_id", filters.documentId);
+    if (filters.documentTitle) params.set("document_title", filters.documentTitle);
+    if (filters.parserName) params.set("parser_name", filters.parserName);
+    if (filters.chunkType) params.set("chunk_type", filters.chunkType);
+    if (filters.pageNum !== undefined && Number.isFinite(filters.pageNum)) {
+      params.set("page_num", String(filters.pageNum));
+    }
+    if (filters.search) params.set("search", filters.search);
+    params.set("limit", String(filters.limit ?? 200));
+    const query = params.toString();
+    const raw = await requestJson(
+      `/qdrant/collections/${encodeURIComponent(collection)}/nodes${query ? `?${query}` : ""}`,
+      z.unknown(),
+      { signal },
+    );
+    return qdrantNodeListResponseSchema.parse(raw);
+  },
+
+  async compareQdrantNodes(
+    collection: string,
+    pointIds: string[],
+    signal?: AbortSignal,
+  ): Promise<QdrantNode[]> {
+    const params = new URLSearchParams();
+    for (const pointId of pointIds) params.append("point_ids", pointId);
+    const raw = await requestJson(
+      `/qdrant/collections/${encodeURIComponent(collection)}/nodes/compare?${params.toString()}`,
+      z.unknown(),
+      { signal },
+    );
+    const response = qdrantNodeCompareResponseSchema.parse(raw);
+    return response.nodes;
+  },
+
+  async listQdrantDocuments(
+    collection: string,
+    filters: QdrantDocumentFilters = {},
+    signal?: AbortSignal,
+  ): Promise<QdrantDocumentListResponse> {
+    const params = new URLSearchParams();
+    if (filters.clientId) params.set("client_id", filters.clientId);
+    if (filters.documentTitle) params.set("document_title", filters.documentTitle);
+    if (filters.parserName) params.set("parser_name", filters.parserName);
+    if (filters.search) params.set("search", filters.search);
+    params.set("limit", String(filters.limit ?? 200));
+    const query = params.toString();
+    const raw = await requestJson(
+      `/qdrant/collections/${encodeURIComponent(collection)}/documents${query ? `?${query}` : ""}`,
+      z.unknown(),
+      { signal },
+    );
+    return qdrantDocumentListResponseSchema.parse(raw);
+  },
+
+  async compareQdrantDocuments(
+    collection: string,
+    documentKeys: string[],
+    signal?: AbortSignal,
+  ): Promise<QdrantDocumentCompareItem[]> {
+    const params = new URLSearchParams();
+    for (const documentKey of documentKeys) params.append("document_keys", documentKey);
+    const raw = await requestJson(
+      `/qdrant/collections/${encodeURIComponent(collection)}/documents/compare?${params.toString()}`,
+      z.unknown(),
+      { signal },
+    );
+    const response = qdrantDocumentCompareResponseSchema.parse(raw);
+    return response.documents;
   },
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars

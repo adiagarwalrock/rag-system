@@ -4,7 +4,8 @@ import * as Tabs from "@radix-ui/react-tabs";
 import { FileText, Upload, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useClients } from "@/lib/hooks/use-clients";
-import { useDeleteDocument, useDocuments, useRetryDocument, useUploadDocument } from "@/lib/hooks/use-documents";
+import { useDeleteDocument, useDocuments, useParsers, useRetryDocument, useUploadDocument } from "@/lib/hooks/use-documents";
+import type { ParserInfo } from "@/lib/api/schemas";
 import { useIngestionJobs, useRetryIngestionJob } from "@/lib/hooks/use-ingestion-jobs";
 import { useWorkspaceStore } from "@/lib/state/workspace-store";
 import { PageHeader } from "@/components/shell/page-header";
@@ -16,6 +17,11 @@ import { LoadingState } from "@/components/common/loading-state";
 import { SectionCard } from "@/components/common/section-card";
 import { DarkSelect } from "@/components/common/dark-select";
 
+const defaultParserOptions: ParserInfo[] = [
+  { id: "auto", label: "Auto (recommended)", available: true, description: "" },
+  { id: "legacy", label: "Legacy", available: true, description: "" },
+];
+
 export default function DocumentsPage() {
   const clients = useClients();
   const { workspaceId, setWorkspaceId } = useWorkspaceStore();
@@ -25,7 +31,9 @@ export default function DocumentsPage() {
   const retryDoc = useRetryDocument(workspaceId);
   const deleteDoc = useDeleteDocument(workspaceId);
   const retryJob = useRetryIngestionJob(workspaceId);
+  const parsers = useParsers();
   const [files, setFiles] = useState<File[]>([]);
+  const [selectedParser, setSelectedParser] = useState("auto");
   const activeJobs = (jobs.data ?? []).filter((job) =>
     job.status === "queued" || job.status === "processing" || job.status === "failed",
   );
@@ -36,8 +44,9 @@ export default function DocumentsPage() {
 
   async function queueUpload() {
     if (!files.length) return;
+    const parserPreference = selectedParser === "auto" ? undefined : selectedParser;
     await Promise.all(
-      files.map((file) => upload.mutateAsync({ file })),
+      files.map((file) => upload.mutateAsync({ file, parserPreference })),
     );
     setFiles([]);
     await documents.refetch();
@@ -83,6 +92,20 @@ export default function DocumentsPage() {
         </Tabs.List>
         <Tabs.Content value="upload">
           <SectionCard title="Upload files" description="Supported formats: PDF, DOCX, PPTX. Max size: 200MB per file.">
+            <div className="mb-4">
+              <DarkSelect
+                label="Parser"
+                value={selectedParser}
+                onChange={setSelectedParser}
+                className="w-72"
+                options={(parsers.data?.parsers ?? defaultParserOptions).map((p: ParserInfo) => ({
+                  value: p.id,
+                  label: p.label,
+                  disabled: !p.available,
+                  hint: p.available ? undefined : "not configured",
+                }))}
+              />
+            </div>
             <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
               <label
                 className="flex min-h-56 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-border bg-muted/20 p-8 text-center hover:bg-muted/30"

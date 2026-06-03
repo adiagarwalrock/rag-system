@@ -37,6 +37,7 @@ from app.db.models.document import (
 from app.db.snowflake import SessionLocal
 from app.indexing.vector_store import COLLECTION_NAME, vector_store_manager
 from app.ingestion.parser import parse_document, save_upload_file
+from app.ingestion.parser.registry import PARSER_AUTO, VALID_PARSERS
 from app.ingestion.validator import (
     compute_checksum,
     validate_file_size,
@@ -165,6 +166,7 @@ NON_SEMANTIC_LLM_METADATA_KEYS = (
 )
 
 _MISSING_DOC_ID_SENTINELS = {"", "none", "null", "n/a", "na", "undefined"}
+_LEGACY_JOB_PARSER_NAME = "rag_ingestion_pipeline"
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +175,7 @@ class IngestionQueueTask:
     job_id: str
     client_id: str
     client_name: str
+    parser_preference: str | None = None
 
 
 class IngestionQueueManager:
@@ -294,6 +297,7 @@ class IngestionQueueManager:
                     db_doc.id,
                     db_doc.file_type,
                     db,
+                    parser_preference=task.parser_preference,
                 )
             except Exception as exc:
                 _handle_ingestion_failure(
@@ -318,6 +322,7 @@ class IngestionExecutionContext:
     doc_id: str
     file_ext: str
     db: Session
+    parser_preference: str | None = None
 
 
 _INGESTION_QUEUE_MANAGER: IngestionQueueManager | None = None
@@ -475,6 +480,7 @@ def _create_ingestion_job_record(
     status: str,
     file_size: int,
     started_at: datetime | None,
+    parser_preference: str | None = None,
 ) -> IngestionJob:
     return IngestionJob(
         id=job_id,
@@ -482,10 +488,36 @@ def _create_ingestion_job_record(
         document_id=doc_id,
         status=status,
         started_at=started_at,
-        parser_name="rag_ingestion_pipeline",
-        parser_version="2.0.0",
+        parser_name=_normalize_parser_intent(parser_preference) or PARSER_AUTO,
+        parser_version=None,
         filesize_bytes=file_size,
     )
+
+
+def _normalize_parser_intent(parser_preference: str | None) -> str | None:
+    parser = (parser_preference or "").strip().lower()
+    if not parser:
+        return PARSER_AUTO
+    if parser == _LEGACY_JOB_PARSER_NAME:
+        return None
+    if parser not in VALID_PARSERS:
+        return None
+    return parser
+
+
+def _retry_parser_preference(db: Session, document_id: str) -> str | None:
+    jobs = (
+        db.query(IngestionJob)
+        .filter(IngestionJob.document_id == document_id)
+        .order_by(IngestionJob.started_at.desc(), IngestionJob.id.desc())
+        .all()
+    )
+    for job in jobs:
+        parser = _normalize_parser_intent(job.parser_name)
+        if parser is None:
+            continue
+        return None if parser == PARSER_AUTO else parser
+    return None
 
 
 def ingest_document(
@@ -494,6 +526,7 @@ def ingest_document(
     client_id: str,
     client_name: str,
     db: Session,
+    parser_preference: str | None = None,
 ) -> Document:
     """
     Full ingestion pipeline for a single document using LlamaIndex IngestionPipeline.
@@ -526,6 +559,7 @@ def ingest_document(
         status="running",
         file_size=file_size,
         started_at=datetime.now(timezone.utc),
+        parser_preference=parser_preference,
     )
     db.add(job)
     db.commit()
@@ -545,6 +579,7 @@ def ingest_document(
             doc_id,
             file_ext,
             db,
+            parser_preference=parser_preference,
         )
         return db_doc
     except Exception as e:
@@ -558,6 +593,7 @@ def enqueue_document_ingestion(
     client_id: str,
     client_name: str,
     db: Session,
+    parser_preference: str | None = None,
 ) -> tuple[Document, IngestionJob]:
     """
     Queue document ingestion for background processing.
@@ -588,6 +624,7 @@ def enqueue_document_ingestion(
         status="queued",
         file_size=file_size,
         started_at=None,
+        parser_preference=parser_preference,
     )
     db.add(job)
     db.commit()
@@ -605,6 +642,7 @@ def enqueue_document_ingestion(
         job_id=job_id,
         client_id=client_id,
         client_name=client_name,
+        parser_preference=parser_preference,
     )
     try:
         get_ingestion_queue_manager().enqueue(task)
@@ -640,6 +678,7 @@ def retry_ingestion(document_id: str, db: Session) -> Document:
     client_id = db_doc.client_id
     doc_id = db_doc.id
     file_ext = db_doc.file_type
+    retry_parser_preference = _retry_parser_preference(db, doc_id)
 
     # 3. Pre-clean prior partial data
     try:
@@ -663,6 +702,7 @@ def retry_ingestion(document_id: str, db: Session) -> Document:
         status="running",
         file_size=os.path.getsize(file_path),
         started_at=datetime.now(timezone.utc),
+        parser_preference=retry_parser_preference,
     )
     db.add(job)
     db.commit()
@@ -678,6 +718,7 @@ def retry_ingestion(document_id: str, db: Session) -> Document:
             doc_id,
             file_ext,
             db,
+            parser_preference=retry_parser_preference,
         )
         return db_doc
     except Exception as e:
@@ -752,7 +793,11 @@ class IngestionPipelineExecutor:
         vector_store_manager.configure_llama_settings()
 
         document_metadata = self._build_document_metadata()
-        llama_docs, units = parse_document(self.file_path, document_metadata)
+        llama_docs, units = parse_document(
+            self.file_path,
+            document_metadata,
+            parser_preference=self.context.parser_preference,
+        )
         self._apply_parser_metadata(llama_docs)
 
         version_info = self._resolve_version_info(llama_docs)
@@ -1031,6 +1076,7 @@ def _execute_pipeline(
     doc_id: str,
     file_ext: str,
     db: Session,
+    parser_preference: str | None = None,
 ):
     context = IngestionExecutionContext(
         db_doc=db_doc,
@@ -1042,6 +1088,7 @@ def _execute_pipeline(
         doc_id=doc_id,
         file_ext=file_ext,
         db=db,
+        parser_preference=parser_preference,
     )
     parsed_units, vector_rows = IngestionPipelineExecutor(context).run()
     logger.info(

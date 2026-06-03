@@ -16,6 +16,12 @@ from app.services.client_service import (
 )
 
 router = APIRouter()
+ZERO_CLIENT_COUNTS = {
+    "document_count": 0,
+    "query_count": 0,
+    "session_count": 0,
+    "memory_point_count": 0,
+}
 
 
 def _count_by_client(db: Session, model: Any, client_ids: list[str], *extra_filters: Any) -> dict[str, int]:
@@ -58,6 +64,7 @@ def _enrich(client: Client, counts: dict) -> ClientResponse:
         "is_active": client.is_active,
         "created_at": client.created_at,
         "updated_at": client.updated_at,
+        **ZERO_CLIENT_COUNTS,
         **counts,
     }
     return ClientResponse(**data)
@@ -96,7 +103,7 @@ def create_client(
     db.add(db_client)
     db.commit()
     db.refresh(db_client)
-    return db_client
+    return _enrich(db_client, ZERO_CLIENT_COUNTS)
 
 
 @router.patch("/{client_id}", response_model=ClientResponse)
@@ -116,7 +123,8 @@ def update_client(
 
     db.commit()
     db.refresh(client)
-    return client
+    counts = _client_counts(db, [client_id])
+    return _enrich(client, counts.get(client_id, {}))
 
 
 @router.delete("/{client_id}")

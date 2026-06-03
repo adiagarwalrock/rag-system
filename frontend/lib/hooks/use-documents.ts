@@ -27,9 +27,18 @@ export function useDocument(clientId: string, documentId: string) {
 export function useUploadDocument(clientId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ file }: { file: File }) =>
-      apiClient.uploadDocument(clientId, file),
+    mutationFn: ({ file, parserPreference }: { file: File; parserPreference?: string }) =>
+      apiClient.uploadDocument(clientId, file, parserPreference),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: documentKeys.all(clientId) }),
+  });
+}
+
+export function useParsers() {
+  return useQuery({
+    queryKey: ["parsers"],
+    queryFn: ({ signal }) => apiClient.listParsers(signal),
+    staleTime: Infinity,
+    gcTime: Infinity,
   });
 }
 
