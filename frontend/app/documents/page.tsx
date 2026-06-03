@@ -33,7 +33,8 @@ export default function DocumentsPage() {
   const retryJob = useRetryIngestionJob(workspaceId);
   const parsers = useParsers();
   const [files, setFiles] = useState<File[]>([]);
-  const [selectedParser, setSelectedParser] = useState("auto");
+  const [globalParser, setGlobalParser] = useState("auto");
+  const [fileParserMap, setFileParserMap] = useState<Record<string, string>>({});
   const activeJobs = (jobs.data ?? []).filter((job) =>
     job.status === "queued" || job.status === "processing" || job.status === "failed",
   );
@@ -42,13 +43,30 @@ export default function DocumentsPage() {
     if (!workspaceId && clients.data?.[0]) setWorkspaceId(clients.data[0].id);
   }, [clients.data, setWorkspaceId, workspaceId]);
 
+  function fileKey(file: File, index: number) {
+    return `${file.name}-${file.size}-${index}`;
+  }
+
+  function handleGlobalParserChange(value: string) {
+    setGlobalParser(value);
+    setFileParserMap({});
+  }
+
+  function setFileParser(file: File, index: number, value: string) {
+    setFileParserMap((m) => ({ ...m, [fileKey(file, index)]: value }));
+  }
+
   async function queueUpload() {
     if (!files.length) return;
-    const parserPreference = selectedParser === "auto" ? undefined : selectedParser;
     await Promise.all(
-      files.map((file) => upload.mutateAsync({ file, parserPreference })),
+      files.map((file, index) => {
+        const effective = fileParserMap[fileKey(file, index)] ?? globalParser;
+        const parserPreference = effective === "auto" ? undefined : effective;
+        return upload.mutateAsync({ file, parserPreference });
+      }),
     );
     setFiles([]);
+    setFileParserMap({});
     await documents.refetch();
     await jobs.refetch();
   }
@@ -59,7 +77,9 @@ export default function DocumentsPage() {
   }
 
   function removeFile(index: number) {
-    setFiles((current) => current.filter((_, currentIndex) => currentIndex !== index));
+    const key = fileKey(files[index], index);
+    setFileParserMap((m) => { const n = { ...m }; delete n[key]; return n; });
+    setFiles((current) => current.filter((_, i) => i !== index));
   }
 
   return (
@@ -94,9 +114,9 @@ export default function DocumentsPage() {
           <SectionCard title="Upload files" description="Supported formats: PDF, DOCX, PPTX. Max size: 200MB per file.">
             <div className="mb-4">
               <DarkSelect
-                label="Parser"
-                value={selectedParser}
-                onChange={setSelectedParser}
+                label="Parser (all files)"
+                value={globalParser}
+                onChange={handleGlobalParserChange}
                 className="w-72"
                 options={(parsers.data?.parsers ?? defaultParserOptions).map((p: ParserInfo) => ({
                   value: p.id,
@@ -106,59 +126,81 @@ export default function DocumentsPage() {
                 }))}
               />
             </div>
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
-              <label
-                className="flex min-h-56 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-border bg-muted/20 p-8 text-center hover:bg-muted/30"
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  addFiles(event.dataTransfer.files);
-                }}
-              >
-                <Upload className="h-8 w-8 text-muted-foreground" />
-                <span className="mt-3 text-sm font-medium">Drop source files here</span>
-                <span className="mt-1 text-xs text-muted-foreground">or browse from disk</span>
-                <input className="hidden" type="file" multiple accept=".pdf,.docx,.pptx" onChange={(event) => addFiles(event.target.files)} />
-              </label>
-              <div className="space-y-3">
-                <div className="rounded-md border border-border bg-background">
-                  <div className="border-b border-border px-3 py-2 text-xs font-medium text-muted-foreground">
-                    Selected files
-                  </div>
-                  {files.length ? (
-                    <div className="max-h-56 divide-y divide-border overflow-y-auto">
-                      {files.map((file, index) => (
-                        <div key={`${file.name}-${file.size}-${index}`} className="flex items-start gap-2 px-3 py-2">
-                          <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-sm font-medium">{file.name}</div>
-                            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 font-mono text-[11px] text-muted-foreground">
-                              <span>{formatFileSize(file.size)}</span>
-                              <span>{file.type || fileExtension(file.name) || "unknown type"}</span>
+            <div className="space-y-3">
+              {files.length === 0 ? (
+                <label
+                  className="flex min-h-56 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-border bg-muted/20 p-8 text-center hover:bg-muted/30"
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={(event) => { event.preventDefault(); addFiles(event.dataTransfer.files); }}
+                >
+                  <Upload className="h-8 w-8 text-muted-foreground" />
+                  <span className="mt-3 text-sm font-medium">Drop source files here</span>
+                  <span className="mt-1 text-xs text-muted-foreground">or browse from disk</span>
+                  <input className="hidden" type="file" multiple accept=".pdf,.docx,.pptx" onChange={(event) => addFiles(event.target.files)} />
+                </label>
+              ) : (
+                <>
+                  <div className="rounded-md border border-border bg-background">
+                    <div className="border-b border-border px-3 py-2 text-xs font-medium text-muted-foreground">
+                      Selected files // {files.length}
+                    </div>
+                    <div className="max-h-[28rem] divide-y divide-border overflow-y-auto">
+                      {files.map((file, index) => {
+                        const key = fileKey(file, index);
+                        const effectiveParser = fileParserMap[key] ?? globalParser;
+                        const parserOptions = (parsers.data?.parsers ?? defaultParserOptions).map((p: ParserInfo) => ({
+                          value: p.id,
+                          label: p.label,
+                          disabled: !p.available,
+                          hint: p.available ? undefined : "not configured",
+                        }));
+                        return (
+                          <div key={key} className="flex items-start gap-3 px-4 py-3">
+                            <FileText className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" />
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-sm font-medium">{file.name}</div>
+                              <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-1 font-mono text-[11px] text-muted-foreground">
+                                <span>{formatFileSize(file.size)}</span>
+                                <span>{file.type || fileExtension(file.name) || "unknown type"}</span>
+                              </div>
+                              <div className="mt-2">
+                                <DarkSelect
+                                  label={`Parser for ${file.name}`}
+                                  value={effectiveParser}
+                                  onChange={(value) => setFileParser(file, index, value)}
+                                  className="w-52"
+                                  options={parserOptions}
+                                />
+                              </div>
                             </div>
+                            <button
+                              type="button"
+                              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                              onClick={() => removeFile(index)}
+                              aria-label={`Remove ${file.name}`}
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
                           </div>
-                          <button
-                            type="button"
-                            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-                            onClick={() => removeFile(index)}
-                            aria-label={`Remove ${file.name}`}
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
-                  ) : (
-                    <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-                      No files selected.
-                    </div>
-                  )}
-                </div>
-                <button className="button-primary w-full" disabled={!workspaceId || !files.length || upload.isPending} onClick={queueUpload}>
-                  Queue ingestion
-                </button>
-                {upload.error && <ErrorState error={upload.error} title="Upload failed" />}
-              </div>
+                  </div>
+                  <label
+                    className="flex h-14 cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-muted/20 text-sm text-muted-foreground hover:bg-muted/30"
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={(event) => { event.preventDefault(); addFiles(event.dataTransfer.files); }}
+                  >
+                    <Upload className="h-4 w-4" />
+                    <span>Drop more files or browse from disk</span>
+                    <input className="hidden" type="file" multiple accept=".pdf,.docx,.pptx" onChange={(event) => addFiles(event.target.files)} />
+                  </label>
+                </>
+              )}
+              <button className="button-primary w-full" disabled={!workspaceId || !files.length || upload.isPending} onClick={queueUpload}>
+                Queue ingestion
+              </button>
+              {upload.error && <ErrorState error={upload.error} title="Upload failed" />}
             </div>
           </SectionCard>
         </Tabs.Content>

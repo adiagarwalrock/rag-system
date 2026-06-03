@@ -207,6 +207,35 @@ class RuntimeStatusService:
         except Exception as exc:
             return {"status": "error", "message": self._error_message(exc)}
 
+    def list_available_models(self) -> dict[str, Any]:
+        """Return chat-capable model IDs from the provider plus the configured default."""
+        configured_default = self.settings.LLM_MODEL
+        try:
+            client = self.openai_client_factory(
+                api_key=self.settings.ai_api_key,
+                timeout=self.openai_timeout_seconds,
+            )
+            response = client.models.list()
+            raw_models = getattr(response, "data", response) or []
+            all_ids = sorted(
+                str(getattr(m, "id", ""))
+                for m in raw_models
+                if getattr(m, "id", None)
+            )
+            # Keep GPT and o-series chat models; drop embedding/audio/image models.
+            chat_ids = [
+                mid for mid in all_ids
+                if mid.startswith("gpt-") or mid.startswith("o")
+                if not any(x in mid for x in ("embed", "tts", "whisper", "dall", "realtime"))
+            ]
+            # Always include the configured default so the switcher is never empty.
+            if configured_default not in chat_ids:
+                chat_ids.insert(0, configured_default)
+            models = [{"id": mid, "default": mid == configured_default} for mid in chat_ids]
+        except Exception:
+            models = [{"id": configured_default, "default": True}]
+        return {"models": models, "configured_default": configured_default}
+
     def _openai_models_api_status(self) -> dict[str, Any]:
         try:
             client = self.openai_client_factory(

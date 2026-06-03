@@ -208,6 +208,7 @@ class GroundedAnswerSynthesizer:
         self,
         *,
         client_id: str,
+        llm_model: str | None = None,
         reasoning_effort: str,
         reasoning_summary: str | None = None,
         reasoning_callback: Callable[[str], None] | None = None,
@@ -215,6 +216,7 @@ class GroundedAnswerSynthesizer:
         conversation_context: dict[str, Any],
     ):
         self.client_id = client_id
+        self.llm_model = llm_model or settings.LLM_MODEL
         self.reasoning_effort = reasoning_effort
         self.reasoning_summary = reasoning_summary
         self.reasoning_callback = reasoning_callback
@@ -287,7 +289,7 @@ class GroundedAnswerSynthesizer:
         effort_applied: bool,
     ) -> GroundedAnswerResult | None:
         try:
-            budgeter = ResponsesInputBudgeter(model=settings.LLM_MODEL)
+            budgeter = ResponsesInputBudgeter(model=self.llm_model)
             sections = _build_labeled_context_sections(
                 question=question,
                 citations=citations,
@@ -321,7 +323,7 @@ class GroundedAnswerSynthesizer:
             )
 
             llm_kwargs = dict(
-                model=settings.LLM_MODEL,
+                model=self.llm_model,
                 input_messages=input_messages,
                 reasoning_effort=self.reasoning_effort,
                 reasoning_summary=self.reasoning_summary,
@@ -475,6 +477,7 @@ class VecteraRetriever:
         self,
         client_id: str,
         top_k: int = 15,
+        llm_model: str | None = None,
         reasoning_effort: str = "medium",
         reasoning_summary: str | None = None,
         conversation_context: dict[str, Any] | None = None,
@@ -497,6 +500,7 @@ class VecteraRetriever:
         )
         self.answer_synthesizer = GroundedAnswerSynthesizer(
             client_id=self.client_id,
+            llm_model=llm_model,
             reasoning_effort=self.reasoning_effort,
             reasoning_summary=normalize_reasoning_summary(reasoning_summary),
             reasoning_callback=reasoning_callback,
@@ -542,6 +546,7 @@ class VecteraRetriever:
                 "source_count": 0,
                 "images_used": [],
                 "image_evidence_count": 0,
+                "llm_model": self.answer_synthesizer.llm_model,
                 "reasoning_effort": self.reasoning_effort,
                 "reasoning_effort_applied": False,
                 "retrieval_diagnostics": _build_retrieval_diagnostics([], []),
@@ -581,6 +586,7 @@ class VecteraRetriever:
             "evidence_count": len(evidence_nodes),
             "images_used": synthesis.get("images_used", []),
             "image_evidence_count": len(synthesis.get("images_used", [])),
+            "llm_model": self.answer_synthesizer.llm_model,
             "reasoning_effort": self.reasoning_effort,
             "reasoning_effort_applied": synthesis.get(
                 "reasoning_effort_applied", False

@@ -9,6 +9,7 @@ import { apiClient } from "@/lib/api/client";
 import type { ChatMessage as ApiChatMessage, Citation, CitationImageAsset, QueryRequest, QueryResponse } from "@/lib/api/schemas";
 import { useSessionMessages } from "@/lib/hooks/use-chat";
 import { useClients } from "@/lib/hooks/use-clients";
+import { useModels } from "@/lib/hooks/use-models";
 import { useWorkspaceStore } from "@/lib/state/workspace-store";
 import { cn, formatMessageTimestamp } from "@/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
@@ -38,6 +39,7 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
   const pathname = usePathname();
   const queryClient = useQueryClient();
   const clients = useClients();
+  const models = useModels();
   const {
     workspaceId,
     setWorkspaceId,
@@ -45,6 +47,8 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
     setSessionId,
     reasoningEffort,
     setReasoningEffort,
+    llmModel,
+    setLlmModel,
   } = useWorkspaceStore();
   const sessionMessages = useSessionMessages(workspaceId, sessionId);
   const [includeMemory, setIncludeMemory] = useState(true);
@@ -229,6 +233,7 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
       question,
       client_id: workspaceId,
       session_id: sessionId || undefined,
+      llm_model: llmModel || undefined,
       reasoning_effort: reasoningEffort,
       reasoning_summary: "auto",
       include_memory: includeMemory,
@@ -455,6 +460,9 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
             streaming={isStreaming}
             onSubmit={submit}
             onCancel={() => abortRef.current?.abort()}
+            llmModel={llmModel || models.data?.configured_default}
+            onLlmModelChange={setLlmModel}
+            modelOptions={models.data?.models.map((m) => ({ value: m.id, label: m.id }))}
             reasoningEffort={reasoningEffort}
             onReasoningEffortChange={setReasoningEffort}
             includeMemory={includeMemory}

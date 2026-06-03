@@ -68,6 +68,7 @@ class QueryRequest(BaseModel):
     client_id: str
     question: str
     session_id: Optional[str] = None
+    llm_model: Optional[str] = None
     reasoning_effort: Optional[Literal["low", "medium", "high"]] = None
     """Per-request effort override.  ``None`` defers to the server ``REASONING_EFFORT`` default."""
     reasoning_summary: Optional[Literal["auto", "concise", "detailed"]] = None
@@ -123,6 +124,7 @@ class QueryResponse(BaseModel):
     images_used: List[str] = []
     image_evidence_count: int = 0
     retrieval: Dict[str, Any] = {}
+    llm_model: Optional[str] = None
     reasoning_effort: Literal["low", "medium", "high"] = "medium"
     reasoning_effort_applied: bool = False
     reasoning_summary: Optional[Literal["auto", "concise", "detailed"]] = None

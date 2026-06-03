@@ -14,6 +14,9 @@ export function ChatComposer({
   clients,
   activeClientId,
   onClientChange,
+  llmModel,
+  onLlmModelChange,
+  modelOptions,
   reasoningEffort,
   onReasoningEffortChange,
   includeMemory,
@@ -29,6 +32,9 @@ export function ChatComposer({
   clients?: Client[];
   activeClientId?: string;
   onClientChange?: (clientId: string) => void;
+  llmModel?: string;
+  onLlmModelChange?: (value: string) => void;
+  modelOptions?: Array<{ value: string; label: string }>;
   reasoningEffort?: "low" | "medium" | "high";
   onReasoningEffortChange?: (value: "low" | "medium" | "high") => void;
   includeMemory?: boolean;
@@ -159,6 +165,16 @@ export function ChatComposer({
           </div>
         </div>
         <div className="flex min-w-0 items-center justify-end gap-2">
+          {modelOptions && modelOptions.length > 0 && llmModel && (
+            <DarkSelect
+              label="Model"
+              value={llmModel}
+              options={modelOptions}
+              onChange={(value) => onLlmModelChange?.(value)}
+              buttonClassName="min-w-[7.5rem]"
+              menuSide="top"
+            />
+          )}
           <DarkSelect
             label="Reasoning effort"
             value={reasoningEffort ?? "medium"}

@@ -168,6 +168,7 @@ export const queryRequestSchema = z.object({
   question: z.string().min(1),
   client_id: z.string().min(1),
   session_id: z.string().optional(),
+  llm_model: z.string().optional(),
   reasoning_effort: reasoningEffortSchema.optional(),
   reasoning_summary: z.enum(["auto", "concise", "detailed"]).optional(),
   retrieval_mode: retrievalModeSchema.optional(),
@@ -190,6 +191,7 @@ export const queryResponseSchema = z
     evidence_count: z.number().default(0),
     images_used: z.array(z.string()).default([]),
     image_evidence_count: z.number().default(0),
+    llm_model: z.string().optional(),
     reasoning_effort: reasoningEffortSchema,
     reasoning_summary: z.enum(["auto", "concise", "detailed"]).optional(),
     created_at: z.string(),
@@ -487,6 +489,18 @@ export const qualityRunSchema = z
     created_at: z.string(),
   })
   .passthrough();
+
+export const modelInfoSchema = z.object({
+  id: z.string(),
+  default: z.boolean(),
+});
+export const modelListResponseSchema = z.object({
+  models: z.array(modelInfoSchema),
+  configured_default: z.string(),
+});
+
+export type ModelInfo = z.infer<typeof modelInfoSchema>;
+export type ModelListResponse = z.infer<typeof modelListResponseSchema>;
 
 export const parserInfoSchema = z.object({
   id: z.string(),

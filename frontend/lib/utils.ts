@@ -5,9 +5,15 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+function parseTimestamp(value: string): Date {
+  // If the string has no timezone info, treat it as UTC (the server stores UTC).
+  const hasOffset = /[Z+\-]\d*$/.test(value.trimEnd());
+  return new Date(hasOffset ? value : `${value}Z`);
+}
+
 export function formatDate(value?: string | null) {
   if (!value) return "-";
-  const date = new Date(value);
+  const date = parseTimestamp(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat(undefined, {
     month: "short",
@@ -19,7 +25,7 @@ export function formatDate(value?: string | null) {
 
 export function formatMessageTimestamp(value?: string) {
   if (!value) return "";
-  const date = new Date(value);
+  const date = parseTimestamp(value);
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleString(undefined, {
     month: "short",

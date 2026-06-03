@@ -17,6 +17,7 @@ import {
   qdrantPointSchema,
   qualityRunSchema,
   qualityTestSchema,
+  modelListResponseSchema,
   queryHistoryItemSchema,
   queryRequestSchema,
   queryResponseSchema,
@@ -613,6 +614,13 @@ export const apiClient = {
     const rawValue = raw.status === "fulfilled" ? raw.value : {};
     const healthValue = health.status === "fulfilled" ? health.value : { status: "error" };
     return normalizeRuntime(rawValue, healthValue);
+  },
+
+  async listModels(signal?: AbortSignal) {
+    return requestJson("/health/models", modelListResponseSchema, {
+      signal,
+      fallbackPaths: ["/health/models/"],
+    });
   },
 
   async listClients(signal?: AbortSignal) {

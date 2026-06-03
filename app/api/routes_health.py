@@ -19,3 +19,10 @@ def runtime_status():
     """Full runtime diagnostics: database, Qdrant collections, AI provider, and parsers."""
     svc = RuntimeStatusService()
     return svc.get_status()
+
+
+@router.get("/models")
+def list_models():
+    """Return chat-capable model IDs available from the configured AI provider."""
+    svc = RuntimeStatusService()
+    return svc.list_available_models()

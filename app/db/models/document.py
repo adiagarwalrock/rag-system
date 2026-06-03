@@ -98,6 +98,7 @@ class QueryLog(Base):
     question = Column(String, nullable=False)
     answer = Column(String, nullable=True)
     status = Column(String, nullable=False, default="completed")
+    llm_model = Column(String, nullable=True)
     reasoning_effort = Column(String, nullable=True, default="medium")
     created_at = Column(
         DateTime, default=lambda: datetime.now(timezone.utc), nullable=False

@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 class QueryExecutionRequest:
     question: str
     client_id: str
+    llm_model: str | None = None
     reasoning_effort: str = "medium"
     reasoning_summary: str | None = None
     session_id: str | None = None
@@ -52,6 +53,7 @@ class QueryLogWriter:
             session_id=request.session_id,
             question=request.question,
             status="running",
+            llm_model=request.llm_model,
             reasoning_effort=request.reasoning_effort,
         )
         self.db.add(query_log)
@@ -146,6 +148,7 @@ class QueryExecutionService:
 
         try:
             result = self._run_retrieval(request)
+            result.setdefault("llm_model", request.llm_model)
             result.setdefault("reasoning_effort", request.reasoning_effort)
             latency_ms = self._latency_ms(start_time)
 
@@ -186,6 +189,7 @@ class QueryExecutionService:
     def _run_retrieval(self, request: QueryExecutionRequest) -> dict[str, Any]:
         retriever = self.retriever_factory(
             client_id=request.client_id,
+            llm_model=request.llm_model,
             reasoning_effort=request.reasoning_effort,
             reasoning_summary=request.reasoning_summary,
             conversation_context=request.conversation_context,
@@ -203,6 +207,7 @@ def execute_query(
     question: str,
     client_id: str,
     db: Session,
+    llm_model: str | None = None,
     reasoning_effort: str = "medium",
     reasoning_summary: str | None = None,
     session_id: str | None = None,
@@ -226,6 +231,7 @@ def execute_query(
     request = QueryExecutionRequest(
         question=question,
         client_id=client_id,
+        llm_model=llm_model,
         reasoning_effort=reasoning_effort,
         reasoning_summary=reasoning_summary,
         session_id=session_id,

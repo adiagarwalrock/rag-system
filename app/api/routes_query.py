@@ -57,6 +57,7 @@ def _build_query_response(result: dict[str, Any]) -> QueryResponse:
         images_used=result.get("images_used", []),
         image_evidence_count=result.get("image_evidence_count", 0),
         retrieval=_build_retrieval_trace(result),
+        llm_model=result.get("llm_model"),
         reasoning_effort=result.get("reasoning_effort", "medium"),
         reasoning_effort_applied=result.get("reasoning_effort_applied", False),
         reasoning_summary=result.get("reasoning_summary"),
@@ -139,12 +140,14 @@ async def query_documents(
         raise HTTPException(status_code=404, detail="Client not found")
 
     effort = request.reasoning_effort or settings.REASONING_EFFORT
+    llm_model = request.llm_model or settings.LLM_MODEL
 
     if not request.stream:
         # ── Non-streaming path ────────────────────────────────────────────
         result = ChatConversationService(db).execute_client_query(
             question=request.question,
             client_id=request.client_id,
+            llm_model=llm_model,
             reasoning_effort=effort,
             reasoning_summary=request.reasoning_summary,
             session_id=request.session_id,
@@ -179,6 +182,7 @@ async def query_documents(
             result = ChatConversationService(worker_db).execute_client_query(
                 question=request.question,
                 client_id=request.client_id,
+                llm_model=llm_model,
                 reasoning_effort=effort,
                 reasoning_summary=request.reasoning_summary,
                 session_id=request.session_id,
