@@ -62,6 +62,7 @@ def _enrich(client: Client, counts: dict) -> ClientResponse:
         "name": client.name,
         "description": client.description,
         "is_active": client.is_active,
+        "embedding_model": client.embedding_model,
         "created_at": client.created_at,
         "updated_at": client.updated_at,
         **ZERO_CLIENT_COUNTS,
@@ -99,6 +100,7 @@ def create_client(
         id=str(uuid.uuid4()),
         name=client_in.name,
         description=client_in.description,
+        embedding_model=client_in.embedding_model,
     )
     db.add(db_client)
     db.commit()
@@ -118,6 +120,18 @@ def update_client(
         raise HTTPException(status_code=404, detail="Client not found")
 
     update_data = updates.model_dump(exclude_unset=True)
+
+    if "embedding_model" in update_data and update_data["embedding_model"] != client.embedding_model:
+        doc_count = db.query(Document).filter(Document.client_id == client_id).count()
+        if doc_count > 0:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Cannot change embedding model: client has {doc_count} document(s). "
+                    "Delete all documents first."
+                ),
+            )
+
     for key, value in update_data.items():
         setattr(client, key, value)
 

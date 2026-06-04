@@ -631,7 +631,7 @@ export const apiClient = {
     return raw.map(normalizeClient);
   },
 
-  async createClient(input: { name: string; description?: string }, signal?: AbortSignal) {
+  async createClient(input: { name: string; description?: string; embedding_model?: string }, signal?: AbortSignal) {
     const raw = await requestJson("/clients/", z.unknown(), {
       method: "POST",
       body: JSON.stringify(input),
@@ -689,11 +689,9 @@ export const apiClient = {
     });
   },
 
-  async retryDocument(clientId: string, documentId: string, signal?: AbortSignal) {
-    const raw = await requestJson(`/documents/${documentId}/retry`, z.unknown(), {
-      method: "POST",
-      signal,
-    });
+  async retryDocument(clientId: string, documentId: string, parser?: string, signal?: AbortSignal) {
+    const url = `/documents/${documentId}/retry${parser ? `?parser=${encodeURIComponent(parser)}` : ""}`;
+    const raw = await requestJson(url, z.unknown(), { method: "POST", signal });
     return normalizeDocument(raw);
   },
 
@@ -711,10 +709,10 @@ export const apiClient = {
         client_id: doc.client_id,
         status: doc.status === "deleted" ? "failed" : doc.status,
         parser_attempted: doc.parser_used,
-        fallback_stage: doc.status === "failed" ? "fallback exhausted" : "auto fallback",
         current_phase: doc.status,
         version: doc.version,
         vector_points_created: doc.vector_points,
+        embedding_model: doc.embedding_model ?? undefined,
         created_at: doc.uploaded_at,
         updated_at: doc.updated_at,
         error: doc.last_error,
@@ -722,9 +720,9 @@ export const apiClient = {
     });
   },
 
-  async retryIngestionJob(clientId: string, jobId: string, signal?: AbortSignal) {
+  async retryIngestionJob(clientId: string, jobId: string, parser?: string, signal?: AbortSignal) {
     const documentId = jobId.endsWith("-job") ? jobId.slice(0, -4) : jobId;
-    return this.retryDocument(clientId, documentId, signal);
+    return this.retryDocument(clientId, documentId, parser, signal);
   },
 
   async listSessions(clientId: string, signal?: AbortSignal): Promise<ChatSession[]> {

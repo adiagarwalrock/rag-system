@@ -28,14 +28,9 @@ class Settings(BaseSettings):
     )
 
     # OpenAI / LlamaIndex
-    AI_API_KEY: str | None = Field(
+    OPENAI_API_KEY: str | None = Field(
         default=None,
-        validation_alias=AliasChoices(
-            "OPENAI_API_KEY",
-            "AI_API_KEY",
-            "GEMINI_API_KEY",
-            "GOOGLE_API_KEY",
-        ),
+        validation_alias=AliasChoices("OPENAI_API_KEY"),
     )
     HF_API_TOKEN: str | None = Field(
         default=None,
@@ -45,6 +40,10 @@ class Settings(BaseSettings):
             "HUGGINGFACE_TOKEN",
             "HUGGINGFACE_HUB_TOKEN",
         ),
+    )
+    GEMINI_API_KEY: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_API_KEY"),
     )
     LLM_MODEL: str = "gpt-5.5"
     QUERY_EXPANSION_MODEL: str = "gpt-5.4-mini"
@@ -168,8 +167,12 @@ class Settings(BaseSettings):
         return key.strip("'\"").strip()
 
     @property
-    def ai_api_key(self) -> str:
-        return self._normalize_secret(self.AI_API_KEY)
+    def openai_api_key(self) -> str:
+        return self._normalize_secret(self.OPENAI_API_KEY)
+
+    @property
+    def gemini_api_key(self) -> str:
+        return self._normalize_secret(self.GEMINI_API_KEY)
 
     @property
     def hf_api_token(self) -> str:
@@ -177,7 +180,7 @@ class Settings(BaseSettings):
 
     @property
     def is_openai_api_key_placeholder(self) -> bool:
-        key = self.ai_api_key.lower()
+        key = self.openai_api_key.lower()
         placeholders = {
             "your_openai_api_key_here",
             "your_api_key_here",
@@ -202,4 +205,4 @@ settings = Settings()
 def validate_runtime_settings() -> None:
     """Validate mandatory runtime configuration before serving requests."""
     if settings.is_openai_api_key_placeholder:
-        raise RuntimeError("AI_API_KEY must be set to a valid key before startup.")
+        raise RuntimeError("OPENAI_API_KEY must be set to a valid key before startup.")

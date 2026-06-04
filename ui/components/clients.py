@@ -75,14 +75,38 @@ def render_clients():
 
     with st.container(border=True):
         st.markdown("#### :material/add_business: New client")
+
+        try:
+            embedding_model_entries = api.list_embedding_models()
+        except Exception:
+            embedding_model_entries = []
+
         with st.form("create_client_form", clear_on_submit=True):
-            # col_name, col_desc = st.columns([1, 2], vertical_alignment="bottom")
-            # with col_name:
-            # with col_desc:
             client_name = st.text_input("Client name")
             client_desc = st.text_area(
                 "Description", placeholder="Optional context", height=94
             )
+
+            if embedding_model_entries:
+                # API returns models already sorted openai → gemini → other
+                model_ids = [e["id"] for e in embedding_model_entries]
+                model_meta = {e["id"]: e for e in embedding_model_entries}
+
+                selected_embedding_model = st.selectbox(
+                    "Embedding model",
+                    options=model_ids,
+                    format_func=lambda x: model_meta[x].get("display_name") or x,
+                    help="Documents for this client are indexed and queried with this model.",
+                )
+
+                if selected_embedding_model and selected_embedding_model in model_meta:
+                    m = model_meta[selected_embedding_model]
+                    provider_label = (m.get("provider") or "").upper()
+                    dims = m.get("dimensions")
+                    hint = f"{provider_label} · {dims:,}d" if dims else provider_label
+                    st.caption(hint)
+            else:
+                selected_embedding_model = None
 
             if st.form_submit_button(
                 "Create client",
@@ -95,7 +119,9 @@ def render_clients():
                 else:
                     try:
                         result = api.create_client(
-                            client_name.strip(), client_desc.strip()
+                            client_name.strip(),
+                            client_desc.strip(),
+                            embedding_model=selected_embedding_model,
                         )
                         bump_cache_revision(CLIENTS_CACHE_KEY)
                         st.success(f"{result['name']} created.")
@@ -150,6 +176,8 @@ def render_clients():
                         client_name=client["name"],
                     )
 
-            info_cols = st.columns(2)
+            info_cols = st.columns(3)
             info_cols[0].caption(f"Created: {_format_dt(client.get('created_at'))}")
             info_cols[1].caption(f"ID: `{client['id']}`")
+            embed = client.get("embedding_model") or "default"
+            info_cols[2].caption(f"Embed: `{embed}`")

@@ -166,11 +166,13 @@ class VectorStoreManager:
         sparse_top_k: int | None = None,
         hybrid_top_k: int | None = None,
         hybrid: bool = True,
+        embed_model: object | None = None,
     ):
         """Get a retriever with optional hybrid dense+sparse Qdrant search."""
-        index = VectorStoreIndex.from_vector_store(
-            vector_store=self._get_vector_store()
-        )
+        index_kwargs: dict = {"vector_store": self._get_vector_store()}
+        if embed_model is not None:
+            index_kwargs["embed_model"] = embed_model
+        index = VectorStoreIndex.from_vector_store(**index_kwargs)
         kwargs = {
             "filters": filters,
             "similarity_top_k": similarity_top_k,

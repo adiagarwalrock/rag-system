@@ -233,7 +233,7 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
       question,
       client_id: workspaceId,
       session_id: sessionId || undefined,
-      llm_model: llmModel || undefined,
+      llm_model: llmModel,
       reasoning_effort: reasoningEffort,
       reasoning_summary: "auto",
       include_memory: includeMemory,

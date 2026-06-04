@@ -5,6 +5,7 @@ import logging
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
+from app.core.config import settings
 from app.db.base import Base
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,39 @@ def ensure_runtime_schema(engine: Engine) -> None:
     _ensure_query_logs_llm_model(engine)
     _ensure_chat_messages_reasoning(engine)
     _ensure_chat_messages_citations_json(engine)
+    _ensure_clients_embedding_model(engine)
+    _backfill_clients_embedding_model(engine)
     _drop_legacy_auth_tables(engine)
+
+
+def _ensure_clients_embedding_model(engine: Engine) -> None:
+    _ensure_text_column(engine, table_name="clients", column_name="embedding_model")
+
+
+def _backfill_clients_embedding_model(engine: Engine) -> None:
+    """Set embedding_model to the configured default for any NULL client rows."""
+    default = settings.EMBEDDING_MODEL
+    try:
+        inspector = inspect(engine)
+        if "clients" not in set(inspector.get_table_names()):
+            return
+        with engine.begin() as conn:
+            has_nulls = conn.execute(
+                text("SELECT 1 FROM clients WHERE embedding_model IS NULL LIMIT 1")
+            ).fetchone()
+            if not has_nulls:
+                return
+            result = conn.execute(
+                text("UPDATE clients SET embedding_model = :m WHERE embedding_model IS NULL"),
+                {"m": default},
+            )
+        rows = getattr(result, "rowcount", 0) or 0
+        if rows:
+            logger.info(
+                "Backfilled clients.embedding_model = '%s' for %d row(s).", default, rows
+            )
+    except Exception:
+        logger.exception("Failed to backfill clients.embedding_model")
 
 
 def _ensure_query_logs_llm_model(engine: Engine) -> None:

@@ -19,7 +19,7 @@ def _settings(**overrides):
         "EMBEDDING_MODEL": "text-embedding-3-large",
         "EMBEDDING_OUTPUT_DIMENSION": None,
         "REASONING_SUMMARY": None,
-        "ai_api_key": "test-key",
+        "openai_api_key": "test-key",
         "is_openai_api_key_placeholder": False,
     }
     base.update(overrides)
@@ -104,23 +104,30 @@ def test_normalize_reasoning_effort_defaults_for_unknown_values():
     assert ai_provider.normalize_reasoning_effort("unknown") == "medium"
 
 
-def test_get_embeddings_passes_optional_dimensions(monkeypatch):
+def test_get_embeddings_delegates_to_manager(monkeypatch):
+    from unittest.mock import MagicMock
+    from app.core import embedding_manager as emb_manager_mod
+
     monkeypatch.setattr(
         ai_provider, "settings", _settings(EMBEDDING_OUTPUT_DIMENSION=1536)
     )
+    fake_instance = MagicMock()
+    captured: dict = {}
 
-    class FakeEmbedding:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
+    def fake_get_instance(*, model_id, api_key=None, dimensions=None):
+        captured["model_id"] = model_id
+        captured["api_key"] = api_key
+        captured["dimensions"] = dimensions
+        return fake_instance
 
-    monkeypatch.setattr(ai_provider, "OpenAIEmbedding", FakeEmbedding)
+    monkeypatch.setattr(emb_manager_mod.embedding_manager, "get_instance", fake_get_instance)
 
-    embedding = ai_provider.get_embeddings()
+    result = ai_provider.get_embeddings()
 
-    assert isinstance(embedding, FakeEmbedding)
-    assert embedding.kwargs["model"] == "text-embedding-3-large"
-    assert embedding.kwargs["api_key"] == "test-key"
-    assert embedding.kwargs["dimensions"] == 1536
+    assert result is fake_instance
+    assert captured["model_id"] == "text-embedding-3-large"
+    assert captured["api_key"] is None  # manager resolves the key internally
+    assert captured["dimensions"] == 1536
 
 
 def test_initialize_ai_provider_sets_llama_settings_and_uses_cache(monkeypatch):

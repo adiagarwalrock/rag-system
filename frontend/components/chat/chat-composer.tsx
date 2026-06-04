@@ -4,6 +4,7 @@ import { Check, Plus, Send, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { DarkSelect } from "@/components/common/dark-select";
 import type { Client } from "@/lib/api/schemas";
+import { resolveEmbedLabel, useEmbeddingModels } from "@/lib/hooks/use-models";
 import { cn } from "@/lib/utils";
 
 export function ChatComposer({
@@ -47,6 +48,8 @@ export function ChatComposer({
   const [clientMenuOpen, setClientMenuOpen] = useState(false);
   const clientMenuRef = useRef<HTMLDivElement | null>(null);
   const activeClient = clients?.find((client) => client.id === activeClientId);
+  const { data: embeddingModels = [] } = useEmbeddingModels();
+  const activeEmbedLabel = resolveEmbedLabel(activeClient?.embedding_model, embeddingModels);
 
   useEffect(() => {
     if (!clientMenuOpen) return;
@@ -160,8 +163,15 @@ export function ChatComposer({
               </div>
             </div>
           )}
-          <div className="hidden max-w-[220px] items-center gap-1 rounded-full border border-border bg-background px-3 py-2 text-xs text-muted-foreground sm:flex">
-            <span className="truncate">{activeClient?.name ?? "No client"}</span>
+          <div className="hidden items-center gap-2 sm:flex">
+            <div className="flex max-w-[220px] items-center gap-1 rounded-full border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
+              <span className="truncate">{activeClient?.name ?? "No client"}</span>
+            </div>
+            {activeClient && activeEmbedLabel && (
+              <span className="shrink-0 rounded-full border border-border bg-muted/40 px-2 py-1 text-[10px] text-muted-foreground">
+                {activeEmbedLabel}
+              </span>
+            )}
           </div>
         </div>
         <div className="flex min-w-0 items-center justify-end gap-2">

@@ -26,6 +26,8 @@ from llama_index.core.schema import BaseNode, NodeRelationship, RelatedNodeInfo,
 from sqlalchemy import true
 from sqlalchemy.orm import Session
 
+from app.core.ai_provider import get_embeddings
+from app.core.client_utils import resolve_client_embedding_model
 from app.core.config import settings
 from app.db.models.client import Client
 from app.db.models.document import (
@@ -344,8 +346,9 @@ def get_ingestion_queue_manager() -> IngestionQueueManager:
     return _INGESTION_QUEUE_MANAGER
 
 
-def _build_non_layout_node_parser() -> Any:
-    embed_model: Any | None = getattr(LlamaSettings, "_embed_model", None)
+def _build_non_layout_node_parser(embed_model: Any = None) -> Any:
+    if embed_model is None:
+        embed_model = getattr(LlamaSettings, "_embed_model", None)
     if embed_model is None and not settings.is_openai_api_key_placeholder:
         vector_store_manager.configure_llama_settings()
         embed_model = getattr(LlamaSettings, "_embed_model", None)
@@ -655,9 +658,12 @@ def enqueue_document_ingestion(
     return db_doc, job
 
 
-def retry_ingestion(document_id: str, db: Session) -> Document:
+def retry_ingestion(document_id: str, db: Session, parser_preference: str | None = None) -> Document:
     """
     Retry ingestion for a failed document.
+
+    ``parser_preference`` overrides the parser used for this retry.
+    When None, falls back to the parser from the last ingestion attempt.
     """
     # 1. Fetch document and validate
     db_doc = db.query(Document).filter(Document.id == document_id).first()
@@ -678,7 +684,7 @@ def retry_ingestion(document_id: str, db: Session) -> Document:
     client_id = db_doc.client_id
     doc_id = db_doc.id
     file_ext = db_doc.file_type
-    retry_parser_preference = _retry_parser_preference(db, doc_id)
+    retry_parser_preference = parser_preference or _retry_parser_preference(db, doc_id)
 
     # 3. Pre-clean prior partial data
     try:
@@ -792,6 +798,17 @@ class IngestionPipelineExecutor:
     def run(self) -> tuple[int, int]:
         vector_store_manager.configure_llama_settings()
 
+        self._embedding_model_id = resolve_client_embedding_model(self.client_id, self.db)
+        self._embed_instance = get_embeddings(model=self._embedding_model_id)
+
+        logger.info(
+            "Ingestion start: file=%s client_id=%s embedding=%s parser_preference=%s",
+            self.filename,
+            self.client_id,
+            self._embedding_model_id,
+            self.context.parser_preference or "auto",
+        )
+
         document_metadata = self._build_document_metadata()
         llama_docs, units = parse_document(
             self.file_path,
@@ -799,6 +816,15 @@ class IngestionPipelineExecutor:
             parser_preference=self.context.parser_preference,
         )
         self._apply_parser_metadata(llama_docs)
+
+        logger.info(
+            "Ingestion parsed: file=%s client_id=%s embedding=%s parser_name=%s chunks=%d",
+            self.filename,
+            self.client_id,
+            self._embedding_model_id,
+            self.job.parser_name or "unknown",
+            len(llama_docs),
+        )
 
         version_info = self._resolve_version_info(llama_docs)
         self._persist_version_record(version_info)
@@ -809,7 +835,9 @@ class IngestionPipelineExecutor:
             version_info=version_info,
         )
 
-        nodes = self._run_ingestion_pipeline(llama_docs=llama_docs)
+        nodes = self._run_ingestion_pipeline(
+            llama_docs=llama_docs, embed_model=self._embed_instance
+        )
 
         _apply_retrieval_metadata(
             nodes, filename=self.filename, version_info=version_info
@@ -946,7 +974,7 @@ class IngestionPipelineExecutor:
                 chunk_index=index + 1,
             )
 
-    def _run_ingestion_pipeline(self, *, llama_docs: List[Any]) -> List[BaseNode]:
+    def _run_ingestion_pipeline(self, *, llama_docs: List[Any], embed_model: Any = None) -> List[BaseNode]:
         # External parsers (Reducto, LlamaParse) and the layout-aware PDF pipeline
         # already produce intentionally-chunked LlamaDocuments — each doc is a
         # typed chunk (full_table, body_text, figure_artifact …) with metadata
@@ -1026,7 +1054,7 @@ class IngestionPipelineExecutor:
                 len(needs_splitting),
                 self.filename,
             )
-            transformations: list[Any] = [_build_non_layout_node_parser()]
+            transformations: list[Any] = [_build_non_layout_node_parser(embed_model=embed_model)]
             transformations.extend(llm_extractors)
             pipeline = IngestionPipeline(transformations=transformations)
             split_nodes = pipeline.run(documents=needs_splitting, num_workers=4)
@@ -1054,7 +1082,7 @@ class IngestionPipelineExecutor:
                     client_id=self.client_id,
                     vector_collection=COLLECTION_NAME,
                     vector_node_id=node.node_id,
-                    embedding_model=settings.EMBEDDING_MODEL,
+                    embedding_model=self._embedding_model_id,
                 )
             )
 

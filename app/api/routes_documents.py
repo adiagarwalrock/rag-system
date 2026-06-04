@@ -8,6 +8,8 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from sqlalchemy import func, true
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
+from app.db.models.client import Client
 from app.db.models.document import (
     Document,
     DocumentVersion,
@@ -77,6 +79,29 @@ def _enrich_document_list(
         )
     }
 
+    # Embedding model used to index each document (from active VectorNodeRegistry rows)
+    doc_embedding_models: dict[str, str] = {}
+    emb_rows = (
+        db.query(VectorNodeRegistry.document_id, VectorNodeRegistry.embedding_model)
+        .filter(
+            VectorNodeRegistry.document_id.in_(document_ids),
+            VectorNodeRegistry.is_active == true(),
+            VectorNodeRegistry.embedding_model != None,  # noqa: E711
+        )
+        .distinct()
+        .all()
+    )
+    for row in emb_rows:
+        doc_embedding_models.setdefault(row.document_id, row.embedding_model)
+
+    # Current embedding model per client for staleness check
+    client_ids = {doc.client_id for doc in documents}
+    client_models: dict[str, str] = {}
+    for cid in client_ids:
+        c = db.get(Client, cid)
+        if c:
+            client_models[cid] = c.embedding_model or settings.EMBEDDING_MODEL
+
     latest_parser_by_doc: dict[str, str | None] = {}
     jobs = (
         db.query(IngestionJob)
@@ -89,8 +114,11 @@ def _enrich_document_list(
             continue
         latest_parser_by_doc[job.document_id] = _display_parser_name(job.parser_name)
 
-    return [
-        {
+    result = []
+    for document in documents:
+        doc_model = doc_embedding_models.get(document.id)
+        client_model = client_models.get(document.client_id)
+        result.append({
             "id": document.id,
             "client_id": document.client_id,
             "name": document.name,
@@ -99,10 +127,13 @@ def _enrich_document_list(
             "document_family": document.document_family,
             "parser_used": latest_parser_by_doc.get(document.id),
             "vector_point_count": vector_counts.get(document.id, 0),
+            "embedding_model": doc_model,
+            "embedding_model_stale": bool(
+                doc_model and client_model and doc_model != client_model
+            ),
             "created_at": document.created_at,
-        }
-        for document in documents
-    ]
+        })
+    return result
 
 
 def _display_parser_name(parser_name: str | None) -> str | None:
@@ -216,11 +247,12 @@ async def ingest_doc(
 @router.post("/{document_id}/retry", response_model=DocumentResponse)
 def retry_doc_ingestion(
     document_id: str,
+    parser: str | None = Query(None),
     db: Session = Depends(get_db),
 ):
-    """Retry ingestion for a failed document."""
+    """Retry ingestion for a failed document. Pass ?parser=<id> to override the parser."""
     try:
-        result = retry_ingestion(document_id=document_id, db=db)
+        result = retry_ingestion(document_id=document_id, db=db, parser_preference=parser)
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

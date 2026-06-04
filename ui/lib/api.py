@@ -49,13 +49,18 @@ class VecteraCore:
                     "name": c.name,
                     "description": c.description,
                     "created_at": c.created_at.isoformat() if c.created_at else None,
+                    "embedding_model": c.embedding_model,
                 }
                 for c in clients
             ]
 
-    def create_client(self, name: str, description: str = "") -> dict:
+    def create_client(
+        self,
+        name: str,
+        description: str = "",
+        embedding_model: Optional[str] = None,
+    ) -> dict:
         with SessionLocal() as db:
-            # check if exists
             existing = db.query(Client).filter(Client.name == name).first()
             if existing:
                 raise ValueError(f"Client {name} already exists.")
@@ -63,7 +68,10 @@ class VecteraCore:
             import uuid
 
             new_client = Client(
-                id=str(uuid.uuid4()), name=name, description=description
+                id=str(uuid.uuid4()),
+                name=name,
+                description=description,
+                embedding_model=embedding_model or None,
             )
             db.add(new_client)
             db.commit()
@@ -72,7 +80,13 @@ class VecteraCore:
                 "id": new_client.id,
                 "name": new_client.name,
                 "description": new_client.description,
+                "embedding_model": new_client.embedding_model,
             }
+
+    def list_embedding_models(self) -> List[Dict[str, Any]]:
+        """Return all embedding models from the registry."""
+        svc = RuntimeStatusService()
+        return svc.list_available_models()["embedding_models"]
 
     def delete_client(self, client_id: str) -> dict:
         with SessionLocal() as db:

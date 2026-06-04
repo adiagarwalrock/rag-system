@@ -26,12 +26,14 @@ from llama_index.core.vector_stores import ExactMatchFilter, MetadataFilters
 from app.core.ai_provider import (
     extract_chat_response_text,
     extract_chat_response_reasoning,
+    get_embeddings,
     get_llm,
     invoke_llm_chat,
     stream_invoke_llm_chat,
     normalize_reasoning_effort,
     normalize_reasoning_summary,
 )
+from app.core.client_utils import resolve_client_embedding_model
 from app.core.config import settings
 from app.core.safe_coerce import normalize_metric_subject, safe_bool, safe_int
 from app.core.prompts import (
@@ -483,6 +485,7 @@ class VecteraRetriever:
         conversation_context: dict[str, Any] | None = None,
         reasoning_callback: Callable[[str], None] | None = None,
         answer_callback: Callable[[str], None] | None = None,
+        db: Any | None = None,
     ):
         self.client_id = client_id
         self.top_k = top_k
@@ -507,6 +510,13 @@ class VecteraRetriever:
             answer_callback=answer_callback,
             conversation_context=self.conversation_context,
         )
+
+        embedding_model_id = (
+            resolve_client_embedding_model(client_id, db)
+            if db is not None
+            else settings.EMBEDDING_MODEL
+        )
+        self._embed_instance = get_embeddings(model=embedding_model_id)
 
     def query(
         self,
@@ -684,6 +694,7 @@ class VecteraRetriever:
             sparse_top_k=prefetch_top_k,
             hybrid_top_k=prefetch_top_k,
             hybrid=hybrid,
+            embed_model=self._embed_instance,
         )
 
         expansion_question = self._build_query_expansion_input(question)

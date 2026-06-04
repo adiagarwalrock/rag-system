@@ -422,7 +422,7 @@ def test_run_multimodal_inference_503_returns_none_and_warns(
 ):
     image_path = tmp_path / "figure.png"
     image_path.write_bytes(b"fake-image-bytes")
-    monkeypatch.setattr(settings, "AI_API_KEY", "test-openai-key")
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "test-openai-key")
 
     class _FakeServerError(Exception):
         def __init__(self, status_code: int, message: str):

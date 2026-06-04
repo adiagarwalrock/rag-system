@@ -202,7 +202,7 @@ def test_text_chunk_type_still_uses_semantic_splitter(monkeypatch):
             return [TextNode(text="split", metadata={"chunk_type": "body_text"})]
 
     monkeypatch.setattr(
-        ingest_service, "_build_non_layout_node_parser", lambda: "splitter"
+        ingest_service, "_build_non_layout_node_parser", lambda **_: "splitter"
     )
     monkeypatch.setattr(ingest_service, "IngestionPipeline", FakePipeline)
     monkeypatch.setattr(ingest_service, "TitleExtractor", lambda nodes: "title")

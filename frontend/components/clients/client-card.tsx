@@ -1,6 +1,7 @@
 import { Trash2 } from "lucide-react";
 import type { Client } from "@/lib/api/schemas";
 import { ConfirmDeleteDialog } from "@/components/common/confirm-delete-dialog";
+import { resolveEmbedLabel, useEmbeddingModels } from "@/lib/hooks/use-models";
 import { formatDate, formatNumber } from "@/lib/utils";
 
 export function ClientCard({
@@ -12,6 +13,9 @@ export function ClientCard({
   onDelete: () => void;
   pending?: boolean;
 }) {
+  const { data: embeddingModels = [] } = useEmbeddingModels();
+  const embedLabel = resolveEmbedLabel(client.embedding_model, embeddingModels);
+
   return (
     <div className="rounded-lg border border-border bg-card p-4">
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(420px,1fr)_auto] xl:items-start">
@@ -37,7 +41,14 @@ export function ClientCard({
           </button>
         </ConfirmDeleteDialog>
       </div>
-      <div className="mt-3 font-mono text-xs text-muted-foreground">created {formatDate(client.created_at)}</div>
+      <div className="mt-3 flex flex-wrap items-center gap-3 font-mono text-xs text-muted-foreground">
+        <span>created {formatDate(client.created_at)}</span>
+        {embedLabel && (
+          <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground">
+            embed: {embedLabel}
+          </span>
+        )}
+      </div>
     </div>
   );
 }

@@ -22,6 +22,7 @@ def test_execute_client_query_creates_session_and_persists_turns(
         question: str,
         client_id: str,
         db,
+        llm_model: str | None = None,
         reasoning_effort: str = "medium",
         reasoning_summary: str | None = None,
         session_id: str | None = None,

@@ -8,6 +8,8 @@ from sqlalchemy import text
 
 from app.core import ai_provider
 from app.core.config import settings
+from app.core.embedding_manager import embedding_manager
+from app.core.models.embedding.registry import EMBEDDING_REGISTRY_IDS
 from app.db.snowflake import SessionLocal, engine
 from app.indexing.vector_store import vector_store_manager
 
@@ -178,13 +180,12 @@ class RuntimeStatusService:
             "key_valid": key_valid,
             "initialization": {
                 "status": "skipped",
-                "message": "Skipped because AI_API_KEY is missing or placeholder.",
+                "message": "Skipped because OPENAI_API_KEY is missing or placeholder.",
             },
             "models_api": {
                 "status": "skipped",
-                "message": "Skipped because AI_API_KEY is missing or placeholder.",
+                "message": "Skipped because OPENAI_API_KEY is missing or placeholder.",
                 "model_count": 0,
-                "llm_model_available": False,
                 "embedding_model_available": False,
             },
         }
@@ -192,7 +193,7 @@ class RuntimeStatusService:
             return payload
 
         payload["initialization"] = self._ai_initialization_status()
-        payload["models_api"] = self._openai_models_api_status()
+        payload["models_api"] = self._models_registry_status()
         if (
             payload["initialization"]["status"] != "ok"
             or payload["models_api"]["status"] != "ok"
@@ -208,62 +209,44 @@ class RuntimeStatusService:
             return {"status": "error", "message": self._error_message(exc)}
 
     def list_available_models(self) -> dict[str, Any]:
-        """Return chat-capable model IDs from the provider plus the configured default."""
-        configured_default = self.settings.LLM_MODEL
-        try:
-            client = self.openai_client_factory(
-                api_key=self.settings.ai_api_key,
-                timeout=self.openai_timeout_seconds,
-            )
-            response = client.models.list()
-            raw_models = getattr(response, "data", response) or []
-            all_ids = sorted(
-                str(getattr(m, "id", ""))
-                for m in raw_models
-                if getattr(m, "id", None)
-            )
-            # Keep GPT and o-series chat models; drop embedding/audio/image models.
-            chat_ids = [
-                mid for mid in all_ids
-                if mid.startswith("gpt-") or mid.startswith("o")
-                if not any(x in mid for x in ("embed", "tts", "whisper", "dall", "realtime"))
-            ]
-            # Always include the configured default so the switcher is never empty.
-            if configured_default not in chat_ids:
-                chat_ids.insert(0, configured_default)
-            models = [{"id": mid, "default": mid == configured_default} for mid in chat_ids]
-        except Exception:
-            models = [{"id": configured_default, "default": True}]
-        return {"models": models, "configured_default": configured_default}
+        """Return LLM and embedding models from the registry.
 
-    def _openai_models_api_status(self) -> dict[str, Any]:
-        try:
-            client = self.openai_client_factory(
-                api_key=self.settings.ai_api_key,
-                timeout=self.openai_timeout_seconds,
-            )
-            response = client.models.list()
-            models = getattr(response, "data", response)
-            model_ids = {
-                str(getattr(model, "id", ""))
-                for model in (models or [])
-                if getattr(model, "id", None)
+        ``configured_providers`` lists only the providers whose API key is
+        non-empty in the current settings, so the UI can hide models that
+        would fail at runtime.
+        """
+        configured_default = self.settings.LLM_MODEL
+        models = [{"id": configured_default, "default": True}]
+        embedding_models = [
+            {
+                "id": e.id,
+                "provider": e.provider,
+                "dimensions": e.dimensions,
+                "display_name": e.display_name,
+                "default": e.id == self.settings.EMBEDDING_MODEL,
             }
-            return {
-                "status": "ok",
-                "message": "Models API check succeeded.",
-                "model_count": len(model_ids),
-                "llm_model_available": self.settings.LLM_MODEL in model_ids,
-                "embedding_model_available": self.settings.EMBEDDING_MODEL in model_ids,
-            }
-        except Exception as exc:
-            return {
-                "status": "error",
-                "message": self._error_message(exc),
-                "model_count": 0,
-                "llm_model_available": False,
-                "embedding_model_available": False,
-            }
+            for e in embedding_manager.list_models()
+        ]
+        configured_providers: list[str] = []
+        if self._has_secret(self.settings.openai_api_key):
+            configured_providers.append("openai")
+        if self._has_secret(self.settings.gemini_api_key):
+            configured_providers.append("gemini")
+        return {
+            "models": models,
+            "configured_default": configured_default,
+            "embedding_models": embedding_models,
+            "configured_providers": configured_providers,
+        }
+
+    def _models_registry_status(self) -> dict[str, Any]:
+        """Check whether configured models appear in the registry."""
+        return {
+            "status": "ok",
+            "message": "Registry check succeeded.",
+            "model_count": len(EMBEDDING_REGISTRY_IDS),
+            "embedding_model_available": self.settings.EMBEDDING_MODEL in EMBEDDING_REGISTRY_IDS,
+        }
 
     def _database_target(self, mode: str) -> dict[str, str | None]:
         if mode == "snowflake":

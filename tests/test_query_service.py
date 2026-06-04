@@ -35,6 +35,7 @@ def test_execute_query_persists_query_retrieval_and_conflict_logs(
             conversation_context: dict | None = None,
             reasoning_callback=None,
             answer_callback=None,
+            **kwargs,
         ):
             self.client_id = client_id
             self.reasoning_effort = reasoning_effort
@@ -119,6 +120,7 @@ def test_execute_query_marks_query_log_failed_on_retrieval_error(
             conversation_context: dict | None = None,
             reasoning_callback=None,
             answer_callback=None,
+            **kwargs,
         ):
             self.client_id = client_id
             self.reasoning_effort = reasoning_effort

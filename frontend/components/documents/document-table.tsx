@@ -5,6 +5,7 @@ import type { Document } from "@/lib/api/schemas";
 import { ConfirmDeleteDialog } from "@/components/common/confirm-delete-dialog";
 import { StatusBadge } from "@/components/common/status-badge";
 import { DocumentDetailsDialog } from "@/components/documents/document-details-dialog";
+import { resolveEmbedLabel, useEmbeddingModels } from "@/lib/hooks/use-models";
 import { formatDate, formatNumber } from "@/lib/utils";
 
 export function DocumentTable({
@@ -18,9 +19,11 @@ export function DocumentTable({
   onRetry: (documentId: string) => void;
   pending?: boolean;
 }) {
+  const { data: embeddingModels = [] } = useEmbeddingModels();
+
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[860px] text-left text-sm">
+      <table className="w-full min-w-[960px] text-left text-sm">
         <thead className="border-b border-border text-xs text-muted-foreground">
           <tr>
             <th className="py-2 pr-3 font-medium">Filename</th>
@@ -28,6 +31,7 @@ export function DocumentTable({
             <th className="py-2 pr-3 font-medium">Version</th>
             <th className="py-2 pr-3 font-medium">Family</th>
             <th className="py-2 pr-3 font-medium">Parser</th>
+            <th className="py-2 pr-3 font-medium">Embed</th>
             <th className="py-2 pr-3 font-medium">Vectors</th>
             <th className="py-2 pr-3 font-medium">Uploaded</th>
             <th className="py-2 text-right font-medium">Actions</th>
@@ -41,6 +45,25 @@ export function DocumentTable({
               <td className="py-3 pr-3 font-mono text-xs">{document.version}</td>
               <td className="max-w-[180px] truncate py-3 pr-3 font-mono text-xs text-muted-foreground">{document.document_family}</td>
               <td className="py-3 pr-3 font-mono text-xs text-muted-foreground">{document.parser_used ?? "-"}</td>
+              <td className="py-3 pr-3 font-mono text-xs">
+                {document.embedding_model ? (
+                  <span className="flex items-center gap-1">
+                    <span className="text-muted-foreground">
+                      {resolveEmbedLabel(document.embedding_model, embeddingModels)}
+                    </span>
+                    {document.embedding_model_stale && (
+                      <span
+                        className="text-amber-400"
+                        title="Indexed with a different model than this client now uses. Re-ingest to update."
+                      >
+                        ⚠
+                      </span>
+                    )}
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground">-</span>
+                )}
+              </td>
               <td className="py-3 pr-3 font-mono text-xs">{formatNumber(document.vector_points)}</td>
               <td className="py-3 pr-3 font-mono text-xs text-muted-foreground">{formatDate(document.uploaded_at)}</td>
               <td className="py-3">

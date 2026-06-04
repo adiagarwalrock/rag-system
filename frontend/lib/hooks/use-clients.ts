@@ -14,7 +14,8 @@ export function useClients() {
 export function useCreateClient() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { name: string; description?: string }) => apiClient.createClient(input),
+    mutationFn: (input: { name: string; description?: string; embedding_model?: string }) =>
+      apiClient.createClient(input),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: clientKeys.all }),
   });
 }

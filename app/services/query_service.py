@@ -195,6 +195,7 @@ class QueryExecutionService:
             conversation_context=request.conversation_context,
             reasoning_callback=request.reasoning_callback,
             answer_callback=request.answer_callback,
+            db=self.db,
         )
         return retriever.query(request.question, status_callback=request.status_callback)
 

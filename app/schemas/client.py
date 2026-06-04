@@ -8,6 +8,7 @@ class ClientBase(BaseModel):
     name: str
     description: Optional[str] = None
     is_active: bool = True
+    embedding_model: Optional[str] = None
 
 
 class ClientCreate(ClientBase):
@@ -18,6 +19,7 @@ class ClientUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     is_active: Optional[bool] = None
+    embedding_model: Optional[str] = None
 
 
 class ClientResponse(ClientBase):

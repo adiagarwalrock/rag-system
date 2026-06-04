@@ -8,15 +8,14 @@ export function useIngestionJobs(clientId: string) {
     queryKey: ["ingestion-jobs", clientId],
     queryFn: ({ signal }) => apiClient.listIngestionJobs(clientId, signal),
     enabled: Boolean(clientId),
-    refetchInterval: (query) =>
-      query.state.data?.some((job) => ["queued", "processing"].includes(job.status)) ? 4000 : false,
   });
 }
 
 export function useRetryIngestionJob(clientId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (jobId: string) => apiClient.retryIngestionJob(clientId, jobId),
+    mutationFn: ({ jobId, parser }: { jobId: string; parser?: string }) =>
+      apiClient.retryIngestionJob(clientId, jobId, parser),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["ingestion-jobs", clientId] }),
   });
 }

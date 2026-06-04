@@ -29,6 +29,7 @@ export const clientSchema = z
     name: z.string(),
     description: z.string().nullish(),
     created_at: z.string(),
+    embedding_model: z.string().nullish(),
     document_count: z.number().optional(),
     query_count: z.number().optional(),
     session_count: z.number().optional(),
@@ -55,6 +56,8 @@ export const documentSchema = z
     active_collection: z.string().optional(),
     last_error: z.string().optional(),
     metadata: record.optional(),
+    embedding_model: z.string().nullish(),
+    embedding_model_stale: z.boolean().optional(),
   })
   .passthrough();
 
@@ -66,10 +69,10 @@ export const ingestionJobSchema = z
     client_id: z.string(),
     status: z.enum(["queued", "processing", "indexed", "failed"]).catch("queued"),
     parser_attempted: z.string().optional(),
-    fallback_stage: z.string().optional(),
     current_phase: z.string().optional(),
     version: optionalStringish.optional(),
     vector_points_created: z.number().optional(),
+    embedding_model: z.string().nullish(),
     created_at: z.string(),
     updated_at: z.string().optional(),
     error: z.string().optional(),
@@ -494,12 +497,24 @@ export const modelInfoSchema = z.object({
   id: z.string(),
   default: z.boolean(),
 });
+
+export const embeddingModelInfoSchema = z.object({
+  id: z.string(),
+  provider: z.string(),
+  dimensions: z.number(),
+  display_name: z.string(),
+  default: z.boolean(),
+});
+
 export const modelListResponseSchema = z.object({
   models: z.array(modelInfoSchema),
   configured_default: z.string(),
+  embedding_models: z.array(embeddingModelInfoSchema).optional(),
+  configured_providers: z.array(z.string()).optional(),
 });
 
 export type ModelInfo = z.infer<typeof modelInfoSchema>;
+export type EmbeddingModelInfo = z.infer<typeof embeddingModelInfoSchema>;
 export type ModelListResponse = z.infer<typeof modelListResponseSchema>;
 
 export const parserInfoSchema = z.object({

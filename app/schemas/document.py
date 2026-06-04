@@ -29,6 +29,8 @@ class DocumentListResponse(BaseModel):
     document_family: Optional[str] = None
     parser_used: Optional[str] = None
     vector_point_count: int = 0
+    embedding_model: Optional[str] = None
+    embedding_model_stale: bool = False
     created_at: datetime
 
     class Config:

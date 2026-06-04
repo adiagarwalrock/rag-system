@@ -18,7 +18,6 @@ from llama_index.core.base.llms.types import (
     TextBlock,
     ThinkingBlock,
 )
-from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.openai import OpenAI, OpenAIResponses
 from openai.types.responses import (
     ResponseCompletedEvent,
@@ -28,6 +27,8 @@ from openai.types.responses import (
 )
 
 from app.core.config import settings
+from app.core.embedding_manager import embedding_manager
+from app.core.models.embedding.base import EmbeddingProvider
 
 logger: Logger = getLogger(__name__)
 
@@ -89,7 +90,7 @@ def get_llm(
     entirely when the resolved value is ``None`` or unrecognised.
     """
     llm_model = model or settings.LLM_MODEL
-    resolved_key = api_key or settings.ai_api_key
+    resolved_key = api_key or settings.openai_api_key
     llm_class = OpenAIResponses if settings.OPENAI_USE_RESPONSES else OpenAI
     kwargs: dict[str, Any] = {"model": llm_model, "api_key": resolved_key}
     if llm_class is OpenAIResponses and reasoning_effort is not None:
@@ -108,17 +109,15 @@ def get_llm(
 
 
 def get_embeddings(*, model: str | None = None, api_key: str | None = None):
-    """Return an OpenAI embedding model instance with configured dimensions."""
-    embedding_model = model or settings.EMBEDDING_MODEL
-    resolved_key = api_key or settings.ai_api_key
-    embedding_kwargs: dict[str, Any] = {}
-    if settings.EMBEDDING_OUTPUT_DIMENSION is not None:
-        embedding_kwargs["dimensions"] = settings.EMBEDDING_OUTPUT_DIMENSION
+    """Return a LlamaIndex BaseEmbedding instance for the given model.
 
-    return OpenAIEmbedding(
-        model=embedding_model,
-        api_key=resolved_key,
-        **embedding_kwargs,
+    Delegates to EmbeddingManager which selects the correct provider, resolves
+    the API key from settings, and caches the instance for reuse.
+    """
+    return embedding_manager.get_instance(
+        model_id=model or settings.EMBEDDING_MODEL,
+        api_key=api_key,
+        dimensions=settings.EMBEDDING_OUTPUT_DIMENSION,
     )
 
 
@@ -203,7 +202,7 @@ def _invoke_structured(
     """
     import openai
 
-    api_key = settings.ai_api_key
+    api_key = settings.openai_api_key
     timeout = float(timeout_seconds) if timeout_seconds is not None else None
     client = openai.OpenAI(api_key=api_key, **({"timeout": timeout} if timeout else {}))
 
@@ -549,9 +548,9 @@ def initialize_ai_provider(force: bool = False) -> None:
     """Initialize LlamaIndex global LLM/embedding settings from central config."""
     global _CONFIGURED_SIGNATURE
 
-    api_key = settings.ai_api_key
+    api_key = settings.openai_api_key
     if settings.is_openai_api_key_placeholder:
-        raise RuntimeError("AI_API_KEY is required and cannot be a placeholder.")
+        raise RuntimeError("OPENAI_API_KEY is required and cannot be a placeholder.")
 
     signature = (
         api_key,
@@ -572,10 +571,12 @@ def initialize_ai_provider(force: bool = False) -> None:
     LlamaSettings.embed_model = get_embeddings(api_key=api_key)
     _CONFIGURED_SIGNATURE = signature
 
+    embedding_provider = EmbeddingProvider.detect_provider(settings.EMBEDDING_MODEL)
     llm_api_mode = "responses" if settings.OPENAI_USE_RESPONSES else "chat_completions"
     logger.info(
-        "Initialized OpenAI provider (llm=%s, embedding=%s, llm_api=%s)",
+        "Initialized provider (llm=%s [openai/%s], embedding=%s [%s])",
         settings.LLM_MODEL,
-        settings.EMBEDDING_MODEL,
         llm_api_mode,
+        settings.EMBEDDING_MODEL,
+        embedding_provider,
     )

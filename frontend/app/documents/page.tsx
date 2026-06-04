@@ -1,13 +1,14 @@
 "use client";
 
 import * as Tabs from "@radix-ui/react-tabs";
-import { FileText, Upload, X } from "lucide-react";
+import { FileText, RotateCcw, Upload, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useClients } from "@/lib/hooks/use-clients";
 import { useDeleteDocument, useDocuments, useParsers, useRetryDocument, useUploadDocument } from "@/lib/hooks/use-documents";
 import type { ParserInfo } from "@/lib/api/schemas";
 import { useIngestionJobs, useRetryIngestionJob } from "@/lib/hooks/use-ingestion-jobs";
 import { useWorkspaceStore } from "@/lib/state/workspace-store";
+import { resolveEmbedLabel, useEmbeddingModels } from "@/lib/hooks/use-models";
 import { PageHeader } from "@/components/shell/page-header";
 import { DocumentTable } from "@/components/documents/document-table";
 import { IngestionJobCard } from "@/components/documents/ingestion-job-card";
@@ -16,11 +17,23 @@ import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { SectionCard } from "@/components/common/section-card";
 import { DarkSelect } from "@/components/common/dark-select";
+import { cn } from "@/lib/utils";
 
 const defaultParserOptions: ParserInfo[] = [
   { id: "auto", label: "Auto (recommended)", available: true, description: "" },
   { id: "legacy", label: "Legacy", available: true, description: "" },
 ];
+
+const STATUS_FILTER_OPTIONS = [
+  { value: "all", label: "All statuses" },
+  { value: "indexed", label: "Indexed" },
+  { value: "processing", label: "Processing" },
+  { value: "queued", label: "Queued" },
+  { value: "failed", label: "Failed" },
+];
+
+const VALID_TABS = ["upload", "activity", "library"] as const;
+type TabValue = (typeof VALID_TABS)[number];
 
 export default function DocumentsPage() {
   const clients = useClients();
@@ -32,16 +45,39 @@ export default function DocumentsPage() {
   const deleteDoc = useDeleteDocument(workspaceId);
   const retryJob = useRetryIngestionJob(workspaceId);
   const parsers = useParsers();
+  const { data: embeddingModels = [] } = useEmbeddingModels();
+
+  const [tab, setTab] = useState<TabValue>("upload");
   const [files, setFiles] = useState<File[]>([]);
   const [globalParser, setGlobalParser] = useState("auto");
   const [fileParserMap, setFileParserMap] = useState<Record<string, string>>({});
-  const activeJobs = (jobs.data ?? []).filter((job) =>
-    job.status === "queued" || job.status === "processing" || job.status === "failed",
+  const [statusFilter, setStatusFilter] = useState("all");
+
+  const activeJobs = (jobs.data ?? []).filter(
+    (job) => job.status === "queued" || job.status === "processing" || job.status === "failed",
   );
+  const filteredDocuments =
+    statusFilter === "all"
+      ? (documents.data ?? [])
+      : (documents.data ?? []).filter((d) => d.status === statusFilter);
+
+  const activeClient = clients.data?.find((c) => c.id === workspaceId);
+  const embedLabel = resolveEmbedLabel(activeClient?.embedding_model ?? null, embeddingModels);
+
+  // Sync tab from URL hash on mount
+  useEffect(() => {
+    const hash = window.location.hash.replace("#", "") as TabValue;
+    if (VALID_TABS.includes(hash)) setTab(hash);
+  }, []);
 
   useEffect(() => {
     if (!workspaceId && clients.data?.[0]) setWorkspaceId(clients.data[0].id);
   }, [clients.data, setWorkspaceId, workspaceId]);
+
+  function handleTabChange(value: string) {
+    setTab(value as TabValue);
+    window.history.replaceState(null, "", `#${value}`);
+  }
 
   function fileKey(file: File, index: number) {
     return `${file.name}-${file.size}-${index}`;
@@ -102,17 +138,19 @@ export default function DocumentsPage() {
           />
         }
       />
-      <Tabs.Root defaultValue="upload" className="space-y-4">
+      <Tabs.Root value={tab} onValueChange={handleTabChange} className="space-y-4">
         <Tabs.List className="flex gap-1 border-b border-border">
-          {["upload", "activity", "library"].map((tab) => (
-            <Tabs.Trigger key={tab} value={tab} className="border-b-2 border-transparent px-3 py-2 text-sm capitalize text-muted-foreground data-[state=active]:border-primary data-[state=active]:text-foreground">
-              {tab}
+          {VALID_TABS.map((t) => (
+            <Tabs.Trigger key={t} value={t} className="border-b-2 border-transparent px-3 py-2 text-sm capitalize text-muted-foreground data-[state=active]:border-primary data-[state=active]:text-foreground">
+              {t}
             </Tabs.Trigger>
           ))}
         </Tabs.List>
+
+        {/* ── Upload ────────────────────────────────────────────────────── */}
         <Tabs.Content value="upload">
           <SectionCard title="Upload files" description="Supported formats: PDF, DOCX, PPTX. Max size: 200MB per file.">
-            <div className="mb-4">
+            <div className="mb-4 flex items-start justify-between gap-4">
               <DarkSelect
                 label="Parser (all files)"
                 value={globalParser}
@@ -125,6 +163,11 @@ export default function DocumentsPage() {
                   hint: p.available ? undefined : "not configured",
                 }))}
               />
+              {workspaceId && embedLabel && (
+                <span className="rounded-full border border-border bg-muted/40 px-3 py-1 text-xs text-muted-foreground">
+                  {embedLabel}
+                </span>
+              )}
             </div>
             <div className="space-y-3">
               {files.length === 0 ? (
@@ -204,22 +247,69 @@ export default function DocumentsPage() {
             </div>
           </SectionCard>
         </Tabs.Content>
+
+        {/* ── Activity ──────────────────────────────────────────────────── */}
         <Tabs.Content value="activity">
+          <div className="mb-3 flex justify-end">
+            <button
+              className="button-secondary"
+              onClick={() => jobs.refetch()}
+              disabled={jobs.isFetching}
+            >
+              <RotateCcw className={cn("h-4 w-4", jobs.isFetching && "animate-spin")} />
+              Refresh
+            </button>
+          </div>
           {jobs.isLoading ? <LoadingState /> : jobs.error ? <ErrorState error={jobs.error} /> : activeJobs.length ? (
-            <div className="space-y-3">
-              {activeJobs.map((job) => <IngestionJobCard key={job.id} job={job} onRetry={() => retryJob.mutate(job.id)} retrying={retryJob.isPending} />)}
-            </div>
+            <>
+              {activeJobs.some((j) => j.status === "queued" || j.status === "processing") && (
+                <div className="mb-3 rounded-md border border-border bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
+                  Parsing may take several minutes depending on document size and parser. Use{" "}
+                  <span className="font-medium text-foreground">Refresh</span> to check for updates.
+                </div>
+              )}
+              <div className="space-y-3">
+                {activeJobs.map((job) => (
+                  <IngestionJobCard
+                    key={job.id}
+                    job={job}
+                    onRetry={(parser) => retryJob.mutate({ jobId: job.id, parser })}
+                    retrying={retryJob.isPending}
+                  />
+                ))}
+              </div>
+            </>
           ) : <EmptyState title="No active ingestion jobs" description="Queued, processing, and failed ingestion jobs will appear here." />}
         </Tabs.Content>
+
+        {/* ── Library ───────────────────────────────────────────────────── */}
         <Tabs.Content value="library">
           {documents.isLoading ? <LoadingState /> : documents.error ? <ErrorState error={documents.error} /> : documents.data?.length ? (
-            <SectionCard title={`Document library // ${documents.data.length}`}>
-              <DocumentTable
-                documents={documents.data}
-                onDelete={(id) => deleteDoc.mutate(id)}
-                onRetry={(id) => retryDoc.mutate(id)}
-                pending={deleteDoc.isPending || retryDoc.isPending}
-              />
+            <SectionCard
+              title={`Document library // ${documents.data.length}`}
+              actions={
+                <DarkSelect
+                  label="Filter by status"
+                  value={statusFilter}
+                  onChange={setStatusFilter}
+                  options={STATUS_FILTER_OPTIONS}
+                  className="w-44"
+                  menuSide="bottom"
+                />
+              }
+            >
+              {filteredDocuments.length === 0 ? (
+                <p className="py-8 text-center text-sm text-muted-foreground">
+                  No documents match the selected filter.
+                </p>
+              ) : (
+                <DocumentTable
+                  documents={filteredDocuments}
+                  onDelete={(id) => deleteDoc.mutate(id)}
+                  onRetry={(id) => retryDoc.mutate(id)}
+                  pending={deleteDoc.isPending || retryDoc.isPending}
+                />
+              )}
             </SectionCard>
           ) : <EmptyState title="No documents uploaded" description="Upload source files to make them available for scoped RAG queries." />}
         </Tabs.Content>

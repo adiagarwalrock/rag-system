@@ -14,7 +14,7 @@ type WorkspaceState = {
   setSessionId: (id: string) => void;
   reasoningEffort: "low" | "medium" | "high";
   setReasoningEffort: (effort: "low" | "medium" | "high") => void;
-  llmModel: string;
+  llmModel: string | undefined;
   setLlmModel: (model: string) => void;
 };
 
@@ -24,7 +24,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [workspaceId, setWorkspaceIdState] = useState("");
   const [sessionId, setSessionIdState] = useState("");
   const [reasoningEffort, setReasoningEffortState] = useState<"low" | "medium" | "high">("medium");
-  const [llmModel, setLlmModelState] = useState<string>("");
+  const [llmModel, setLlmModelState] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     const storedWorkspace = localStorage.getItem(workspaceKey) ?? "";
@@ -34,8 +34,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     if (storedEffort === "low" || storedEffort === "medium" || storedEffort === "high") {
       setReasoningEffortState(storedEffort);
     }
-    const storedModel = localStorage.getItem(llmModelKey);
-    if (storedModel) setLlmModelState(storedModel);
+    const storedModel = localStorage.getItem(llmModelKey) ?? undefined;
+    setLlmModelState(storedModel);
   }, []);
 
   const setWorkspaceId = useCallback((id: string) => {

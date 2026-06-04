@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-import pymupdf as fitz
 
 from app.core.config import settings
 from app.ingestion.parser.external.helper import (
@@ -31,6 +30,8 @@ from app.ingestion.parser.external.helper import (
     provider_citations,
     provider_metadata_association_schema,
     provider_usage,
+    render_page_screenshots,
+    screenshot_refs,
     split_by_page_markers,
     to_llama_docs_from_extraction,
 )
@@ -41,17 +42,6 @@ from app.ingestion.parser.external.prompts import (
     REDUCTO_CHART_PARSER_PROMPT,
     REDUCTO_EXTRACTION_PROMPT,
 )
-
-_SCREENSHOT_DPI: int = 120  # matches adapters.py page screenshot DPI
-
-
-def _screenshot_refs(
-    page_nums: list[int], screenshot_map: dict[int, str] | None
-) -> list[str]:
-    if not screenshot_map:
-        return []
-    return [screenshot_map[p] for p in page_nums if p in screenshot_map]
-
 
 class ReductoParser:
     """
@@ -192,7 +182,7 @@ class ReductoParser:
 
         # Build ParsedPageChunks from page-sectioned markdown
         page_sections = split_by_page_markers(markdown)
-        screenshot_map = self._render_page_screenshots(pdf_path, document_id, page_sections)
+        screenshot_map = render_page_screenshots(pdf_path, document_id, page_sections)
         page_chunks = self._build_page_chunks(page_sections, screenshot_map)
 
         return ParsedDocument(
@@ -203,48 +193,6 @@ class ReductoParser:
             extract_input_id=extract_input_id,
             page_chunks=page_chunks,
         )
-
-    def _render_page_screenshots(
-        self,
-        pdf_path: Path,
-        document_id: str | None,
-        page_sections: list[tuple[int, str]],
-    ) -> dict[int, str]:
-        """Render one PNG per content page from the raw PDF; return {page_num: abs_path}.
-
-        Returns {} when document_id is None or when fitz fails to open the PDF.
-        """
-        if not document_id:
-            return {}
-        screenshot_dir = Path(settings.PARSED_ARTIFACTS_DIR) / document_id / "screenshots"
-        page_nums = {page_num for page_num, _ in page_sections}
-        try:
-            screenshot_dir.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            print(f"  [reducto] WARNING: cannot create screenshot dir: {exc}")
-            return {}
-        result: dict[int, str] = {}
-        try:
-            pdf_doc = fitz.open(str(pdf_path))
-        except Exception as exc:
-            print(f"  [reducto] WARNING: fitz.open failed — skipping screenshots: {exc}")
-            return {}
-        try:
-            for page_idx in range(len(pdf_doc)):
-                page_num = page_idx + 1  # fitz is 0-indexed; Reducto pages are 1-indexed
-                if page_num not in page_nums:
-                    continue
-                screenshot_path = screenshot_dir / f"page_{page_num}.png"
-                try:
-                    pix = pdf_doc[page_idx].get_pixmap(dpi=_SCREENSHOT_DPI)
-                    pix.save(str(screenshot_path))
-                    result[page_num] = str(screenshot_path)
-                except Exception as exc:
-                    print(f"  [reducto] WARNING: screenshot failed for page {page_num}: {exc}")
-        finally:
-            pdf_doc.close()
-        print(f"  [reducto] {len(result)} page screenshots rendered")
-        return result
 
     def _build_page_chunks(
         self,
@@ -266,7 +214,7 @@ class ReductoParser:
                     source_artifact_type=analyzed.source_artifact_type,
                     source_artifact_id=analyzed.source_artifact_id,
                     metadata=analyzed.metadata,
-                    asset_refs=_screenshot_refs(analyzed.page_nums, screenshot_map),
+                    asset_refs=screenshot_refs(analyzed.page_nums, screenshot_map),
                 )
             )
         return chunks

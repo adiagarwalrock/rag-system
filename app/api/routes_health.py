@@ -23,6 +23,15 @@ def runtime_status():
 
 @router.get("/models")
 def list_models():
-    """Return chat-capable model IDs available from the configured AI provider."""
+    """Return all available models from the registry.
+
+    Response shape:
+      {
+        "models": [{"id": str, "default": bool}],
+        "configured_default": str,
+        "embedding_models": [{"id": str, "provider": str, "dimensions": int,
+                               "display_name": str, "default": bool}]
+      }
+    """
     svc = RuntimeStatusService()
     return svc.list_available_models()
