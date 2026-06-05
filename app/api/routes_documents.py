@@ -17,7 +17,10 @@ from app.db.models.document import (
     VectorNodeRegistry,
 )
 from app.db.snowflake import get_db
-from app.ingestion.parser.registry import get_available_parsers, validate_parser_preference
+from app.ingestion.parser.registry import (
+    get_available_parsers,
+    validate_parser_preference,
+)
 from app.schemas.document import (
     DeleteResponse,
     DocumentListResponse,
@@ -96,11 +99,10 @@ def _enrich_document_list(
 
     # Current embedding model per client for staleness check
     client_ids = {doc.client_id for doc in documents}
-    client_models: dict[str, str] = {}
-    for cid in client_ids:
-        c = db.get(Client, cid)
-        if c:
-            client_models[cid] = c.embedding_model or settings.EMBEDDING_MODEL
+    clients = db.query(Client).filter(Client.id.in_(client_ids)).all()
+    client_models: dict[str, str] = {
+        c.id: (c.embedding_model or settings.EMBEDDING_MODEL) for c in clients
+    }
 
     latest_parser_by_doc: dict[str, str | None] = {}
     jobs = (
@@ -118,21 +120,23 @@ def _enrich_document_list(
     for document in documents:
         doc_model = doc_embedding_models.get(document.id)
         client_model = client_models.get(document.client_id)
-        result.append({
-            "id": document.id,
-            "client_id": document.client_id,
-            "name": document.name,
-            "file_type": document.file_type,
-            "status": document.status,
-            "document_family": document.document_family,
-            "parser_used": latest_parser_by_doc.get(document.id),
-            "vector_point_count": vector_counts.get(document.id, 0),
-            "embedding_model": doc_model,
-            "embedding_model_stale": bool(
-                doc_model and client_model and doc_model != client_model
-            ),
-            "created_at": document.created_at,
-        })
+        result.append(
+            {
+                "id": document.id,
+                "client_id": document.client_id,
+                "name": document.name,
+                "file_type": document.file_type,
+                "status": document.status,
+                "document_family": document.document_family,
+                "parser_used": latest_parser_by_doc.get(document.id),
+                "vector_point_count": vector_counts.get(document.id, 0),
+                "embedding_model": doc_model,
+                "embedding_model_stale": bool(
+                    doc_model and client_model and doc_model != client_model
+                ),
+                "created_at": document.created_at,
+            }
+        )
     return result
 
 
@@ -252,7 +256,9 @@ def retry_doc_ingestion(
 ):
     """Retry ingestion for a failed document. Pass ?parser=<id> to override the parser."""
     try:
-        result = retry_ingestion(document_id=document_id, db=db, parser_preference=parser)
+        result = retry_ingestion(
+            document_id=document_id, db=db, parser_preference=parser
+        )
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

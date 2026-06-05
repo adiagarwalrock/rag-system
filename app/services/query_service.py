@@ -14,6 +14,8 @@ from typing import Any
 from sqlalchemy import insert, true
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
+
 from app.db.models.document import (
     ConflictLog,
     QueryLog,
@@ -35,7 +37,9 @@ class QueryExecutionRequest:
     session_id: str | None = None
     conversation_context: dict[str, Any] | None = None
     status_callback: Callable[[str], None] | None = field(default=None, compare=False)
-    reasoning_callback: Callable[[str], None] | None = field(default=None, compare=False)
+    reasoning_callback: Callable[[str], None] | None = field(
+        default=None, compare=False
+    )
     answer_callback: Callable[[str], None] | None = field(default=None, compare=False)
 
 
@@ -148,7 +152,6 @@ class QueryExecutionService:
 
         try:
             result = self._run_retrieval(request)
-            result.setdefault("llm_model", request.llm_model)
             result.setdefault("reasoning_effort", request.reasoning_effort)
             latency_ms = self._latency_ms(start_time)
 
@@ -197,7 +200,9 @@ class QueryExecutionService:
             answer_callback=request.answer_callback,
             db=self.db,
         )
-        return retriever.query(request.question, status_callback=request.status_callback)
+        return retriever.query(
+            request.question, status_callback=request.status_callback
+        )
 
     @staticmethod
     def _latency_ms(start_time: float) -> int:
@@ -227,8 +232,6 @@ def execute_query(
     Returns:
         Dict with answer, citations, conflicts, and query metadata.
     """
-    from app.core.config import settings
-
     request = QueryExecutionRequest(
         question=question,
         client_id=client_id,
@@ -244,6 +247,9 @@ def execute_query(
 
     if settings.ENABLE_AGENTIC_RAG:
         from app.agents.adapter import AgenticRetrieverAdapter
-        return QueryExecutionService(db, retriever_factory=AgenticRetrieverAdapter).execute(request)
+
+        return QueryExecutionService(
+            db, retriever_factory=AgenticRetrieverAdapter
+        ).execute(request)
 
     return QueryExecutionService(db).execute(request)

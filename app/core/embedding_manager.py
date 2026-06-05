@@ -1,11 +1,17 @@
 """Singleton factory and cache for LlamaIndex embedding instances."""
+
 from __future__ import annotations
 
 from threading import Lock
 from typing import Any
 
 from app.core.config import settings
-from app.core.models.embedding.base import EMBEDDING_REGISTRY, EmbeddingModelEntry, EmbeddingProvider
+from app.core.models.embedding.base import (
+    EMBEDDING_REGISTRY,
+    EmbeddingModelEntry,
+    EmbeddingProvider,
+)
+
 # Side-effect imports: register provider subclasses via __init_subclass__
 import app.core.models.embedding.openai  # noqa: F401
 import app.core.models.embedding.gemini  # noqa: F401
@@ -29,10 +35,16 @@ class EmbeddingManager:
         self._lock = Lock()
 
     def get_instance(
-        self, *, model_id: str, api_key: str | None = None, dimensions: int | None = None
+        self,
+        *,
+        model_id: str,
+        api_key: str | None = None,
+        dimensions: int | None = None,
     ) -> Any:
         """Return a cached or freshly built embedding instance."""
-        provider_cls = EmbeddingProvider.for_provider(EmbeddingProvider.detect_provider(model_id))
+        provider_cls = EmbeddingProvider.for_provider(
+            EmbeddingProvider.detect_provider(model_id)
+        )
         resolved_key = api_key or provider_cls.api_key_from_settings(settings)
         cache_key = (model_id, resolved_key, dimensions)
         with self._lock:
@@ -64,7 +76,8 @@ class EmbeddingManager:
             if model_id is None:
                 self._cache.clear()
             else:
-                self._cache = {k: v for k, v in self._cache.items() if k[0] != model_id}
+                for k in [k for k in self._cache if k[0] == model_id]:
+                    del self._cache[k]
 
     def list_models(self) -> list[EmbeddingModelEntry]:
         """Return registry entries sorted openai → gemini → other."""

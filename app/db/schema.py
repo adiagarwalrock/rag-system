@@ -42,19 +42,18 @@ def _backfill_clients_embedding_model(engine: Engine) -> None:
         if "clients" not in set(inspector.get_table_names()):
             return
         with engine.begin() as conn:
-            has_nulls = conn.execute(
-                text("SELECT 1 FROM clients WHERE embedding_model IS NULL LIMIT 1")
-            ).fetchone()
-            if not has_nulls:
-                return
             result = conn.execute(
-                text("UPDATE clients SET embedding_model = :m WHERE embedding_model IS NULL"),
+                text(
+                    "UPDATE clients SET embedding_model = :m WHERE embedding_model IS NULL"
+                ),
                 {"m": default},
             )
         rows = getattr(result, "rowcount", 0) or 0
         if rows:
             logger.info(
-                "Backfilled clients.embedding_model = '%s' for %d row(s).", default, rows
+                "Backfilled clients.embedding_model = '%s' for %d row(s).",
+                default,
+                rows,
             )
     except Exception:
         logger.exception("Failed to backfill clients.embedding_model")
@@ -93,9 +92,7 @@ def _ensure_query_logs_session_id(engine: Engine) -> None:
 
 
 def _ensure_query_logs_reasoning_effort(engine: Engine) -> None:
-    _ensure_text_column(
-        engine, table_name="query_logs", column_name="reasoning_effort"
-    )
+    _ensure_text_column(engine, table_name="query_logs", column_name="reasoning_effort")
 
 
 def _ensure_query_logs_user_id(engine: Engine) -> None:
@@ -111,7 +108,9 @@ def _ensure_query_logs_user_id(engine: Engine) -> None:
     try:
         with engine.begin() as conn:
             conn.execute(
-                text("ALTER TABLE query_logs ADD COLUMN user_id VARCHAR DEFAULT 'internal'")
+                text(
+                    "ALTER TABLE query_logs ADD COLUMN user_id VARCHAR DEFAULT 'internal'"
+                )
             )
         logger.info("Added query_logs.user_id runtime column.")
     except Exception:
