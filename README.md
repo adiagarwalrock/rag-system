@@ -12,7 +12,7 @@ Both entry points share the same service layer in `app/services/*`.
 - UI and API both use the same in-process business logic (no duplicated workflow code).
 - Ingestion runs through a background queue with worker threads.
 - Retrieval uses hybrid Qdrant search (dense + sparse) with dense fallback.
-- **Agentic RAG** (`ENABLE_AGENTIC_RAG=true`): LangGraph-based multi-pass retrieval loop with LLM evidence evaluation, automatic gap detection, and targeted re-retrieval before synthesis.
+- **Agentic RAG** (`ENABLE_AGENTIC_RAG`, default `false`): LangGraph-based multi-pass retrieval — deferred to v2, not actively supported. Keep disabled in v1.
 - Session-aware chat is enabled, including cross-session semantic memory.
 - Access control is removed; runtime is internal single-tenant mode.
 - Runtime startup requires a valid OpenAI-compatible API key (`OPENAI_API_KEY` / `AI_API_KEY`).
@@ -89,6 +89,19 @@ Follow these steps from the repository root to get the application running:
 
    API docs will be available at `http://localhost:8000/docs`.
 
+6. **(Optional) Start the Next.js Frontend Console**
+
+   The frontend is a separate Next.js app in `frontend/`. It requires the API server (step 5) to be running.
+
+   ```bash
+   cd frontend
+   cp .env.example .env.local   # first time only
+   npm install                  # first time only
+   npm run dev
+   ```
+
+   The console is available at `http://localhost:3000`. The `.env.local` default points to `http://127.0.0.1:8000/api/v1` — no changes needed for local development.
+
 ## Runtime Wiring
 
 - `streamlit_app.py` loads multipage UI routes from `ui/pages/*`.
@@ -103,36 +116,13 @@ See [architecture.md](./architecture.md) for the full system map. Current bounda
 - Orchestration: `app/services/*`
 - Ingestion/parsing: `app/ingestion/*`
 - Retrieval: `app/retrieval/*`
-- **Agentic RAG**: `app/agents/*` — LangGraph graph, nodes, state, and adapter
+- **Agentic RAG**: `app/agents/*` — LangGraph graph, nodes, state, and adapter (v2, not active)
 - Vector store integration: `app/indexing/vector_store.py`
 - Relational data/session state: `app/db/*`
 
 ### Agentic RAG (`app/agents/`)
 
-Enabled via `ENABLE_AGENTIC_RAG=true`. The query path is replaced with a LangGraph state machine:
-
-```
-intent_router → vector_retrieval → evidence_evaluator
-                      ↑                    │ not sufficient (gap detected)
-                      └────────────────────┘
-                                           │ sufficient or max iterations
-                                           ▼
-                           reranker → conflict_detector → citation_builder → synthesizer
-```
-
-Key behaviours:
-- **Deterministic coverage check**: detects comparison questions and verifies each named entity has ≥ 3 relevant nodes before calling the LLM evaluator.
-- **Structured evidence evaluation**: uses OpenAI structured output (`EvidenceEvaluation` Pydantic model) — returns `sufficient`, `gap`, and per-node `node_scores`.
-- **Gap-targeted re-retrieval**: on `sufficient=false`, uses the `gap` string as the query for the next Qdrant pass instead of repeating the original question.
-- **Node exclusion**: already-seen node IDs are tracked in state; duplicate nodes are filtered in Python after each retrieval pass.
-- **Max iterations guard**: `AGENTIC_MAX_ITERATIONS=5` (configurable); forces synthesis after N passes.
-
-Relevant config keys (add to `.env`):
-```bash
-ENABLE_AGENTIC_RAG=true
-AGENTIC_MAX_ITERATIONS=5
-AGENTIC_EVIDENCE_EVALUATOR_MODEL=   # defaults to QUERY_EXPANSION_MODEL
-```
+Deferred to v2. `ENABLE_AGENTIC_RAG` defaults to `false` — do not enable in v1. The code exists but is not actively developed or supported.
 
 ## Environment and Integrations
 
@@ -140,7 +130,7 @@ Configuration is loaded from `.env` via `pydantic-settings` (`app/core/config.py
 
 ### API key behavior
 
-- `AI_API_KEY` accepts aliases including `OPENAI_API_KEY`.
+- Set `OPENAI_API_KEY` for OpenAI models, or `GEMINI_API_KEY` / `GOOGLE_API_KEY` for Gemini.
 - Placeholder or missing keys fail startup validation (`validate_runtime_settings`).
 - AI provider initialization is centralized in `app/core/ai_provider.py`.
 
@@ -152,7 +142,7 @@ Configuration is loaded from `.env` via `pydantic-settings` (`app/core/config.py
 
 ### Qdrant behavior
 
-- Main collection uses `settings.COLLECTION_NAME` (default `rag_collection_oai`).
+- Main collection uses `settings.COLLECTION_NAME` (default `rag_collection_oai_parser_extractor`).
 - Retrieval prefers hybrid dense+sparse mode; dense fallback is automatic.
 - Vector dimension mismatches are enforced and can require collection recreation.
 
@@ -161,10 +151,11 @@ Configuration is loaded from `.env` via `pydantic-settings` (`app/core/config.py
 1. Upload is validated and persisted (`Document`, `IngestionJob`) in queued state.
 2. Raw file is saved to `data/raw`.
 3. Background workers process queued ingestion tasks.
-4. Parsing — 4-level fallback chain (each level is skipped if its key is absent or it fails):
+4. Parsing — 5-level fallback chain (each level is skipped if its key/flag is absent or it fails):
    1. **Reducto** — if `ENABLE_EXTERNAL_PARSER=true` and `REDUCTO_API_KEY` is set. VLM-powered agentic table and figure extraction; returns page-delimited markdown.
    2. **LlamaParse** — if `ENABLE_EXTERNAL_PARSER=true` and `LLAMA_CLOUD_API_KEY` / `LLAMAPARSE_API_KEY` is set. Returns page-delimited markdown.
    3. **Layout-aware PDF** — custom pipeline (`app/ingestion/parser/custom/pdf_pipeline/`) for PDFs when `ENABLE_LAYOUT_AWARE_PDF=true`.
+   3b. **Docling** — local layout-aware parser (`app/ingestion/parser/custom/docling_parser.py`) for PDFs when `ENABLE_DOCLING_PARSER=true`. No API key required.
    4. **Legacy** — LlamaIndex readers; always available as final fallback.
 5. All parsed output goes through a single `SemanticSplitterNodeParser` pass followed by LLM enrichment (title, summary, keywords, questions answered).
 6. Version metadata is resolved and persisted (`DocumentVersion` + supersession logic).

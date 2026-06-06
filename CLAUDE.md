@@ -64,10 +64,11 @@ Both call the same orchestration in `app/services/*` in-process. Streamlit uses 
 
 1. Upload creates `Document` + `IngestionJob` in `queued` state; raw file saved to `data/raw`.
 2. `IngestionQueueManager` workers (`app/services/ingest_queue.py`) process jobs asynchronously.
-3. **4-level parser fallback** (each level tried only if its key is set; failure falls through):
+3. **5-level parser fallback** (each level tried only if its key/flag is set; failure falls through):
    1. **Reducto** (`app/ingestion/parser/external/reducto.py`) — if `ENABLE_EXTERNAL_PARSER=true` and `REDUCTO_API_KEY` set
    2. **LlamaParse** (`app/ingestion/parser/external/llamacloud.py`) — if `ENABLE_EXTERNAL_PARSER=true` and `LLAMA_CLOUD_API_KEY` set
    3. **Layout-aware PDF** (`app/ingestion/parser/custom/pdf_pipeline/`) — PDFs when `ENABLE_LAYOUT_AWARE_PDF=true`
+   3b. **Docling** (`app/ingestion/parser/custom/docling_parser.py`) — PDFs when `ENABLE_DOCLING_PARSER=true` (local, no API key required)
    4. **Legacy** (`app/ingestion/parser/custom/legacy.py`) — always available
 4. External parsers (1 & 2) emit `[[START OF PAGE n]]` / `[[END OF PAGE n]]` markers; `to_llama_docs()` splits these into one `LlamaDocument` per page.
 5. All paths feed a single `SemanticSplitterNodeParser` + LLM enrichment pass in `app/services/ingest_service.py`.
@@ -90,7 +91,8 @@ Pass `structured_output_schema=SomePydanticModel` to get a parsed model instance
 
 Settings are loaded from `.env` via `pydantic-settings` (`app/core/config.py`). Key points:
 
-- `AI_API_KEY` accepts aliases: `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`.
+- API key env vars: `OPENAI_API_KEY` (primary), `GEMINI_API_KEY` / `GOOGLE_API_KEY` (Gemini).
+- `ENABLE_DOCLING_PARSER` (default `true`) — enables the local Docling PDF parser (level 3b). Set `false` to skip it.
 - `validate_runtime_settings()` fails on missing/placeholder key — no silent fallback.
 - Relational DB: Snowflake when `SNOWFLAKE_ACCOUNT` + `SNOWFLAKE_USER` are set; otherwise SQLite (`rag_local.db`).
 - Schema is ensured at runtime via `ensure_runtime_schema()` — keep all schema changes additive.

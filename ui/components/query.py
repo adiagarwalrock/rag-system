@@ -163,7 +163,7 @@ def _render_result_details(result: dict):
     reasoning = (result.get("reasoning") or "").strip()
     if reasoning:
         with st.expander(
-            ":material/psychology: Model reasoning summary", expanded=True
+            ":material/psychology: Model reasoning summary", expanded=False
         ):
             st.markdown(f"*{reasoning}*")
 

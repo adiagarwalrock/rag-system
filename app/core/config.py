@@ -78,6 +78,8 @@ class Settings(BaseSettings):
 
     # Layout-aware PDF ingestion
     ENABLE_LAYOUT_AWARE_PDF: bool = True
+    ENABLE_DOCLING_PARSER: bool = True
+    DOCLING_PARSER_VERSION: str = "1.0.0"
     STRICT_LAYOUT_AWARE_PDF_FAILURE: bool = False
     ENABLE_OCR_FALLBACK: bool = True
     ENABLE_MULTIPAGE_TABLE_MERGE: bool = True
@@ -103,7 +105,7 @@ class Settings(BaseSettings):
     SEMANTIC_SPLITTER_BUFFER_SIZE: int = 1
 
     # External document parsers (Reducto / LlamaParse)
-    # Priority order: Reducto → LlamaParse → Layout-aware PDF → Legacy
+    # Priority order: Reducto → LlamaParse → Layout-aware PDF → Docling → Legacy
     # Each level is attempted only if its key is set; failure falls through to the next.
     ENABLE_EXTERNAL_PARSER: bool = True
     EXTERNAL_PARSER_VERSION: str = "1.0.0"

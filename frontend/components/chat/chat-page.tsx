@@ -15,7 +15,7 @@ import { cn, formatMessageTimestamp } from "@/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
 import { BookOpen, Brain, Check, ChevronDown, Copy, FileImage, Printer, Share2, X } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 type ThreadMessage = {
   id: string;
@@ -64,7 +64,8 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
   const scrollAreaRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const messageRefs = useRef(new Map<string, HTMLDivElement>());
-  const scrollIntentRef = useRef<"none" | "bottom" | "submitted-question">("bottom");
+  const scrollIntentRef = useRef<"none" | "bottom" | "latest-user-message" | "submitted-question">("bottom");
+  const historyAnchorMessageIdRef = useRef<string | null>(null);
   const submittedQuestionIdRef = useRef<string | null>(null);
   const suppressNextHistoryScrollRef = useRef(false);
   const inFlightRef = useRef(false);
@@ -92,7 +93,10 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
 
   useEffect(() => {
     if (!sessionId) {
-      if (!inFlightRef.current) setMessages([]);
+      if (!inFlightRef.current) {
+        historyAnchorMessageIdRef.current = null;
+        setMessages([]);
+      }
       return;
     }
     // Skip sync while streaming to avoid overwriting optimistic messages mid-flight.
@@ -108,14 +112,44 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
       }
       pendingPersistedAssistantMessageIdRef.current = null;
       pendingPersistedSessionIdRef.current = null;
-      scrollIntentRef.current = suppressNextHistoryScrollRef.current ? "none" : "bottom";
+      const nextMessages = sessionMessages.data.map(toThreadMessage);
+      let historyAnchorMessageId: string | null = null;
+      for (let index = nextMessages.length - 1; index >= 0; index -= 1) {
+        if (nextMessages[index].role === "user") {
+          historyAnchorMessageId = nextMessages[index].id;
+          break;
+        }
+      }
+      historyAnchorMessageIdRef.current = historyAnchorMessageId;
+      scrollIntentRef.current = suppressNextHistoryScrollRef.current
+        ? "none"
+        : historyAnchorMessageId
+          ? "latest-user-message"
+          : "bottom";
       suppressNextHistoryScrollRef.current = false;
-      setMessages(sessionMessages.data.map(toThreadMessage));
+      setMessages(nextMessages);
     }
   }, [sessionId, sessionMessages.data, isStreaming]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const intent = scrollIntentRef.current;
+    if (intent === "latest-user-message") {
+      const historyAnchor = historyAnchorMessageIdRef.current
+        ? messageRefs.current.get(historyAnchorMessageIdRef.current)
+        : null;
+      const scrollArea = scrollAreaRef.current;
+      if (historyAnchor && scrollArea) {
+        const scrollAreaRect = scrollArea.getBoundingClientRect();
+        const historyAnchorRect = historyAnchor.getBoundingClientRect();
+        scrollArea.scrollTo({
+          top: Math.max(0, scrollArea.scrollTop + historyAnchorRect.top - scrollAreaRect.top),
+          behavior: "auto",
+        });
+      }
+      scrollIntentRef.current = "none";
+      return;
+    }
+
     if (intent === "submitted-question") {
       const submittedQuestion = submittedQuestionIdRef.current
         ? messageRefs.current.get(submittedQuestionIdRef.current)

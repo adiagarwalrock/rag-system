@@ -16,9 +16,10 @@ PARSER_REDUCTO = "reducto"
 PARSER_LLAMA = "llamaparse"
 PARSER_LAYOUT = "layout"
 PARSER_LEGACY = "legacy"
+PARSER_DOCLING = "docling"
 
 VALID_PARSERS: frozenset[str] = frozenset(
-    {PARSER_AUTO, PARSER_REDUCTO, PARSER_LLAMA, PARSER_LAYOUT, PARSER_LEGACY}
+    {PARSER_AUTO, PARSER_REDUCTO, PARSER_LLAMA, PARSER_LAYOUT, PARSER_LEGACY, PARSER_DOCLING}
 )
 
 _PARSER_METADATA = [
@@ -47,6 +48,11 @@ _PARSER_METADATA = [
         "label": "Legacy",
         "description": "LlamaIndex built-in readers. Broadest file-type support; no layout analysis.",
     },
+    {
+        "id": PARSER_DOCLING,
+        "label": "Docling",
+        "description": "Local layout-aware parser using Docling. Supports tables, figures, and section hierarchy. PDF only.",
+    },
 ]
 
 
@@ -63,6 +69,8 @@ def is_available(parser: str, settings_obj=None) -> bool:
         return bool(cfg.ENABLE_LAYOUT_AWARE_PDF)
     if parser == PARSER_LEGACY:
         return True
+    if parser == PARSER_DOCLING:
+        return bool(cfg.ENABLE_DOCLING_PARSER)
     return False
 
 

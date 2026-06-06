@@ -9,6 +9,7 @@ Routing (priority order, each falls through on failure or missing key):
   1. Reducto          — if ENABLE_EXTERNAL_PARSER and REDUCTO_API_KEY is set
   2. LlamaParse       — if ENABLE_EXTERNAL_PARSER and LLAMAPARSE_API_KEY is set
   3. Layout-aware PDF — if PDF and ENABLE_LAYOUT_AWARE_PDF
+  3b. Docling         — if PDF and ENABLE_DOCLING_PARSER (local, no API key)
   4. Legacy           — always available (LlamaIndex readers)
 """
 
@@ -30,6 +31,7 @@ from app.ingestion.parser.custom.pdf_pipeline.helpers import (
 )
 from app.ingestion.parser.registry import (
     PARSER_AUTO,
+    PARSER_DOCLING,
     PARSER_LAYOUT,
     PARSER_LEGACY,
     PARSER_LLAMA,
@@ -74,9 +76,10 @@ def parse_document(
 ) -> tuple[list[LlamaDocument], list[dict]]:
     """Parse a document into LlamaIndex docs and per-unit signal metadata.
 
-    When parser_preference is None or "auto", the 4-level fallback chain runs.
+    When parser_preference is None or "auto", the 5-level fallback chain runs.
     When a specific parser is named, it is invoked directly with no fallback.
     """
+
     path = Path(file_path)
 
     preference = (parser_preference or PARSER_AUTO).lower()
@@ -130,6 +133,20 @@ def parse_document(
                 path.name, type(exc).__name__, exc,
             )
 
+    # Level 3b — Docling (local, PDF only)
+    if path.suffix.lower() == ".pdf" and is_available(PARSER_DOCLING):
+        try:
+            from app.ingestion.parser.custom.docling_parser import run as run_docling
+
+            docs, units = run_docling(file_path, document_metadata)
+            logger.info("Parsed %s via docling: %d chunks", path.name, len(docs))
+            return docs, units
+        except Exception as exc:
+            logger.warning(
+                "Docling failed for %s. Falling back to legacy. Cause=%s: %s",
+                path.name, type(exc).__name__, exc,
+            )
+
     # Level 4 — Legacy (always available)
     docs, units = run_legacy(file_path, document_metadata)
     logger.info(
@@ -178,6 +195,19 @@ def _parse_with_specific_parser(
             )
         docs, units = parse_pdf_layout_aware(file_path, document_metadata)
         logger.info("Parsed %s via layout-aware (explicit): %d docs", path.name, len(docs))
+        return docs, units
+
+    if parser == PARSER_DOCLING:
+        if not is_available(PARSER_DOCLING):
+            raise ValueError("Docling parser is disabled. Set ENABLE_DOCLING_PARSER=true.")
+        if path.suffix.lower() != ".pdf":
+            raise ValueError(
+                f"Docling parser only supports PDF files, got '{path.suffix}'."
+            )
+        from app.ingestion.parser.custom.docling_parser import run as run_docling
+
+        docs, units = run_docling(file_path, document_metadata)
+        logger.info("Parsed %s via docling (explicit): %d chunks", path.name, len(docs))
         return docs, units
 
     # PARSER_LEGACY — always available, no guard needed

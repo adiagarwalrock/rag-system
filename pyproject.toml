@@ -43,6 +43,7 @@ dependencies = [
     "transformers>=5.9.0",
     "uvicorn>=0.23.0",
     "psycopg2-binary>=2.9.12",
+    "docling>=2.97.0",
 ]
 
 [dependency-groups]
