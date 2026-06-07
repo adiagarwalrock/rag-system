@@ -27,6 +27,8 @@ def ensure_runtime_schema(engine: Engine) -> None:
     _ensure_chat_messages_citations_json(engine)
     _ensure_clients_embedding_model(engine)
     _backfill_clients_embedding_model(engine)
+    _ensure_clients_llm_model(engine)
+    _backfill_clients_llm_model(engine)
     _drop_legacy_auth_tables(engine)
 
 
@@ -34,29 +36,39 @@ def _ensure_clients_embedding_model(engine: Engine) -> None:
     _ensure_text_column(engine, table_name="clients", column_name="embedding_model")
 
 
-def _backfill_clients_embedding_model(engine: Engine) -> None:
-    """Set embedding_model to the configured default for any NULL client rows."""
-    default = settings.EMBEDDING_MODEL
+def _ensure_clients_llm_model(engine: Engine) -> None:
+    _ensure_text_column(engine, table_name="clients", column_name="llm_model")
+
+
+def _backfill_clients_column(engine: Engine, column: str, default: str) -> None:
+    """Set a nullable clients column to default for any NULL rows."""
     try:
         inspector = inspect(engine)
         if "clients" not in set(inspector.get_table_names()):
             return
         with engine.begin() as conn:
+            has_nulls = conn.execute(
+                text(f"SELECT 1 FROM clients WHERE {column} IS NULL LIMIT 1")
+            ).fetchone()
+            if not has_nulls:
+                return
             result = conn.execute(
-                text(
-                    "UPDATE clients SET embedding_model = :m WHERE embedding_model IS NULL"
-                ),
+                text(f"UPDATE clients SET {column} = :m WHERE {column} IS NULL"),
                 {"m": default},
             )
         rows = getattr(result, "rowcount", 0) or 0
         if rows:
-            logger.info(
-                "Backfilled clients.embedding_model = '%s' for %d row(s).",
-                default,
-                rows,
-            )
+            logger.info("Backfilled clients.%s = '%s' for %d row(s).", column, default, rows)
     except Exception:
-        logger.exception("Failed to backfill clients.embedding_model")
+        logger.exception("Failed to backfill clients.%s", column)
+
+
+def _backfill_clients_embedding_model(engine: Engine) -> None:
+    _backfill_clients_column(engine, "embedding_model", settings.EMBEDDING_MODEL)
+
+
+def _backfill_clients_llm_model(engine: Engine) -> None:
+    _backfill_clients_column(engine, "llm_model", settings.LLM_MODEL)
 
 
 def _ensure_query_logs_llm_model(engine: Engine) -> None:

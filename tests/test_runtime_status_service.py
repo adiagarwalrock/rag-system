@@ -29,6 +29,7 @@ class FakeSettings:
             "OPENAI_USE_RESPONSES": True,
             "openai_api_key": "test-key",
             "gemini_api_key": "",
+            "anthropic_api_key": "",
             "is_openai_api_key_placeholder": False,
         }
         values.update(overrides)

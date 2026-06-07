@@ -9,7 +9,7 @@ import { apiClient } from "@/lib/api/client";
 import type { ChatMessage as ApiChatMessage, Citation, CitationImageAsset, QueryRequest, QueryResponse } from "@/lib/api/schemas";
 import { useSessionMessages } from "@/lib/hooks/use-chat";
 import { useClients } from "@/lib/hooks/use-clients";
-import { useModels } from "@/lib/hooks/use-models";
+import { useLLMModels } from "@/lib/hooks/use-models";
 import { useWorkspaceStore } from "@/lib/state/workspace-store";
 import { cn, formatMessageTimestamp } from "@/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
@@ -39,7 +39,7 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
   const pathname = usePathname();
   const queryClient = useQueryClient();
   const clients = useClients();
-  const models = useModels();
+  const llmModels = useLLMModels();
   const {
     workspaceId,
     setWorkspaceId,
@@ -60,6 +60,8 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
   const [inspectedResponse, setInspectedResponse] = useState<QueryResponse | null>(null);
   const [renderedInspectorResponse, setRenderedInspectorResponse] = useState<QueryResponse | null>(null);
   const [inspectorWidth, setInspectorWidth] = useState(defaultInspectorWidth);
+  const activeModelId = llmModel || (llmModels.data?.find((m) => m.default)?.id ?? llmModels.data?.[0]?.id);
+  const supportsReasoning = llmModels.data?.find((m) => m.id === activeModelId)?.supports_reasoning ?? true;
   const abortRef = useRef<AbortController | null>(null);
   const scrollAreaRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -494,9 +496,10 @@ export default function ChatPage({ routeSessionId }: { routeSessionId?: string }
             streaming={isStreaming}
             onSubmit={submit}
             onCancel={() => abortRef.current?.abort()}
-            llmModel={llmModel || models.data?.configured_default}
+            llmModel={activeModelId}
             onLlmModelChange={setLlmModel}
-            modelOptions={models.data?.models.map((m) => ({ value: m.id, label: m.id }))}
+            modelOptions={llmModels.data?.map((m) => ({ value: m.id, label: m.display_name || m.id }))}
+            supportsReasoning={supportsReasoning}
             reasoningEffort={reasoningEffort}
             onReasoningEffortChange={setReasoningEffort}
             includeMemory={includeMemory}

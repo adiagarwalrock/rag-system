@@ -23,6 +23,7 @@ class Client(Base):
     )
     is_active = Column(Boolean, default=True)
     embedding_model = Column(String, nullable=True)
+    llm_model = Column(String, nullable=True)
 
     documents = relationship("Document", back_populates="client")
     chat_sessions = relationship("ChatSession", back_populates="client")

@@ -8,7 +8,7 @@ import { useDeleteDocument, useDocuments, useParsers, useRetryDocument, useUploa
 import type { ParserInfo } from "@/lib/api/schemas";
 import { useIngestionJobs, useRetryIngestionJob } from "@/lib/hooks/use-ingestion-jobs";
 import { useWorkspaceStore } from "@/lib/state/workspace-store";
-import { resolveEmbedLabel, useEmbeddingModels } from "@/lib/hooks/use-models";
+import { resolveEmbedLabel, useEmbeddingModels, resolveLLMLabel, useLLMModels } from "@/lib/hooks/use-models";
 import { PageHeader } from "@/components/shell/page-header";
 import { DocumentTable } from "@/components/documents/document-table";
 import { IngestionJobCard } from "@/components/documents/ingestion-job-card";
@@ -38,14 +38,22 @@ type TabValue = (typeof VALID_TABS)[number];
 export default function DocumentsPage() {
   const clients = useClients();
   const { workspaceId, setWorkspaceId } = useWorkspaceStore();
-  const documents = useDocuments(workspaceId);
-  const jobs = useIngestionJobs(workspaceId);
-  const upload = useUploadDocument(workspaceId);
-  const retryDoc = useRetryDocument(workspaceId);
-  const deleteDoc = useDeleteDocument(workspaceId);
-  const retryJob = useRetryIngestionJob(workspaceId);
+  const [requestedClientId, setRequestedClientId] = useState<string | null | undefined>(undefined);
+  const storedClientId = clients.data?.some((client) => client.id === workspaceId) ? workspaceId : "";
+  const validatedClientId = requestedClientId === undefined || !clients.data
+    ? ""
+    : requestedClientId && clients.data.some((client) => client.id === requestedClientId)
+      ? requestedClientId
+      : storedClientId || clients.data[0]?.id || "";
+  const documents = useDocuments(validatedClientId);
+  const jobs = useIngestionJobs(validatedClientId);
+  const upload = useUploadDocument(validatedClientId);
+  const retryDoc = useRetryDocument(validatedClientId);
+  const deleteDoc = useDeleteDocument(validatedClientId);
+  const retryJob = useRetryIngestionJob(validatedClientId);
   const parsers = useParsers();
   const { data: embeddingModels = [] } = useEmbeddingModels();
+  const { data: llmModels = [] } = useLLMModels();
 
   const [tab, setTab] = useState<TabValue>("upload");
   const [files, setFiles] = useState<File[]>([]);
@@ -61,22 +69,50 @@ export default function DocumentsPage() {
       ? (documents.data ?? [])
       : (documents.data ?? []).filter((d) => d.status === statusFilter);
 
-  const activeClient = clients.data?.find((c) => c.id === workspaceId);
+  const activeClient = clients.data?.find((c) => c.id === validatedClientId);
   const embedLabel = resolveEmbedLabel(activeClient?.embedding_model ?? null, embeddingModels);
+  const llmLabel = resolveLLMLabel(activeClient?.llm_model ?? null, llmModels);
 
-  // Sync tab from URL hash on mount
+  // Resolve URL state before enabling workspace-scoped document queries.
   useEffect(() => {
     const hash = window.location.hash.replace("#", "") as TabValue;
     if (VALID_TABS.includes(hash)) setTab(hash);
+    setRequestedClientId(new URLSearchParams(window.location.search).get("client_id"));
   }, []);
 
   useEffect(() => {
-    if (!workspaceId && clients.data?.[0]) setWorkspaceId(clients.data[0].id);
-  }, [clients.data, setWorkspaceId, workspaceId]);
+    if (requestedClientId === undefined || !clients.data) return;
+
+    const requestedClient = requestedClientId
+      ? clients.data.find((client) => client.id === requestedClientId)
+      : undefined;
+    if (requestedClient) {
+      if (workspaceId !== requestedClient.id) setWorkspaceId(requestedClient.id);
+      return;
+    }
+
+    const storedClientIsValid = clients.data.some((client) => client.id === workspaceId);
+    if (!storedClientIsValid && clients.data[0]) setWorkspaceId(clients.data[0].id);
+  }, [clients.data, requestedClientId, setWorkspaceId, workspaceId]);
 
   function handleTabChange(value: string) {
     setTab(value as TabValue);
-    window.history.replaceState(null, "", `#${value}`);
+    const url = new URL(window.location.href);
+    url.hash = value;
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }
+
+  function handleWorkspaceChange(clientId: string) {
+    setWorkspaceId(clientId);
+    setRequestedClientId(clientId || null);
+
+    const url = new URL(window.location.href);
+    if (clientId) {
+      url.searchParams.set("client_id", clientId);
+    } else {
+      url.searchParams.delete("client_id");
+    }
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   }
 
   function fileKey(file: File, index: number) {
@@ -126,9 +162,9 @@ export default function DocumentsPage() {
         actions={
           <DarkSelect
             label="Workspace"
-            value={workspaceId}
+            value={validatedClientId}
             placeholder="Select workspace"
-            onChange={setWorkspaceId}
+            onChange={handleWorkspaceChange}
             className="w-60"
             buttonClassName="font-mono"
             options={[
@@ -163,9 +199,14 @@ export default function DocumentsPage() {
                   hint: p.available ? undefined : "not configured",
                 }))}
               />
-              {workspaceId && embedLabel && (
+              {validatedClientId && embedLabel && (
                 <span className="rounded-full border border-border bg-muted/40 px-3 py-1 text-xs text-muted-foreground">
                   {embedLabel}
+                </span>
+              )}
+              {validatedClientId && llmLabel && (
+                <span className="rounded-full border border-border bg-muted/40 px-3 py-1 text-xs text-muted-foreground">
+                  {llmLabel}
                 </span>
               )}
             </div>

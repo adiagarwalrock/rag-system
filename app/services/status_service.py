@@ -9,7 +9,9 @@ from sqlalchemy import text
 from app.core import ai_provider
 from app.core.config import settings
 from app.core.embedding_manager import embedding_manager
+from app.core.models.llm_manager import llm_manager
 from app.core.models.embedding.registry import EMBEDDING_REGISTRY_IDS
+from app.core.models.llm.registry import LLM_REGISTRY_IDS
 from app.db.snowflake import SessionLocal, engine
 from app.indexing.vector_store import vector_store_manager
 
@@ -211,12 +213,11 @@ class RuntimeStatusService:
     def list_available_models(self) -> dict[str, Any]:
         """Return LLM and embedding models from the registry.
 
-        ``configured_providers`` lists only the providers whose API key is
-        non-empty in the current settings, so the UI can hide models that
-        would fail at runtime.
+        ``configured_providers`` lists embedding providers whose API key is set.
+        ``configured_llm_providers`` lists LLM providers whose API key is set.
+        The UI uses these to filter dropdown options to only runnable models.
         """
         configured_default = self.settings.LLM_MODEL
-        models = [{"id": configured_default, "default": True}]
         embedding_models = [
             {
                 "id": e.id,
@@ -227,16 +228,39 @@ class RuntimeStatusService:
             }
             for e in embedding_manager.list_models()
         ]
+        llm_models = [
+            {
+                "id": e.id,
+                "provider": e.provider,
+                "display_name": e.display_name,
+                "context_window": e.context_window,
+                "supports_reasoning": e.supports_reasoning,
+                "supports_vision": e.supports_vision,
+                "default": e.id == self.settings.LLM_MODEL,
+            }
+            for e in llm_manager.list_models()
+        ]
+        has_openai = self._has_secret(self.settings.openai_api_key)
+        has_gemini = self._has_secret(self.settings.gemini_api_key)
         configured_providers: list[str] = []
-        if self._has_secret(self.settings.openai_api_key):
+        if has_openai:
             configured_providers.append("openai")
-        if self._has_secret(self.settings.gemini_api_key):
+        if has_gemini:
             configured_providers.append("gemini")
+        configured_llm_providers: list[str] = []
+        if has_openai:
+            configured_llm_providers.append("openai")
+        if self._has_secret(self.settings.anthropic_api_key):
+            configured_llm_providers.append("anthropic")
+        if has_gemini:
+            configured_llm_providers.append("gemini")
         return {
-            "models": models,
+            "models": [{"id": configured_default, "default": True}],
             "configured_default": configured_default,
             "embedding_models": embedding_models,
             "configured_providers": configured_providers,
+            "llm_models": llm_models,
+            "configured_llm_providers": configured_llm_providers,
         }
 
     def _models_registry_status(self) -> dict[str, Any]:
@@ -246,6 +270,7 @@ class RuntimeStatusService:
             "message": "Registry check succeeded.",
             "model_count": len(EMBEDDING_REGISTRY_IDS),
             "embedding_model_available": self.settings.EMBEDDING_MODEL in EMBEDDING_REGISTRY_IDS,
+            "llm_model_count": len(LLM_REGISTRY_IDS),
         }
 
     def _database_target(self, mode: str) -> dict[str, str | None]:

@@ -45,6 +45,10 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_API_KEY"),
     )
+    ANTHROPIC_API_KEY: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ANTHROPIC_API_KEY", "CLAUDE_API_KEY"),
+    )
     LLM_MODEL: str = "gpt-5.5"
     QUERY_EXPANSION_MODEL: str = "gpt-5.4-mini"
     SESSION_SUMMARY_MODEL: str = "gpt-5.4-mini"
@@ -175,6 +179,10 @@ class Settings(BaseSettings):
     @property
     def gemini_api_key(self) -> str:
         return self._normalize_secret(self.GEMINI_API_KEY)
+
+    @property
+    def anthropic_api_key(self) -> str:
+        return self._normalize_secret(self.ANTHROPIC_API_KEY)
 
     @property
     def hf_api_token(self) -> str:

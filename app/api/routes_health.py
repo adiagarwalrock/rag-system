@@ -23,14 +23,17 @@ def runtime_status():
 
 @router.get("/models")
 def list_models():
-    """Return all available models from the registry.
+    """Return all available LLM and embedding models from the registry.
 
     Response shape:
       {
         "models": [{"id": str, "default": bool}],
         "configured_default": str,
-        "embedding_models": [{"id": str, "provider": str, "dimensions": int,
-                               "display_name": str, "default": bool}]
+        "embedding_models": [{"id", "provider", "dimensions", "display_name", "default"}],
+        "configured_providers": ["openai", "gemini", ...],
+        "llm_models": [{"id", "provider", "display_name", "context_window",
+                         "supports_reasoning", "supports_vision", "default"}],
+        "configured_llm_providers": ["openai", "anthropic", "gemini", ...]
       }
     """
     svc = RuntimeStatusService()

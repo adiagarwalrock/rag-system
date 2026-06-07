@@ -33,7 +33,7 @@ from app.core.ai_provider import (
     normalize_reasoning_effort,
     normalize_reasoning_summary,
 )
-from app.core.client_utils import resolve_client_embedding_model
+from app.core.client_utils import resolve_client_embedding_model, resolve_client_llm_model
 from app.core.config import settings
 from app.core.safe_coerce import normalize_metric_subject, safe_bool, safe_int
 from app.core.prompts import (
@@ -501,9 +501,16 @@ class VecteraRetriever:
         self.filters = MetadataFilters(
             filters=[ExactMatchFilter(key="client_id", value=self.client_id)]
         )
+        # LLM model resolution: user override > client default > global default
+        resolved_llm_model = (
+            llm_model
+            or (resolve_client_llm_model(client_id, db) if db is not None else None)
+            or settings.LLM_MODEL
+        )
+
         self.answer_synthesizer = GroundedAnswerSynthesizer(
             client_id=self.client_id,
-            llm_model=llm_model,
+            llm_model=resolved_llm_model,
             reasoning_effort=self.reasoning_effort,
             reasoning_summary=normalize_reasoning_summary(reasoning_summary),
             reasoning_callback=reasoning_callback,

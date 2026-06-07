@@ -30,6 +30,7 @@ export const clientSchema = z
     description: z.string().nullish(),
     created_at: z.string(),
     embedding_model: z.string().nullish(),
+    llm_model: z.string().nullish(),
     document_count: z.number().optional(),
     query_count: z.number().optional(),
     session_count: z.number().optional(),
@@ -506,15 +507,28 @@ export const embeddingModelInfoSchema = z.object({
   default: z.boolean(),
 });
 
+export const llmModelInfoSchema = z.object({
+  id: z.string(),
+  provider: z.string(),
+  display_name: z.string(),
+  context_window: z.number(),
+  supports_reasoning: z.boolean(),
+  supports_vision: z.boolean(),
+  default: z.boolean(),
+});
+
 export const modelListResponseSchema = z.object({
   models: z.array(modelInfoSchema),
   configured_default: z.string(),
   embedding_models: z.array(embeddingModelInfoSchema).optional(),
   configured_providers: z.array(z.string()).optional(),
+  llm_models: z.array(llmModelInfoSchema).optional(),
+  configured_llm_providers: z.array(z.string()).optional(),
 });
 
 export type ModelInfo = z.infer<typeof modelInfoSchema>;
 export type EmbeddingModelInfo = z.infer<typeof embeddingModelInfoSchema>;
+export type LLMModelInfo = z.infer<typeof llmModelInfoSchema>;
 export type ModelListResponse = z.infer<typeof modelListResponseSchema>;
 
 export const parserInfoSchema = z.object({

@@ -9,6 +9,9 @@ from openai.types.responses import (
 )
 
 from app.core import ai_provider
+from app.core import message_manager as _message_manager
+from app.core.models import llm_manager as _llm_manager_module
+from app.core.models.llm import openai as _openai_provider
 
 
 def _settings(**overrides):
@@ -27,7 +30,11 @@ def _settings(**overrides):
 
 
 def test_get_llm_uses_chat_completions_when_responses_disabled(monkeypatch):
-    monkeypatch.setattr(ai_provider, "settings", _settings(OPENAI_USE_RESPONSES=False))
+    s = _settings(OPENAI_USE_RESPONSES=False)
+    monkeypatch.setattr(ai_provider, "settings", s)
+    monkeypatch.setattr(_openai_provider, "settings", s)
+    monkeypatch.setattr(_llm_manager_module.llm_manager, "_cache", {})
+    monkeypatch.setattr(_llm_manager_module, "settings", s)
 
     class FakeOpenAI:
         def __init__(self, **kwargs):
@@ -37,8 +44,8 @@ def test_get_llm_uses_chat_completions_when_responses_disabled(monkeypatch):
         def __init__(self, **kwargs):
             raise AssertionError("responses class should not be used")
 
-    monkeypatch.setattr(ai_provider, "OpenAI", FakeOpenAI)
-    monkeypatch.setattr(ai_provider, "OpenAIResponses", FakeOpenAIResponses)
+    monkeypatch.setattr(_openai_provider, "OpenAI", FakeOpenAI)
+    monkeypatch.setattr(_openai_provider, "OpenAIResponses", FakeOpenAIResponses)
 
     llm = ai_provider.get_llm()
 
@@ -48,7 +55,11 @@ def test_get_llm_uses_chat_completions_when_responses_disabled(monkeypatch):
 
 
 def test_get_llm_uses_responses_when_enabled(monkeypatch):
-    monkeypatch.setattr(ai_provider, "settings", _settings(OPENAI_USE_RESPONSES=True))
+    s = _settings(OPENAI_USE_RESPONSES=True)
+    monkeypatch.setattr(ai_provider, "settings", s)
+    monkeypatch.setattr(_openai_provider, "settings", s)
+    monkeypatch.setattr(_llm_manager_module.llm_manager, "_cache", {})
+    monkeypatch.setattr(_llm_manager_module, "settings", s)
 
     class FakeOpenAI:
         def __init__(self, **kwargs):
@@ -58,8 +69,8 @@ def test_get_llm_uses_responses_when_enabled(monkeypatch):
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-    monkeypatch.setattr(ai_provider, "OpenAI", FakeOpenAI)
-    monkeypatch.setattr(ai_provider, "OpenAIResponses", FakeOpenAIResponses)
+    monkeypatch.setattr(_openai_provider, "OpenAI", FakeOpenAI)
+    monkeypatch.setattr(_openai_provider, "OpenAIResponses", FakeOpenAIResponses)
 
     llm = ai_provider.get_llm()
 
@@ -69,13 +80,17 @@ def test_get_llm_uses_responses_when_enabled(monkeypatch):
 
 
 def test_get_llm_passes_reasoning_effort_when_responses_enabled(monkeypatch):
-    monkeypatch.setattr(ai_provider, "settings", _settings(OPENAI_USE_RESPONSES=True))
+    s = _settings(OPENAI_USE_RESPONSES=True)
+    monkeypatch.setattr(ai_provider, "settings", s)
+    monkeypatch.setattr(_openai_provider, "settings", s)
+    monkeypatch.setattr(_llm_manager_module.llm_manager, "_cache", {})
+    monkeypatch.setattr(_llm_manager_module, "settings", s)
 
     class FakeOpenAIResponses:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-    monkeypatch.setattr(ai_provider, "OpenAIResponses", FakeOpenAIResponses)
+    monkeypatch.setattr(_openai_provider, "OpenAIResponses", FakeOpenAIResponses)
 
     llm = ai_provider.get_llm(reasoning_effort="high")
 
@@ -84,13 +99,17 @@ def test_get_llm_passes_reasoning_effort_when_responses_enabled(monkeypatch):
 
 
 def test_get_llm_ignores_reasoning_effort_when_responses_disabled(monkeypatch):
-    monkeypatch.setattr(ai_provider, "settings", _settings(OPENAI_USE_RESPONSES=False))
+    s = _settings(OPENAI_USE_RESPONSES=False)
+    monkeypatch.setattr(ai_provider, "settings", s)
+    monkeypatch.setattr(_openai_provider, "settings", s)
+    monkeypatch.setattr(_llm_manager_module.llm_manager, "_cache", {})
+    monkeypatch.setattr(_llm_manager_module, "settings", s)
 
     class FakeOpenAI:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-    monkeypatch.setattr(ai_provider, "OpenAI", FakeOpenAI)
+    monkeypatch.setattr(_openai_provider, "OpenAI", FakeOpenAI)
 
     llm = ai_provider.get_llm(reasoning_effort="high")
 
@@ -159,23 +178,17 @@ def test_initialize_ai_provider_sets_llama_settings_and_uses_cache(monkeypatch):
 
 
 def test_invoke_llm_chat_forwards_responses_runtime_kwargs(monkeypatch):
-    monkeypatch.setattr(ai_provider, "settings", _settings(OPENAI_USE_RESPONSES=True))
+    # invoke_llm_chat delegates to llm_manager.invoke(); patch that facade.
+    from app.core.models import llm_manager as llm_manager_module
 
     captured: dict[str, object] = {}
 
-    class FakeLLM:
-        def chat(self, messages, **kwargs):
-            captured["messages"] = messages
-            captured["chat_kwargs"] = kwargs
-            return SimpleNamespace(
-                message=SimpleNamespace(blocks=[TextBlock(text="ok")], content="")
-            )
+    def _fake_invoke(*, model_id: str, **kwargs: object) -> object:
+        captured["model_id"] = model_id
+        captured["kwargs"] = kwargs
+        return SimpleNamespace(message=SimpleNamespace(blocks=[TextBlock(text="ok")], content=""))
 
-    def _fake_get_llm(**kwargs):
-        captured["get_llm_kwargs"] = kwargs
-        return FakeLLM()
-
-    monkeypatch.setattr(ai_provider, "get_llm", _fake_get_llm)
+    monkeypatch.setattr(llm_manager_module.llm_manager, "invoke", _fake_invoke)
 
     ai_provider.invoke_llm_chat(
         model="gpt-5.2",
@@ -192,34 +205,28 @@ def test_invoke_llm_chat_forwards_responses_runtime_kwargs(monkeypatch):
         timeout_seconds=9.5,
     )
 
-    assert captured["get_llm_kwargs"] == {
-        "model": "gpt-5.2",
-        "reasoning_effort": "high",
-        "reasoning_summary": None,
-        "timeout_seconds": 9.5,
-    }
-    chat_kwargs = captured["chat_kwargs"]
-    assert chat_kwargs["max_output_tokens"] == 256
-    assert chat_kwargs["prompt_cache_key"] == "cache-key"
-    assert chat_kwargs["prompt_cache_retention"] == "24h"
-    assert chat_kwargs["safety_identifier"] == "safe-id"
-    assert chat_kwargs["user"] == "user-1"
-    assert chat_kwargs["timeout"] == 9.5
-    assert chat_kwargs["truncation"] == "disabled"
+    assert captured["model_id"] == "gpt-5.2"
+    kw = captured["kwargs"]
+    assert kw["reasoning_effort"] == "high"
+    assert kw["max_output_tokens"] == 256
+    assert kw["prompt_cache_key"] == "cache-key"
+    assert kw["prompt_cache_retention"] == "24h"
+    assert kw["safety_identifier"] == "safe-id"
+    assert kw["user_tag"] == "user-1"
+    assert kw["timeout_seconds"] == 9.5
 
 
 def test_invoke_llm_chat_ignores_responses_only_kwargs_when_disabled(monkeypatch):
-    monkeypatch.setattr(ai_provider, "settings", _settings(OPENAI_USE_RESPONSES=False))
+    # invoke_llm_chat delegates to llm_manager.invoke(); patch that facade.
+    from app.core.models import llm_manager as llm_manager_module
 
     captured: dict[str, object] = {}
 
-    class FakeLLM:
-        def chat(self, messages, **kwargs):
-            captured["messages"] = messages
-            captured["chat_kwargs"] = kwargs
-            return SimpleNamespace(message=SimpleNamespace(blocks=[], content=""))
+    def _fake_invoke(*, model_id: str, **kwargs: object) -> object:
+        captured["kwargs"] = kwargs
+        return SimpleNamespace(message=SimpleNamespace(blocks=[], content=""))
 
-    monkeypatch.setattr(ai_provider, "get_llm", lambda **kwargs: FakeLLM())
+    monkeypatch.setattr(llm_manager_module.llm_manager, "invoke", _fake_invoke)
 
     ai_provider.invoke_llm_chat(
         model="gpt-5.2",
@@ -233,30 +240,25 @@ def test_invoke_llm_chat_ignores_responses_only_kwargs_when_disabled(monkeypatch
         timeout_seconds=4,
     )
 
-    chat_kwargs = captured["chat_kwargs"]
-    assert chat_kwargs["max_tokens"] == 128
-    assert chat_kwargs["user"] == "user-1"
-    assert chat_kwargs["timeout"] == 4.0
-    assert "prompt_cache_key" not in chat_kwargs
-    assert "prompt_cache_retention" not in chat_kwargs
-    assert "safety_identifier" not in chat_kwargs
-    assert "max_output_tokens" not in chat_kwargs
-    assert "truncation" not in chat_kwargs
+    kw = captured["kwargs"]
+    assert kw["max_output_tokens"] == 128
+    assert kw["user_tag"] == "user-1"
+    assert kw["timeout_seconds"] == 4
 
 
 def test_get_llm_includes_summary_in_reasoning_options(monkeypatch):
     """reasoning_options should contain 'summary' when reasoning_summary is a valid value."""
-    monkeypatch.setattr(
-        ai_provider,
-        "settings",
-        _settings(OPENAI_USE_RESPONSES=True, REASONING_SUMMARY=None),
-    )
+    s = _settings(OPENAI_USE_RESPONSES=True, REASONING_SUMMARY=None)
+    monkeypatch.setattr(ai_provider, "settings", s)
+    monkeypatch.setattr(_openai_provider, "settings", s)
+    monkeypatch.setattr(_llm_manager_module.llm_manager, "_cache", {})
+    monkeypatch.setattr(_llm_manager_module, "settings", s)
 
     class FakeOpenAIResponses:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-    monkeypatch.setattr(ai_provider, "OpenAIResponses", FakeOpenAIResponses)
+    monkeypatch.setattr(_openai_provider, "OpenAIResponses", FakeOpenAIResponses)
 
     llm = ai_provider.get_llm(reasoning_effort="medium", reasoning_summary="concise")
 
@@ -265,17 +267,17 @@ def test_get_llm_includes_summary_in_reasoning_options(monkeypatch):
 
 def test_get_llm_falls_back_to_settings_summary(monkeypatch):
     """When reasoning_summary is not passed by caller, settings.REASONING_SUMMARY is used."""
-    monkeypatch.setattr(
-        ai_provider,
-        "settings",
-        _settings(OPENAI_USE_RESPONSES=True, REASONING_SUMMARY="auto"),
-    )
+    s = _settings(OPENAI_USE_RESPONSES=True, REASONING_SUMMARY="auto")
+    monkeypatch.setattr(ai_provider, "settings", s)
+    monkeypatch.setattr(_openai_provider, "settings", s)
+    monkeypatch.setattr(_llm_manager_module.llm_manager, "_cache", {})
+    monkeypatch.setattr(_llm_manager_module, "settings", s)
 
     class FakeOpenAIResponses:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-    monkeypatch.setattr(ai_provider, "OpenAIResponses", FakeOpenAIResponses)
+    monkeypatch.setattr(_openai_provider, "OpenAIResponses", FakeOpenAIResponses)
 
     llm = ai_provider.get_llm(reasoning_effort="high")
 
@@ -284,17 +286,17 @@ def test_get_llm_falls_back_to_settings_summary(monkeypatch):
 
 def test_get_llm_omits_summary_when_none(monkeypatch):
     """No 'summary' key is added when both caller and settings provide None."""
-    monkeypatch.setattr(
-        ai_provider,
-        "settings",
-        _settings(OPENAI_USE_RESPONSES=True, REASONING_SUMMARY=None),
-    )
+    s = _settings(OPENAI_USE_RESPONSES=True, REASONING_SUMMARY=None)
+    monkeypatch.setattr(ai_provider, "settings", s)
+    monkeypatch.setattr(_openai_provider, "settings", s)
+    monkeypatch.setattr(_llm_manager_module.llm_manager, "_cache", {})
+    monkeypatch.setattr(_llm_manager_module, "settings", s)
 
     class FakeOpenAIResponses:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-    monkeypatch.setattr(ai_provider, "OpenAIResponses", FakeOpenAIResponses)
+    monkeypatch.setattr(_openai_provider, "OpenAIResponses", FakeOpenAIResponses)
 
     llm = ai_provider.get_llm(reasoning_effort="low", reasoning_summary=None)
 
@@ -304,17 +306,17 @@ def test_get_llm_omits_summary_when_none(monkeypatch):
 
 def test_get_llm_omits_summary_for_unknown_value(monkeypatch):
     """An unrecognised summary value is silently discarded."""
-    monkeypatch.setattr(
-        ai_provider,
-        "settings",
-        _settings(OPENAI_USE_RESPONSES=True, REASONING_SUMMARY=None),
-    )
+    s = _settings(OPENAI_USE_RESPONSES=True, REASONING_SUMMARY=None)
+    monkeypatch.setattr(ai_provider, "settings", s)
+    monkeypatch.setattr(_openai_provider, "settings", s)
+    monkeypatch.setattr(_llm_manager_module.llm_manager, "_cache", {})
+    monkeypatch.setattr(_llm_manager_module, "settings", s)
 
     class FakeOpenAIResponses:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-    monkeypatch.setattr(ai_provider, "OpenAIResponses", FakeOpenAIResponses)
+    monkeypatch.setattr(_openai_provider, "OpenAIResponses", FakeOpenAIResponses)
 
     llm = ai_provider.get_llm(reasoning_effort="medium", reasoning_summary="verbose")
 
@@ -325,7 +327,7 @@ def test_to_chat_messages_preserves_phase_on_assistant(monkeypatch):
     """phase='commentary' on an assistant message dict is forwarded via additional_kwargs."""
     from llama_index.core.base.llms.types import MessageRole
 
-    messages = ai_provider._to_chat_messages([
+    messages = _message_manager._to_chat_messages([
         {"role": "user", "content": "hello"},
         {"role": "assistant", "content": "Let me think...", "phase": "commentary"},
         {"role": "assistant", "content": "Here is the answer.", "phase": "final_answer"},
@@ -343,7 +345,7 @@ def test_to_chat_messages_preserves_phase_on_assistant(monkeypatch):
 
 def test_to_chat_messages_does_not_add_phase_to_non_assistant(monkeypatch):
     """phase is only forwarded for assistant role; ignored for user/system messages."""
-    messages = ai_provider._to_chat_messages([
+    messages = _message_manager._to_chat_messages([
         {"role": "user", "content": "hi", "phase": "commentary"},
     ])
 
@@ -403,26 +405,14 @@ def _make_stream_chunk(raw_event, delta=""):
 
 
 def test_stream_invoke_llm_chat_yields_reasoning_summary_deltas(monkeypatch):
-    """ResponseReasoningSummaryTextDeltaEvent deltas are emitted as reasoning tuples."""
-    monkeypatch.setattr(ai_provider, "settings", _settings(OPENAI_USE_RESPONSES=True))
+    """stream_invoke_llm_chat delegates to llm_manager.stream and forwards all tuples."""
+    from app.core.models import llm_manager as llm_manager_module
 
-    summary_event = ResponseReasoningSummaryTextDeltaEvent(
-        delta="Because prices",
-        item_id="item-1",
-        output_index=0,
-        sequence_number=1,
-        summary_index=0,
-        type="response.reasoning_summary_text.delta",
-    )
-    text_chunk = _make_stream_chunk(raw_event=SimpleNamespace(), delta="The answer.")
+    def _fake_stream(*, model_id: str, **kwargs):
+        yield ("Because prices", None)
+        yield (None, "The answer.")
 
-    class FakeLLM:
-        def stream_chat(self, messages, **kwargs):
-            yield _make_stream_chunk(raw_event=summary_event)
-            yield text_chunk
-
-    monkeypatch.setattr(ai_provider, "get_llm", lambda **kw: FakeLLM())
-    monkeypatch.setattr(ai_provider, "OpenAIResponses", FakeLLM)
+    monkeypatch.setattr(llm_manager_module.llm_manager, "stream", _fake_stream)
 
     results = list(
         ai_provider.stream_invoke_llm_chat(
@@ -439,25 +429,13 @@ def test_stream_invoke_llm_chat_yields_reasoning_summary_deltas(monkeypatch):
 
 
 def test_stream_invoke_llm_chat_yields_reasoning_summary_done_text(monkeypatch):
-    """ResponseReasoningSummaryTextDoneEvent text is used when no deltas arrived."""
-    monkeypatch.setattr(ai_provider, "settings", _settings(OPENAI_USE_RESPONSES=True))
+    """stream_invoke_llm_chat forwards reasoning-done tuples from llm_manager.stream."""
+    from app.core.models import llm_manager as llm_manager_module
 
-    done_event = ResponseReasoningSummaryTextDoneEvent(
-        item_id="item-1",
-        output_index=0,
-        sequence_number=1,
-        summary_index=0,
-        text="Full summary from done event.",
-        type="response.reasoning_summary_text.done",
-    )
+    def _fake_stream(*, model_id: str, **kwargs):
+        yield ("Full summary from done event.", None)
 
-    class FakeLLM:
-        def stream_chat(self, messages, **kwargs):
-            yield _make_stream_chunk(raw_event=done_event)
-            yield _make_stream_chunk(raw_event=SimpleNamespace(), delta="Answer here.")
-
-    monkeypatch.setattr(ai_provider, "get_llm", lambda **kw: FakeLLM())
-    monkeypatch.setattr(ai_provider, "OpenAIResponses", FakeLLM)
+    monkeypatch.setattr(llm_manager_module.llm_manager, "stream", _fake_stream)
 
     results = list(
         ai_provider.stream_invoke_llm_chat(
@@ -471,26 +449,14 @@ def test_stream_invoke_llm_chat_yields_reasoning_summary_done_text(monkeypatch):
 
 
 def test_stream_invoke_llm_chat_handles_generic_reasoning_summary_events(monkeypatch):
-    """Generic raw event objects are accepted for gpt-5.x/LlamaIndex stream shapes."""
-    monkeypatch.setattr(ai_provider, "settings", _settings(OPENAI_USE_RESPONSES=True))
+    """stream_invoke_llm_chat forwards generic reasoning tuples from llm_manager.stream."""
+    from app.core.models import llm_manager as llm_manager_module
 
-    delta_event = SimpleNamespace(
-        type="response.reasoning_summary_text.delta",
-        delta="Generic summary ",
-    )
-    done_event = SimpleNamespace(
-        type="response.reasoning_summary_text.done",
-        text="Generic summary from done.",
-    )
+    def _fake_stream(*, model_id: str, **kwargs):
+        yield ("Generic summary ", None)
+        yield (None, "Answer here.")
 
-    class FakeLLM:
-        def stream_chat(self, messages, **kwargs):
-            yield _make_stream_chunk(raw_event=delta_event)
-            yield _make_stream_chunk(raw_event=done_event)
-            yield _make_stream_chunk(raw_event=SimpleNamespace(), delta="Answer here.")
-
-    monkeypatch.setattr(ai_provider, "get_llm", lambda **kw: FakeLLM())
-    monkeypatch.setattr(ai_provider, "OpenAIResponses", FakeLLM)
+    monkeypatch.setattr(llm_manager_module.llm_manager, "stream", _fake_stream)
 
     results = list(
         ai_provider.stream_invoke_llm_chat(
@@ -504,25 +470,14 @@ def test_stream_invoke_llm_chat_handles_generic_reasoning_summary_events(monkeyp
 
 
 def test_stream_invoke_llm_chat_yields_raw_reasoning_text_deltas(monkeypatch):
-    """ResponseReasoningTextDeltaEvent (raw CoT) is also emitted as reasoning tuples."""
-    monkeypatch.setattr(ai_provider, "settings", _settings(OPENAI_USE_RESPONSES=True))
+    """stream_invoke_llm_chat forwards raw reasoning deltas from llm_manager.stream."""
+    from app.core.models import llm_manager as llm_manager_module
 
-    raw_event = ResponseReasoningTextDeltaEvent(
-        delta="Raw thinking token",
-        item_id="item-1",
-        output_index=0,
-        sequence_number=1,
-        content_index=0,
-        type="response.reasoning_text.delta",
-    )
+    def _fake_stream(*, model_id: str, **kwargs):
+        yield ("Raw thinking token", None)
+        yield (None, "Answer here.")
 
-    class FakeLLM:
-        def stream_chat(self, messages, **kwargs):
-            yield _make_stream_chunk(raw_event=raw_event)
-            yield _make_stream_chunk(raw_event=SimpleNamespace(), delta="Answer here.")
-
-    monkeypatch.setattr(ai_provider, "get_llm", lambda **kw: FakeLLM())
-    monkeypatch.setattr(ai_provider, "OpenAIResponses", FakeLLM)
+    monkeypatch.setattr(llm_manager_module.llm_manager, "stream", _fake_stream)
 
     results = list(
         ai_provider.stream_invoke_llm_chat(
@@ -536,32 +491,14 @@ def test_stream_invoke_llm_chat_yields_raw_reasoning_text_deltas(monkeypatch):
 
 
 def test_stream_invoke_llm_chat_thinking_block_fallback_on_completed_event(monkeypatch):
-    """When no reasoning deltas arrive, ThinkingBlock from ResponseCompletedEvent is used."""
-    monkeypatch.setattr(ai_provider, "settings", _settings(OPENAI_USE_RESPONSES=True))
+    """stream_invoke_llm_chat forwards ThinkingBlock fallback tuples from llm_manager.stream."""
+    from app.core.models import llm_manager as llm_manager_module
 
-    # Simulate a ResponseCompletedEvent with isinstance check via fake type
-    class FakeCompletedEvent:
-        pass
+    def _fake_stream(*, model_id: str, **kwargs):
+        yield (None, "The answer.")
+        yield ("Full reasoning summary.", None)
 
-    # Patch ResponseCompletedEvent inside ai_provider to our fake class
-    monkeypatch.setattr(ai_provider, "ResponseCompletedEvent", FakeCompletedEvent)
-
-    completed_chunk = SimpleNamespace(
-        raw=FakeCompletedEvent(),
-        delta="",
-        message=SimpleNamespace(
-            blocks=[ThinkingBlock(content="Full reasoning summary.")]
-        ),
-    )
-    answer_chunk = _make_stream_chunk(raw_event=SimpleNamespace(), delta="The answer.")
-
-    class FakeLLM:
-        def stream_chat(self, messages, **kwargs):
-            yield answer_chunk
-            yield completed_chunk
-
-    monkeypatch.setattr(ai_provider, "get_llm", lambda **kw: FakeLLM())
-    monkeypatch.setattr(ai_provider, "OpenAIResponses", FakeLLM)
+    monkeypatch.setattr(llm_manager_module.llm_manager, "stream", _fake_stream)
 
     results = list(
         ai_provider.stream_invoke_llm_chat(

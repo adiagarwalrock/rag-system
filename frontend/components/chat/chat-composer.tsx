@@ -20,6 +20,7 @@ export function ChatComposer({
   modelOptions,
   reasoningEffort,
   onReasoningEffortChange,
+  supportsReasoning = true,
   includeMemory,
   onIncludeMemoryChange,
   includeConflicts,
@@ -38,6 +39,7 @@ export function ChatComposer({
   modelOptions?: Array<{ value: string; label: string }>;
   reasoningEffort?: "low" | "medium" | "high";
   onReasoningEffortChange?: (value: "low" | "medium" | "high") => void;
+  supportsReasoning?: boolean;
   includeMemory?: boolean;
   onIncludeMemoryChange?: (value: boolean) => void;
   includeConflicts?: boolean;
@@ -194,6 +196,7 @@ export function ChatComposer({
               { value: "high", label: "High" },
             ]}
             onChange={(value) => onReasoningEffortChange?.(value)}
+            disabled={!supportsReasoning}
             buttonClassName="min-w-[6rem]"
             menuSide="top"
           />

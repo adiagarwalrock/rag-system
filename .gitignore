@@ -12,6 +12,7 @@ wheels/
 
 # Environment variables
 .env
+frontend/.env.local
 venv/
 node_modules/*
 data/qdrant_storage*
@@ -22,3 +23,4 @@ artifacts/*
 .codex
 logs/
 docs/reconstructed_qdrant/*
+other_implementations/*

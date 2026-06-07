@@ -9,6 +9,7 @@ class ClientBase(BaseModel):
     description: Optional[str] = None
     is_active: bool = True
     embedding_model: Optional[str] = None
+    llm_model: Optional[str] = None
 
 
 class ClientCreate(ClientBase):
@@ -20,6 +21,7 @@ class ClientUpdate(BaseModel):
     description: Optional[str] = None
     is_active: Optional[bool] = None
     embedding_model: Optional[str] = None
+    llm_model: Optional[str] = None
 
 
 class ClientResponse(ClientBase):

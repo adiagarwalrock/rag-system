@@ -179,6 +179,34 @@ wheels = [
 ]
 
 [[package]]
+name = "anthropic"
+version = "0.107.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "distro" },
+    { name = "docstring-parser" },
+    { name = "httpx" },
+    { name = "jiter" },
+    { name = "pydantic" },
+    { name = "sniffio" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d9/57/9eaf3d6823eba892c837a738f32a74b51193a23904a8761f6711f7714105/anthropic-0.107.0.tar.gz", hash = "sha256:e036aae37b7a9ba0a71d74663a559002c96800eeaca4e336ca1f2d10d0a33297", size = 855992, upload-time = "2026-06-06T17:13:36.755Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/58/1d/f8b7f1c0344f3c1cabebc48a969f7363dba9a306fd0cca293587e2c3093a/anthropic-0.107.0-py3-none-any.whl", hash = "sha256:b28315631e8ed92eec37ff0f911e59730c6a04663d9fffd53e201e11fa6669f1", size = 838567, upload-time = "2026-06-06T17:13:38.037Z" },
+]
+
+[package.optional-dependencies]
+bedrock = [
+    { name = "boto3" },
+    { name = "botocore" },
+]
+vertex = [
+    { name = "google-auth", extra = ["requests"] },
+]
+
+[[package]]
 name = "antlr4-python3-runtime"
 version = "4.9.3"
 source = { registry = "https://pypi.org/simple" }
@@ -919,6 +947,15 @@ standard = [
     { name = "torchvision" },
     { name = "typer" },
     { name = "websockets" },
+]
+
+[[package]]
+name = "docstring-parser"
+version = "0.18.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e0/4d/f332313098c1de1b2d2ff91cf2674415cc7cddab2ca1b01ae29774bd5fdf/docstring_parser-0.18.0.tar.gz", hash = "sha256:292510982205c12b1248696f44959db3cdd1740237a968ea1e2e7a900eeb2015", size = 29341, upload-time = "2026-04-14T04:09:19.867Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a7/5f/ed01f9a3cdffbd5a008556fc7b2a08ddb1cc6ace7effa7340604b1d16699/docstring_parser-0.18.0-py3-none-any.whl", hash = "sha256:b3fcbed555c47d8479be0796ef7e19c2670d428d72e96da63f3a40122860374b", size = 22484, upload-time = "2026-04-14T04:09:18.638Z" },
 ]
 
 [[package]]
@@ -1828,6 +1865,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/4e/d0/671b23ccff255c9bce132a84ffd5a6f4541ceefdeab9c1786b08c9722f2e/llama_index_instrumentation-0.5.0.tar.gz", hash = "sha256:eeb724648b25d149de882a5ac9e21c5acb1ce780da214bda2b075341af29ad8e", size = 43831, upload-time = "2026-03-12T20:17:06.742Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c3/45/6dcaccef44e541ffa138e4b45e33e0d40ab2a7d845338483954fcf77bc75/llama_index_instrumentation-0.5.0-py3-none-any.whl", hash = "sha256:aaab83cddd9dd434278891012d8995f47a3bc7ed1736a371db90965348c56a21", size = 16444, upload-time = "2026-03-12T20:17:05.957Z" },
+]
+
+[[package]]
+name = "llama-index-llms-anthropic"
+version = "0.11.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anthropic", extra = ["bedrock", "vertex"] },
+    { name = "llama-index-core" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1c/0f/0e40fa23be7de92f10348dfccc621f17327ae981c243996b24523b970de7/llama_index_llms_anthropic-0.11.5.tar.gz", hash = "sha256:d3020a8896da8c353bb88cf0e6aa9ab0fb59cf187e850592356bc3199fd282af", size = 16138, upload-time = "2026-05-28T20:38:10.373Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/62/b7/ee7c5e8c0b71c5603613ce3daf3549949c1b473bd797695d7e019878b449/llama_index_llms_anthropic-0.11.5-py3-none-any.whl", hash = "sha256:2bc2a645299454c4dba097b563f30cb4881092c4b0d6f9d107c4d1c435d64ade", size = 16542, upload-time = "2026-05-28T20:38:09.308Z" },
 ]
 
 [[package]]
@@ -3694,6 +3744,7 @@ dependencies = [
     { name = "llama-index-core" },
     { name = "llama-index-embeddings-google-genai" },
     { name = "llama-index-embeddings-openai" },
+    { name = "llama-index-llms-anthropic" },
     { name = "llama-index-llms-google-genai" },
     { name = "llama-index-llms-openai" },
     { name = "llama-index-readers-file" },
@@ -3745,6 +3796,7 @@ requires-dist = [
     { name = "llama-index-core", specifier = ">=0.14.20" },
     { name = "llama-index-embeddings-google-genai", specifier = ">=0.5.1" },
     { name = "llama-index-embeddings-openai", specifier = ">=0.6.0" },
+    { name = "llama-index-llms-anthropic", specifier = ">=0.11.5" },
     { name = "llama-index-llms-google-genai", specifier = ">=0.9.5" },
     { name = "llama-index-llms-openai", specifier = ">=0.7.9" },
     { name = "llama-index-readers-file", specifier = ">=0.6.0" },

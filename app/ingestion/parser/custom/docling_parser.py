@@ -41,19 +41,16 @@ logger = logging.getLogger(__name__)
 PARSER_NAME = "docling"
 DOCLING_PARSER_VERSION = "1.0.0"
 
-# Build once at import time — loading layout + table models is expensive (~5 s).
 # OCR is disabled: these PDFs are text-extractable financial decks. RapidOCR was
 # being invoked, returning empty results, and burning ~30 s per document.
 _BASE_PIPELINE_OPTIONS = PdfPipelineOptions(do_ocr=False, do_table_structure=True)
-_CONVERTER = DocumentConverter(
-    format_options={
-        InputFormat.PDF: PdfFormatOption(pipeline_options=_BASE_PIPELINE_OPTIONS),
-    }
-)
+
+# Both converters are built lazily on first use (~5 s each) so that importing
+# this module does not add startup cost when ENABLE_DOCLING_PARSER=false.
+_CONVERTER: DocumentConverter | None = None
 
 # Separate converter for vision-enrichment runs: retains the PIL image bytes
 # of every PictureItem so chart_extractor.py can pass them to Claude vision.
-# Built lazily because it is not needed for the default ingest path.
 _IMAGE_PIPELINE_OPTIONS = PdfPipelineOptions(
     do_ocr=False,
     do_table_structure=True,
@@ -62,6 +59,18 @@ _IMAGE_PIPELINE_OPTIONS = PdfPipelineOptions(
     images_scale=2.0,  # bump resolution; cheap, helps the vision model.
 )
 _CONVERTER_WITH_IMAGES: Optional[DocumentConverter] = None
+
+
+def _get_converter() -> DocumentConverter:
+    """Lazily build the base DocumentConverter (~5 s init)."""
+    global _CONVERTER
+    if _CONVERTER is None:
+        _CONVERTER = DocumentConverter(
+            format_options={
+                InputFormat.PDF: PdfFormatOption(pipeline_options=_BASE_PIPELINE_OPTIONS),
+            }
+        )
+    return _CONVERTER
 
 
 def _get_image_converter() -> DocumentConverter:
@@ -107,7 +116,7 @@ def parse_pdf(pdf_path: str | Path, *, with_images: bool = False) -> DoclingDocu
         raise FileNotFoundError(f"PDF not found: {path}")
 
     logger.info("Parsing PDF: %s (with_images=%s)", path.name, with_images)
-    converter = _get_image_converter() if with_images else _CONVERTER
+    converter = _get_image_converter() if with_images else _get_converter()
     result = converter.convert(str(path))
 
     if result is None or result.document is None:

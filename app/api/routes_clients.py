@@ -22,9 +22,15 @@ ZERO_CLIENT_COUNTS = {
     "session_count": 0,
     "memory_point_count": 0,
 }
+_LOCKED_FIELDS: dict[str, str] = {
+    "embedding_model": "embedding model",
+    "llm_model": "LLM model",
+}
 
 
-def _count_by_client(db: Session, model: Any, client_ids: list[str], *extra_filters: Any) -> dict[str, int]:
+def _count_by_client(
+    db: Session, model: Any, client_ids: list[str], *extra_filters: Any
+) -> dict[str, int]:
     q = (
         db.query(model.client_id, func.count(model.id).label("cnt"))
         .filter(model.client_id.in_(client_ids), *extra_filters)
@@ -63,6 +69,7 @@ def _enrich(client: Client, counts: dict) -> ClientResponse:
         "description": client.description,
         "is_active": client.is_active,
         "embedding_model": client.embedding_model,
+        "llm_model": client.llm_model,
         "created_at": client.created_at,
         "updated_at": client.updated_at,
         **ZERO_CLIENT_COUNTS,
@@ -101,6 +108,7 @@ def create_client(
         name=client_in.name,
         description=client_in.description,
         embedding_model=client_in.embedding_model,
+        llm_model=client_in.llm_model,
     )
     db.add(db_client)
     db.commit()
@@ -121,13 +129,19 @@ def update_client(
 
     update_data = updates.model_dump(exclude_unset=True)
 
-    if "embedding_model" in update_data and update_data["embedding_model"] != client.embedding_model:
+    changing_locked = [
+        label
+        for field, label in _LOCKED_FIELDS.items()
+        if field in update_data and update_data[field] != getattr(client, field)
+    ]
+    if changing_locked:
         doc_count = db.query(Document).filter(Document.client_id == client_id).count()
         if doc_count > 0:
+            fields_str = " and ".join(changing_locked)
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    f"Cannot change embedding model: client has {doc_count} document(s). "
+                    f"Cannot change {fields_str}: client has {doc_count} document(s). "
                     "Delete all documents first."
                 ),
             )
