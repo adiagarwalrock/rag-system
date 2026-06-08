@@ -13,7 +13,8 @@ import re
 from typing import Any
 
 from app.agents.nodes._shared import emit_status
-from app.core.ai_provider import extract_chat_response_text, invoke_llm_chat
+from app.core.ai_provider import invoke_llm_chat
+from app.core.message_manager import extract_chat_response_text
 from app.core.config import settings
 from app.core.prompts import QUERY_PLANNER_DEVELOPER_PROMPT
 

@@ -9,7 +9,8 @@ from typing import Any
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.ai_provider import extract_chat_response_text, invoke_llm_chat
+from app.core.ai_provider import invoke_llm_chat
+from app.core.message_manager import extract_chat_response_text
 from app.core.config import settings
 from app.core.prompts import SESSION_SUMMARY_DEVELOPER_PROMPT
 from app.core.token_budget import ResponsesInputBudgeter, truncate_text_by_tokens

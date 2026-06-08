@@ -24,12 +24,14 @@ from llama_index.core.base.llms.types import (
 from llama_index.core.vector_stores import ExactMatchFilter, MetadataFilters
 
 from app.core.ai_provider import (
-    extract_chat_response_text,
-    extract_chat_response_reasoning,
     get_embeddings,
     get_llm,
     invoke_llm_chat,
     stream_invoke_llm_chat,
+)
+from app.core.message_manager import (
+    extract_chat_response_reasoning,
+    extract_chat_response_text,
     normalize_reasoning_effort,
     normalize_reasoning_summary,
 )

@@ -25,7 +25,8 @@ from llama_index.core.base.llms.types import (
 from PIL import Image, ImageStat
 from pydantic import BaseModel
 
-from app.core.ai_provider import extract_chat_response_text, invoke_llm_chat
+from app.core.ai_provider import invoke_llm_chat
+from app.core.message_manager import extract_chat_response_text
 from app.core.config import settings
 from app.core.prompts import (
     _GENERIC_STRUCTURED_PROMPT,
