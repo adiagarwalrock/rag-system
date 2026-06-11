@@ -49,12 +49,18 @@ from app.retrieval.citation_builder import (
     format_enriched_metadata_for_prompt,
 )
 from app.retrieval.conflict_detector import detect_conflicts
+from app.retrieval.query_decomposition import decompose_query
 from app.retrieval.query_intent import (
     RetrievalIntent,
     analyze_retrieval_intent,
 )
 from app.retrieval.query_expansion import build_query_variants, should_expand_query
 from app.retrieval.reranker import rerank_nodes
+from app.retrieval.v1_router import (
+    RetrievalStrategy,
+    RoutingDecision,
+    get_v1_retrieval_router,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -500,6 +506,8 @@ class VecteraRetriever:
         self.temporal_delta_evidence_limit = TEMPORAL_DELTA_EVIDENCE_LIMIT
         self.corpus_wide_evidence_limit = CORPUS_WIDE_EVIDENCE_LIMIT
         self._last_retrieval_metadata: dict[str, Any] = {}
+        self._routing_decisions: dict[str, RoutingDecision] = {}
+        self._v1_query_router_active = False
         self.filters = MetadataFilters(
             filters=[ExactMatchFilter(key="client_id", value=self.client_id)]
         )
@@ -552,7 +560,11 @@ class VecteraRetriever:
         logger.info("Query for client %s: %s", self.client_id, question[:100])
 
         _emit("🔍 Retrieving relevant chunks…")
-        source_nodes, retrieval_metadata = self._retrieve(question)
+        self._v1_query_router_active = True
+        try:
+            source_nodes, retrieval_metadata = self._retrieve(question)
+        finally:
+            self._v1_query_router_active = False
         intent = analyze_retrieval_intent(question)
 
         if not source_nodes:
@@ -706,20 +718,166 @@ class VecteraRetriever:
             embed_model=self._embed_instance,
         )
 
+        if settings.ENABLE_V1_QUERY_ROUTER and self._v1_query_router_active:
+            return self._retrieve_with_router(
+                question=question,
+                intent=intent,
+                base_retriever=base_retriever,
+            )
+        return self._retrieve_with_legacy_strategy(
+            question=question,
+            intent=intent,
+            base_retriever=base_retriever,
+        )
+
+    def _retrieve_with_router(
+        self,
+        *,
+        question: str,
+        intent: RetrievalIntent,
+        base_retriever: Any,
+    ) -> tuple[list, bool]:
+        try:
+            decision = self._routing_decisions.get(question)
+            if decision is None:
+                decision = get_v1_retrieval_router().route(question)
+                self._routing_decisions[question] = decision
+        except Exception as exc:
+            logger.exception("V1 retrieval routing failed; using legacy strategy")
+            nodes, expanded = self._retrieve_with_legacy_strategy(
+                question=question,
+                intent=intent,
+                base_retriever=base_retriever,
+            )
+            self._last_retrieval_metadata.update(
+                {
+                    "retrieval_strategy": "legacy",
+                    "router_reason": None,
+                    "router_fallback_reason": _exception_summary(exc),
+                }
+            )
+            return nodes, expanded
+
+        if decision.strategy == RetrievalStrategy.DIRECT:
+            nodes = base_retriever.retrieve(question)
+            self._last_retrieval_metadata = _retrieval_intent_metadata(
+                intent=intent,
+                companion_queries=[],
+                companion_counts={},
+                retrieval_strategy=decision.strategy.value,
+                router_reason=decision.reason,
+                routed_queries=[question],
+            )
+            return nodes, False
+
+        if decision.strategy == RetrievalStrategy.EXPANDED:
+            return self._retrieve_routed_expansion(
+                question=question,
+                intent=intent,
+                base_retriever=base_retriever,
+                decision=decision,
+            )
+
+        return self._retrieve_routed_decomposition(
+            question=question,
+            intent=intent,
+            base_retriever=base_retriever,
+            decision=decision,
+        )
+
+    def _retrieve_routed_expansion(
+        self,
+        *,
+        question: str,
+        intent: RetrievalIntent,
+        base_retriever: Any,
+        decision: RoutingDecision,
+        fallback_reason: str | None = None,
+    ) -> tuple[list, bool]:
         expansion_question = self._build_query_expansion_input(question)
-        should_expand = should_expand_query(expansion_question)
         companion_queries = list(intent.companion_queries)
-        if should_expand:
-            nodes, expanded, companion_counts = self._retrieve_with_expansion(
+        nodes, expanded, companion_counts, routed_queries = (
+            self._retrieve_with_expansion(
                 question,
                 expansion_question,
                 base_retriever,
                 companion_queries=companion_queries,
+                force=True,
+            )
+        )
+        strategy = (
+            RetrievalStrategy.EXPANDED.value
+            if len(routed_queries) > 1
+            else RetrievalStrategy.DIRECT.value
+        )
+        self._last_retrieval_metadata = _retrieval_intent_metadata(
+            intent=intent,
+            companion_queries=companion_queries,
+            companion_counts=companion_counts,
+            retrieval_strategy=strategy,
+            router_reason=decision.reason,
+            routed_queries=routed_queries,
+            router_fallback_reason=fallback_reason,
+        )
+        return nodes, expanded
+
+    def _retrieve_routed_decomposition(
+        self,
+        *,
+        question: str,
+        intent: RetrievalIntent,
+        base_retriever: Any,
+        decision: RoutingDecision,
+    ) -> tuple[list, bool]:
+        try:
+            queries = _dedupe_retrieval_queries(decompose_query(question))
+            if not queries:
+                raise ValueError("Query decomposition returned no queries")
+            batches = _retrieve_query_batches(base_retriever, queries)
+            self._last_retrieval_metadata = _retrieval_intent_metadata(
+                intent=intent,
+                companion_queries=[],
+                companion_counts={},
+                retrieval_strategy=decision.strategy.value,
+                router_reason=decision.reason,
+                routed_queries=queries,
+            )
+            return _fuse_node_batches(batches), False
+        except Exception as exc:
+            logger.exception("V1 query decomposition failed; using expanded strategy")
+            return self._retrieve_routed_expansion(
+                question=question,
+                intent=intent,
+                base_retriever=base_retriever,
+                decision=decision,
+                fallback_reason=_exception_summary(exc),
+            )
+
+    def _retrieve_with_legacy_strategy(
+        self,
+        *,
+        question: str,
+        intent: RetrievalIntent,
+        base_retriever: Any,
+    ) -> tuple[list, bool]:
+        expansion_question = self._build_query_expansion_input(question)
+        should_expand = should_expand_query(expansion_question)
+        companion_queries = list(intent.companion_queries)
+        if should_expand:
+            nodes, expanded, companion_counts, routed_queries = (
+                self._retrieve_with_expansion(
+                    question,
+                    expansion_question,
+                    base_retriever,
+                    companion_queries=companion_queries,
+                )
             )
             self._last_retrieval_metadata = _retrieval_intent_metadata(
                 intent=intent,
                 companion_queries=companion_queries,
                 companion_counts=companion_counts,
+                retrieval_strategy="legacy",
+                routed_queries=routed_queries,
             )
             return nodes, expanded
 
@@ -734,9 +892,18 @@ class VecteraRetriever:
                     for query, batch in zip(queries, batches)
                     if query in companion_queries
                 },
+                retrieval_strategy="legacy",
+                routed_queries=queries,
             )
             return _fuse_node_batches(batches), False
 
+        self._last_retrieval_metadata = _retrieval_intent_metadata(
+            intent=intent,
+            companion_queries=[],
+            companion_counts={},
+            retrieval_strategy="legacy",
+            routed_queries=[question],
+        )
         return base_retriever.retrieve(question), False
 
     def _retrieve_with_expansion(
@@ -746,12 +913,17 @@ class VecteraRetriever:
         base_retriever,
         *,
         companion_queries: list[str] | None = None,
-    ) -> tuple[list, bool, dict[str, int]]:
-        query_variants = build_query_variants(expansion_question)
+        force: bool = False,
+    ) -> tuple[list, bool, dict[str, int], list[str]]:
+        query_variants = (
+            build_query_variants(expansion_question, force=True)
+            if force
+            else build_query_variants(expansion_question)
+        )
         companion_queries = companion_queries or []
         queries = _dedupe_retrieval_queries([*query_variants, *companion_queries])
         if len(queries) == 1:
-            return base_retriever.retrieve(question), False, {}
+            return base_retriever.retrieve(question), False, {}, queries
 
         batches = _retrieve_query_batches(base_retriever, queries)
         companion_counts = {
@@ -759,7 +931,12 @@ class VecteraRetriever:
             for query, batch in zip(queries, batches)
             if query in companion_queries
         }
-        return _fuse_node_batches(batches), len(query_variants) > 1, companion_counts
+        return (
+            _fuse_node_batches(batches),
+            len(query_variants) > 1,
+            companion_counts,
+            queries,
+        )
 
     def _build_query_expansion_input(self, question: str) -> dict[str, Any]:
         return {
@@ -1102,6 +1279,7 @@ def _empty_retrieval_intent_metadata(intent: RetrievalIntent) -> dict[str, Any]:
         intent=intent,
         companion_queries=list(intent.companion_queries),
         companion_counts={},
+        retrieval_strategy="legacy",
     )
 
 
@@ -1110,12 +1288,25 @@ def _retrieval_intent_metadata(
     intent: RetrievalIntent,
     companion_queries: list[str],
     companion_counts: dict[str, int],
+    retrieval_strategy: str = "legacy",
+    router_reason: str | None = None,
+    routed_queries: list[str] | None = None,
+    router_fallback_reason: str | None = None,
 ) -> dict[str, Any]:
     return {
         "intent_labels": list(intent.labels),
         "companion_queries": companion_queries,
         "companion_counts_by_query": companion_counts,
+        "retrieval_strategy": retrieval_strategy,
+        "router_reason": router_reason,
+        "routed_queries": routed_queries or [],
+        "router_fallback_reason": router_fallback_reason,
     }
+
+
+def _exception_summary(exc: Exception) -> str:
+    message = " ".join(str(exc).split())
+    return f"{type(exc).__name__}: {message}"[:300]
 
 
 def _node_fusion_key(node: Any, rank: int) -> str:

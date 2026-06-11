@@ -313,6 +313,10 @@ def test_non_streaming_returns_retrieval_trace(client, monkeypatch, tmp_path):
         **FAKE_RESULT,
         "retrieval_mode": "hybrid",
         "query_expanded": True,
+        "retrieval_strategy": "expanded",
+        "router_reason": "Broad visual query.",
+        "routed_queries": ["show chart", "show chart image"],
+        "router_fallback_reason": None,
         "intent_labels": ["visual_lookup"],
         "companion_queries": ["show chart image"],
         "companion_counts_by_query": {"show chart image": 2},
@@ -337,6 +341,9 @@ def test_non_streaming_returns_retrieval_trace(client, monkeypatch, tmp_path):
     retrieval = response.json()["retrieval"]
     assert retrieval["mode"] == "hybrid"
     assert retrieval["query_expanded"] is True
+    assert retrieval["retrieval_strategy"] == "expanded"
+    assert retrieval["router_reason"] == "Broad visual query."
+    assert retrieval["routed_queries"] == ["show chart", "show chart image"]
     assert retrieval["image_referenced"] is True
     assert retrieval["images_used_count"] == 1
     assert retrieval["ranked_image_chunk_count"] == 4

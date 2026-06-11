@@ -81,6 +81,10 @@ def _build_retrieval_trace(result: dict[str, Any]) -> dict[str, Any]:
         "top_k": result.get("top_k"),
         "fallback_reason": result.get("fallback_reason"),
         "query_expanded": bool(result.get("query_expanded", False)),
+        "retrieval_strategy": result.get("retrieval_strategy", "legacy"),
+        "router_reason": result.get("router_reason"),
+        "routed_queries": result.get("routed_queries", []),
+        "router_fallback_reason": result.get("router_fallback_reason"),
         "intent_labels": result.get("intent_labels")
         or diagnostics.get("intent_labels")
         or [],

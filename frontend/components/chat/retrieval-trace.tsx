@@ -4,13 +4,16 @@ import type { RetrievalTrace } from "@/lib/api/schemas";
 export function RetrievalTraceView({ retrieval }: { retrieval: RetrievalTrace }) {
   const rows = [
     ["Mode", retrieval.mode],
+    ["Strategy", retrieval.retrieval_strategy],
     ["Query expanded", retrieval.query_expanded ? "yes" : "no"],
     ["Image referenced", retrieval.image_referenced ? "yes" : "no"],
     ["Evidence / sources", `${retrieval.evidence_count ?? "-"} / ${retrieval.source_count ?? "-"}`],
     ["Image chunks", `${retrieval.evidence_image_chunk_count ?? 0} / ${retrieval.ranked_image_chunk_count ?? 0}`],
     ["Images sent", retrieval.images_used_count ?? 0],
     ["Intent", retrieval.intent_labels.length ? retrieval.intent_labels.join(", ") : "-"],
-    ["Fallback reason", retrieval.fallback_reason ?? "-"],
+    ["Router reason", retrieval.router_reason ?? "-"],
+    ["Router fallback", retrieval.router_fallback_reason ?? "-"],
+    ["Retrieval fallback", retrieval.fallback_reason ?? "-"],
   ];
 
   return (

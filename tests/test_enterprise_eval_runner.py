@@ -49,6 +49,10 @@ def test_eval_debug_output_includes_retrieval_diagnostics_without_changing_answe
             "source_count": 10,
             "retrieval_mode": "hybrid",
             "query_expanded": True,
+            "retrieval_strategy": "decomposed",
+            "router_reason": "Temporal comparison.",
+            "routed_queries": ["older plan", "newer update"],
+            "router_fallback_reason": None,
             "retrieval_diagnostics": {"evidence_document_count": 2},
             "intent_labels": ["temporal_delta"],
             "companion_queries": ["older plan", "newer update"],
@@ -75,6 +79,9 @@ def test_eval_debug_output_includes_retrieval_diagnostics_without_changing_answe
     assert debug_row["source_count"] == 10
     assert debug_row["retrieval_mode"] == "hybrid"
     assert debug_row["query_expanded"] is True
+    assert debug_row["retrieval_strategy"] == "decomposed"
+    assert debug_row["router_reason"] == "Temporal comparison."
+    assert debug_row["routed_queries"] == ["older plan", "newer update"]
     assert debug_row["intent_labels"] == ["temporal_delta"]
     assert debug_row["companion_queries"] == ["older plan", "newer update"]
     assert debug_row["companion_counts_by_query"] == {"older plan": 3}

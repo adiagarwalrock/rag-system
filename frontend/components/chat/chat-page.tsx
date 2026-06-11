@@ -830,6 +830,7 @@ function AnswerSourcesPanel({
         <InspectorSection label="Retrieval" defaultOpen>
           <div className="grid grid-cols-2 gap-2 text-xs">
             <TraceFact label="Mode" value={response.retrieval.mode} />
+            <TraceFact label="Strategy" value={response.retrieval.retrieval_strategy} />
             <TraceFact label="Query expanded" value={formatBoolean(response.retrieval.query_expanded)} />
             <TraceFact label="Image referenced" value={formatBoolean(response.retrieval.image_referenced)} />
             <TraceFact label="Evidence / sources" value={`${response.retrieval.evidence_count ?? response.evidence_count} / ${response.retrieval.source_count ?? response.source_count}`} />
@@ -838,6 +839,28 @@ function AnswerSourcesPanel({
             <TraceFact label="Latency" value={formatLatency(response.latency_ms)} />
             <TraceFact label="Intent" value={response.retrieval.intent_labels.length ? response.retrieval.intent_labels.join(", ") : "-"} />
           </div>
+          {response.retrieval.routed_queries.length ? (
+            <div className="mt-2 rounded-lg border border-border bg-background p-3">
+              <div className="mb-1 text-xs text-muted-foreground">Routed queries</div>
+              <div className="space-y-1 font-mono text-[11px] text-foreground">
+                {response.retrieval.routed_queries.map((query) => (
+                  <div key={query}>{query}</div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {response.retrieval.router_reason ? (
+            <div className="mt-2 rounded-lg border border-border bg-background p-3 text-xs text-muted-foreground">
+              {response.retrieval.router_reason}
+            </div>
+          ) : null}
+          {response.retrieval.router_fallback_reason ? (
+            <div className="mt-2 rounded-lg border border-border bg-background p-3">
+              <MarkdownContent className="text-xs leading-5 text-muted-foreground">
+                {response.retrieval.router_fallback_reason}
+              </MarkdownContent>
+            </div>
+          ) : null}
           {response.retrieval.companion_queries.length ? (
             <div className="mt-2 rounded-lg border border-border bg-background p-3">
               <div className="mb-1 text-xs text-muted-foreground">Companion queries</div>
@@ -997,6 +1020,8 @@ function toThreadMessage(message: ApiChatMessage): ThreadMessage {
             ? "hybrid"
             : "dense_only",
         selected_chunks: message.result?.citations ?? [],
+        retrieval_strategy: "legacy",
+        routed_queries: [],
         intent_labels: [],
         companion_queries: [],
         companion_counts_by_query: {},
