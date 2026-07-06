@@ -134,6 +134,11 @@ def _render_result_details(result: dict):
     if result.get("query_expanded"):
         summary_badges.append(("Query expansion on", ":material/swap_horiz:", "gray"))
 
+    if retrieval_strategy := result.get("retrieval_strategy"):
+        summary_badges.append(
+            (f"Strategy {retrieval_strategy}", ":material/route:", "gray")
+        )
+
     if image_evidence_count:
         summary_badges.append(
             (

@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     )
     LLM_MODEL: str = "gpt-5.5"
     QUERY_EXPANSION_MODEL: str = "gpt-5.4-mini"
+    ENABLE_V1_QUERY_ROUTER: bool = False
+    V1_QUERY_ROUTER_MODEL: str | None = None
     SESSION_SUMMARY_MODEL: str = "gpt-5.4-mini"
     OPENAI_USE_RESPONSES: bool = True
     EMBEDDING_MODEL: str = "text-embedding-3-large"

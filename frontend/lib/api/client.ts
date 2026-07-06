@@ -309,6 +309,14 @@ function normalizeRetrievalTrace(
     query_expanded: Boolean(
       rawRetrieval.query_expanded ?? value.query_expanded ?? false,
     ),
+    retrieval_strategy:
+      rawRetrieval.retrieval_strategy ?? value.retrieval_strategy ?? "legacy",
+    router_reason: rawRetrieval.router_reason ?? value.router_reason,
+    routed_queries: normalizeStringArray(
+      rawRetrieval.routed_queries ?? value.routed_queries,
+    ),
+    router_fallback_reason:
+      rawRetrieval.router_fallback_reason ?? value.router_fallback_reason,
     intent_labels: normalizeStringArray(
       rawRetrieval.intent_labels ?? value.intent_labels ?? diagnostics.intent_labels,
     ),

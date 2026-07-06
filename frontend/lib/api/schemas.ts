@@ -22,6 +22,12 @@ export const retrievalTraceModeSchema = z.enum([
   "dense_fallback",
   "sparse_only",
 ]);
+export const retrievalStrategySchema = z.enum([
+  "legacy",
+  "direct",
+  "expanded",
+  "decomposed",
+]);
 
 export const clientSchema = z
   .object({
@@ -139,6 +145,10 @@ export const retrievalTraceSchema = z
     fallback_reason: z.string().optional(),
     selected_chunks: z.array(citationSchema).optional(),
     query_expanded: z.boolean().optional(),
+    retrieval_strategy: retrievalStrategySchema.catch("legacy"),
+    router_reason: z.string().nullish(),
+    routed_queries: z.array(z.string()).default([]),
+    router_fallback_reason: z.string().nullish(),
     intent_labels: z.array(z.string()).default([]),
     companion_queries: z.array(z.string()).default([]),
     companion_counts_by_query: z.record(z.number()).default({}),

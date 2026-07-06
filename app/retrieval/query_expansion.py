@@ -170,7 +170,10 @@ def should_expand_query(question: str | dict[str, Any]) -> bool:
 
 
 def build_query_variants(
-    question: str | dict[str, Any], max_rewrites: int = 2
+    question: str | dict[str, Any],
+    max_rewrites: int = 2,
+    *,
+    force: bool = False,
 ) -> list[str]:
     """
     Return the original question plus up to max_rewrites retrieval rewrites.
@@ -179,7 +182,7 @@ def build_query_variants(
     """
     current_question, recent_turns = _parse_query_input(question)
     variants = [current_question]
-    if not variants[0] or not should_expand_query(question):
+    if not variants[0] or (not force and not should_expand_query(question)):
         return variants
 
     try:
