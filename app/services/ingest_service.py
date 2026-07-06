@@ -26,6 +26,8 @@ from llama_index.core.schema import BaseNode, NodeRelationship, RelatedNodeInfo,
 from sqlalchemy import true
 from sqlalchemy.orm import Session
 
+from app.core.ai_provider import get_embeddings
+from app.core.client_utils import resolve_client_embedding_model
 from app.core.config import settings
 from app.db.models.client import Client
 from app.db.models.document import (
@@ -37,6 +39,7 @@ from app.db.models.document import (
 from app.db.snowflake import SessionLocal
 from app.indexing.vector_store import COLLECTION_NAME, vector_store_manager
 from app.ingestion.parser import parse_document, save_upload_file
+from app.ingestion.parser.registry import PARSER_AUTO, VALID_PARSERS
 from app.ingestion.validator import (
     compute_checksum,
     validate_file_size,
@@ -125,6 +128,7 @@ NON_SEMANTIC_EMBED_METADATA_KEYS = (
     "document_date",
     "as_of_date",
     "metric_basis",
+    "document_type",
 )
 
 NON_SEMANTIC_LLM_METADATA_KEYS = (
@@ -164,6 +168,7 @@ NON_SEMANTIC_LLM_METADATA_KEYS = (
 )
 
 _MISSING_DOC_ID_SENTINELS = {"", "none", "null", "n/a", "na", "undefined"}
+_LEGACY_JOB_PARSER_NAME = "rag_ingestion_pipeline"
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +177,7 @@ class IngestionQueueTask:
     job_id: str
     client_id: str
     client_name: str
+    parser_preference: str | None = None
 
 
 class IngestionQueueManager:
@@ -293,6 +299,7 @@ class IngestionQueueManager:
                     db_doc.id,
                     db_doc.file_type,
                     db,
+                    parser_preference=task.parser_preference,
                 )
             except Exception as exc:
                 _handle_ingestion_failure(
@@ -317,6 +324,7 @@ class IngestionExecutionContext:
     doc_id: str
     file_ext: str
     db: Session
+    parser_preference: str | None = None
 
 
 _INGESTION_QUEUE_MANAGER: IngestionQueueManager | None = None
@@ -338,8 +346,9 @@ def get_ingestion_queue_manager() -> IngestionQueueManager:
     return _INGESTION_QUEUE_MANAGER
 
 
-def _build_non_layout_node_parser() -> Any:
-    embed_model: Any | None = getattr(LlamaSettings, "_embed_model", None)
+def _build_non_layout_node_parser(embed_model: Any = None) -> Any:
+    if embed_model is None:
+        embed_model = getattr(LlamaSettings, "_embed_model", None)
     if embed_model is None and not settings.is_openai_api_key_placeholder:
         vector_store_manager.configure_llama_settings()
         embed_model = getattr(LlamaSettings, "_embed_model", None)
@@ -406,6 +415,7 @@ def _document_version_metadata(version_info: dict[str, Any]) -> dict[str, Any]:
         "document_version_group": version_info.get("version_group"),
         "effective_from": _isoformat_or_none(version_info.get("effective_from")),
         "effective_to": _isoformat_or_none(version_info.get("effective_to")),
+        "document_type": version_info.get("document_type"),
     }
 
 
@@ -473,6 +483,7 @@ def _create_ingestion_job_record(
     status: str,
     file_size: int,
     started_at: datetime | None,
+    parser_preference: str | None = None,
 ) -> IngestionJob:
     return IngestionJob(
         id=job_id,
@@ -480,10 +491,36 @@ def _create_ingestion_job_record(
         document_id=doc_id,
         status=status,
         started_at=started_at,
-        parser_name="rag_ingestion_pipeline",
-        parser_version="2.0.0",
+        parser_name=_normalize_parser_intent(parser_preference) or PARSER_AUTO,
+        parser_version=None,
         filesize_bytes=file_size,
     )
+
+
+def _normalize_parser_intent(parser_preference: str | None) -> str | None:
+    parser = (parser_preference or "").strip().lower()
+    if not parser:
+        return PARSER_AUTO
+    if parser == _LEGACY_JOB_PARSER_NAME:
+        return None
+    if parser not in VALID_PARSERS:
+        return None
+    return parser
+
+
+def _retry_parser_preference(db: Session, document_id: str) -> str | None:
+    jobs = (
+        db.query(IngestionJob)
+        .filter(IngestionJob.document_id == document_id)
+        .order_by(IngestionJob.started_at.desc(), IngestionJob.id.desc())
+        .all()
+    )
+    for job in jobs:
+        parser = _normalize_parser_intent(job.parser_name)
+        if parser is None:
+            continue
+        return None if parser == PARSER_AUTO else parser
+    return None
 
 
 def ingest_document(
@@ -492,6 +529,7 @@ def ingest_document(
     client_id: str,
     client_name: str,
     db: Session,
+    parser_preference: str | None = None,
 ) -> Document:
     """
     Full ingestion pipeline for a single document using LlamaIndex IngestionPipeline.
@@ -524,6 +562,7 @@ def ingest_document(
         status="running",
         file_size=file_size,
         started_at=datetime.now(timezone.utc),
+        parser_preference=parser_preference,
     )
     db.add(job)
     db.commit()
@@ -543,6 +582,7 @@ def ingest_document(
             doc_id,
             file_ext,
             db,
+            parser_preference=parser_preference,
         )
         return db_doc
     except Exception as e:
@@ -556,6 +596,7 @@ def enqueue_document_ingestion(
     client_id: str,
     client_name: str,
     db: Session,
+    parser_preference: str | None = None,
 ) -> tuple[Document, IngestionJob]:
     """
     Queue document ingestion for background processing.
@@ -586,6 +627,7 @@ def enqueue_document_ingestion(
         status="queued",
         file_size=file_size,
         started_at=None,
+        parser_preference=parser_preference,
     )
     db.add(job)
     db.commit()
@@ -603,6 +645,7 @@ def enqueue_document_ingestion(
         job_id=job_id,
         client_id=client_id,
         client_name=client_name,
+        parser_preference=parser_preference,
     )
     try:
         get_ingestion_queue_manager().enqueue(task)
@@ -615,9 +658,12 @@ def enqueue_document_ingestion(
     return db_doc, job
 
 
-def retry_ingestion(document_id: str, db: Session) -> Document:
+def retry_ingestion(document_id: str, db: Session, parser_preference: str | None = None) -> Document:
     """
     Retry ingestion for a failed document.
+
+    ``parser_preference`` overrides the parser used for this retry.
+    When None, falls back to the parser from the last ingestion attempt.
     """
     # 1. Fetch document and validate
     db_doc = db.query(Document).filter(Document.id == document_id).first()
@@ -638,6 +684,7 @@ def retry_ingestion(document_id: str, db: Session) -> Document:
     client_id = db_doc.client_id
     doc_id = db_doc.id
     file_ext = db_doc.file_type
+    retry_parser_preference = parser_preference or _retry_parser_preference(db, doc_id)
 
     # 3. Pre-clean prior partial data
     try:
@@ -661,6 +708,7 @@ def retry_ingestion(document_id: str, db: Session) -> Document:
         status="running",
         file_size=os.path.getsize(file_path),
         started_at=datetime.now(timezone.utc),
+        parser_preference=retry_parser_preference,
     )
     db.add(job)
     db.commit()
@@ -676,6 +724,7 @@ def retry_ingestion(document_id: str, db: Session) -> Document:
             doc_id,
             file_ext,
             db,
+            parser_preference=retry_parser_preference,
         )
         return db_doc
     except Exception as e:
@@ -749,9 +798,33 @@ class IngestionPipelineExecutor:
     def run(self) -> tuple[int, int]:
         vector_store_manager.configure_llama_settings()
 
+        self._embedding_model_id = resolve_client_embedding_model(self.client_id, self.db)
+        self._embed_instance = get_embeddings(model=self._embedding_model_id)
+
+        logger.info(
+            "Ingestion start: file=%s client_id=%s embedding=%s parser_preference=%s",
+            self.filename,
+            self.client_id,
+            self._embedding_model_id,
+            self.context.parser_preference or "auto",
+        )
+
         document_metadata = self._build_document_metadata()
-        llama_docs, units = parse_document(self.file_path, document_metadata)
+        llama_docs, units = parse_document(
+            self.file_path,
+            document_metadata,
+            parser_preference=self.context.parser_preference,
+        )
         self._apply_parser_metadata(llama_docs)
+
+        logger.info(
+            "Ingestion parsed: file=%s client_id=%s embedding=%s parser_name=%s chunks=%d",
+            self.filename,
+            self.client_id,
+            self._embedding_model_id,
+            self.job.parser_name or "unknown",
+            len(llama_docs),
+        )
 
         version_info = self._resolve_version_info(llama_docs)
         self._persist_version_record(version_info)
@@ -762,7 +835,9 @@ class IngestionPipelineExecutor:
             version_info=version_info,
         )
 
-        nodes = self._run_ingestion_pipeline(llama_docs=llama_docs)
+        nodes = self._run_ingestion_pipeline(
+            llama_docs=llama_docs, embed_model=self._embed_instance
+        )
 
         _apply_retrieval_metadata(
             nodes, filename=self.filename, version_info=version_info
@@ -899,7 +974,7 @@ class IngestionPipelineExecutor:
                 chunk_index=index + 1,
             )
 
-    def _run_ingestion_pipeline(self, *, llama_docs: List[Any]) -> List[BaseNode]:
+    def _run_ingestion_pipeline(self, *, llama_docs: List[Any], embed_model: Any = None) -> List[BaseNode]:
         # External parsers (Reducto, LlamaParse) and the layout-aware PDF pipeline
         # already produce intentionally-chunked LlamaDocuments — each doc is a
         # typed chunk (full_table, body_text, figure_artifact …) with metadata
@@ -979,7 +1054,7 @@ class IngestionPipelineExecutor:
                 len(needs_splitting),
                 self.filename,
             )
-            transformations: list[Any] = [_build_non_layout_node_parser()]
+            transformations: list[Any] = [_build_non_layout_node_parser(embed_model=embed_model)]
             transformations.extend(llm_extractors)
             pipeline = IngestionPipeline(transformations=transformations)
             split_nodes = pipeline.run(documents=needs_splitting, num_workers=4)
@@ -1007,7 +1082,7 @@ class IngestionPipelineExecutor:
                     client_id=self.client_id,
                     vector_collection=COLLECTION_NAME,
                     vector_node_id=node.node_id,
-                    embedding_model=settings.EMBEDDING_MODEL,
+                    embedding_model=self._embedding_model_id,
                 )
             )
 
@@ -1029,6 +1104,7 @@ def _execute_pipeline(
     doc_id: str,
     file_ext: str,
     db: Session,
+    parser_preference: str | None = None,
 ):
     context = IngestionExecutionContext(
         db_doc=db_doc,
@@ -1040,6 +1116,7 @@ def _execute_pipeline(
         doc_id=doc_id,
         file_ext=file_ext,
         db=db,
+        parser_preference=parser_preference,
     )
     parsed_units, vector_rows = IngestionPipelineExecutor(context).run()
     logger.info(

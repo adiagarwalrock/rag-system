@@ -5,6 +5,7 @@ import logging
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
+from app.core.config import settings
 from app.db.base import Base
 
 logger = logging.getLogger(__name__)
@@ -20,9 +21,58 @@ def ensure_runtime_schema(engine: Engine) -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_query_logs_user_id(engine)
     _ensure_query_logs_session_id(engine)
+    _ensure_query_logs_reasoning_effort(engine)
+    _ensure_query_logs_llm_model(engine)
     _ensure_chat_messages_reasoning(engine)
     _ensure_chat_messages_citations_json(engine)
+    _ensure_clients_embedding_model(engine)
+    _backfill_clients_embedding_model(engine)
+    _ensure_clients_llm_model(engine)
+    _backfill_clients_llm_model(engine)
     _drop_legacy_auth_tables(engine)
+
+
+def _ensure_clients_embedding_model(engine: Engine) -> None:
+    _ensure_text_column(engine, table_name="clients", column_name="embedding_model")
+
+
+def _ensure_clients_llm_model(engine: Engine) -> None:
+    _ensure_text_column(engine, table_name="clients", column_name="llm_model")
+
+
+def _backfill_clients_column(engine: Engine, column: str, default: str) -> None:
+    """Set a nullable clients column to default for any NULL rows."""
+    try:
+        inspector = inspect(engine)
+        if "clients" not in set(inspector.get_table_names()):
+            return
+        with engine.begin() as conn:
+            has_nulls = conn.execute(
+                text(f"SELECT 1 FROM clients WHERE {column} IS NULL LIMIT 1")
+            ).fetchone()
+            if not has_nulls:
+                return
+            result = conn.execute(
+                text(f"UPDATE clients SET {column} = :m WHERE {column} IS NULL"),
+                {"m": default},
+            )
+        rows = getattr(result, "rowcount", 0) or 0
+        if rows:
+            logger.info("Backfilled clients.%s = '%s' for %d row(s).", column, default, rows)
+    except Exception:
+        logger.exception("Failed to backfill clients.%s", column)
+
+
+def _backfill_clients_embedding_model(engine: Engine) -> None:
+    _backfill_clients_column(engine, "embedding_model", settings.EMBEDDING_MODEL)
+
+
+def _backfill_clients_llm_model(engine: Engine) -> None:
+    _backfill_clients_column(engine, "llm_model", settings.LLM_MODEL)
+
+
+def _ensure_query_logs_llm_model(engine: Engine) -> None:
+    _ensure_text_column(engine, table_name="query_logs", column_name="llm_model")
 
 
 def _ensure_chat_messages_reasoning(engine: Engine) -> None:
@@ -53,6 +103,10 @@ def _ensure_query_logs_session_id(engine: Engine) -> None:
         logger.exception("Failed to add query_logs.session_id runtime column")
 
 
+def _ensure_query_logs_reasoning_effort(engine: Engine) -> None:
+    _ensure_text_column(engine, table_name="query_logs", column_name="reasoning_effort")
+
+
 def _ensure_query_logs_user_id(engine: Engine) -> None:
     inspector = inspect(engine)
     table_names = set(inspector.get_table_names())
@@ -66,7 +120,9 @@ def _ensure_query_logs_user_id(engine: Engine) -> None:
     try:
         with engine.begin() as conn:
             conn.execute(
-                text("ALTER TABLE query_logs ADD COLUMN user_id VARCHAR DEFAULT 'internal'")
+                text(
+                    "ALTER TABLE query_logs ADD COLUMN user_id VARCHAR DEFAULT 'internal'"
+                )
             )
         logger.info("Added query_logs.user_id runtime column.")
     except Exception:

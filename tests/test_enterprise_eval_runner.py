@@ -31,6 +31,7 @@ def test_eval_debug_output_includes_retrieval_diagnostics_without_changing_answe
         workers=1,
         timestamped_output=False,
         debug_output_path=None,
+        question_timeout_seconds=360,
     )
     result = QuestionExecutionResult(
         line_no=1,

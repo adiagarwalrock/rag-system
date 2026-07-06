@@ -9,7 +9,8 @@ from typing import Any
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.ai_provider import extract_chat_response_text, invoke_llm_chat
+from app.core.ai_provider import invoke_llm_chat
+from app.core.message_manager import extract_chat_response_text
 from app.core.config import settings
 from app.core.prompts import SESSION_SUMMARY_DEVELOPER_PROMPT
 from app.core.token_budget import ResponsesInputBudgeter, truncate_text_by_tokens
@@ -32,8 +33,15 @@ class ChatConversationService:
         *,
         client_id: str,
         question: str,
+        llm_model: str | None = None,
         reasoning_effort: str = "medium",
+        reasoning_summary: str | None = None,
         session_id: str | None = None,
+        status_callback=None,
+        reasoning_callback=None,
+        answer_callback=None,
+        session_callback=None,
+        skip_conversation_context: bool = False,
     ) -> dict:
         session = self._resolve_session(client_id=client_id, session_id=session_id)
         next_turn_index = self._next_turn_index(session.id)
@@ -47,21 +55,40 @@ class ChatConversationService:
         )
         self._touch_session(session, first_user_prompt=question)
         self.db.commit()
+        if session_callback is not None:
+            try:
+                session_callback(
+                    {
+                        "session_id": session.id,
+                        "user_message_id": user_message.id,
+                    }
+                )
+            except Exception:
+                logger.exception("Session callback failed for session %s", session.id)
 
-        context_bundle = self.context_service.build_context_bundle(
-            client_id=client_id,
-            session_id=session.id,
-            current_question=question,
-        )
+        if skip_conversation_context:
+            conversation_context_dict: dict = {}
+        else:
+            context_bundle = self.context_service.build_context_bundle(
+                client_id=client_id,
+                session_id=session.id,
+                current_question=question,
+            )
+            conversation_context_dict = context_bundle.to_dict()
 
         try:
             result = execute_query(
                 question=question,
                 client_id=client_id,
                 db=self.db,
+                llm_model=llm_model,
                 reasoning_effort=reasoning_effort,
+                reasoning_summary=reasoning_summary,
                 session_id=session.id,
-                conversation_context=context_bundle.to_dict(),
+                conversation_context=conversation_context_dict,
+                status_callback=status_callback,
+                reasoning_callback=reasoning_callback,
+                answer_callback=answer_callback,
             )
         except Exception as exc:
             self.db.rollback()
@@ -130,6 +157,16 @@ class ChatConversationService:
         self.db.refresh(session)
         return session
 
+    def require_session(self, *, session_id: str, client_id: str) -> ChatSession:
+        session = (
+            self.db.query(ChatSession)
+            .filter(ChatSession.id == session_id, ChatSession.client_id == client_id)
+            .first()
+        )
+        if not session:
+            raise ValueError(f"Session {session_id} not found for client {client_id}.")
+        return session
+
     def list_messages(self, *, session_id: str, limit: int = 200) -> list[ChatMessage]:
         bounded_limit = max(1, min(limit, 500))
         rows = (
@@ -141,9 +178,11 @@ class ChatConversationService:
         )
         return list(reversed(rows))
 
-    def clear_session(self, *, session_id: str) -> None:
+    def clear_session(self, *, session_id: str, client_id: str) -> None:
         session = (
-            self.db.query(ChatSession).filter(ChatSession.id == session_id).first()
+            self.db.query(ChatSession)
+            .filter(ChatSession.id == session_id, ChatSession.client_id == client_id)
+            .first()
         )
         if not session:
             raise ValueError(f"Session {session_id} not found.")
@@ -154,6 +193,22 @@ class ChatConversationService:
         session.updated_at = datetime.now(timezone.utc)
         session.last_activity_at = datetime.now(timezone.utc)
         self.context_service.delete_session_memory(session_id)
+        self.db.commit()
+
+    def delete_session(self, *, session_id: str, client_id: str) -> None:
+        """Clear all messages/memory for a session and delete the session row atomically."""
+        session = (
+            self.db.query(ChatSession)
+            .filter(ChatSession.id == session_id, ChatSession.client_id == client_id)
+            .first()
+        )
+        if not session:
+            raise ValueError(f"Session {session_id} not found.")
+        self.db.query(ChatMessage).filter(ChatMessage.session_id == session_id).delete(
+            synchronize_session=False
+        )
+        self.context_service.delete_session_memory(session_id)
+        self.db.delete(session)
         self.db.commit()
 
     def _resolve_session(
@@ -329,8 +384,12 @@ def _build_summary_prompt(prior_summary: str, rows: list[ChatMessage]) -> str:
 
     turns_block = "\n".join(formatted_turns)
     return (
-        "Update the running summary for this conversation.\n"
-        "Keep specific entities, decisions, constraints, and unresolved questions.\n"
+        "Update the running summary for this financial analyst conversation.\n"
+        "Preserve: company names, tickers, document names, fiscal periods, metrics asked about "
+        "(FFO, NOI, Occupancy, WALT, Cap Rate, etc.), key conclusions reached, and open questions.\n"
+        "Drop: stale or resolved context, pleasantries, and verbatim assistant responses.\n"
+        "Do not repeat what the assistant said verbatim. Do not invent facts.\n"
+        "If there is nothing new to add, return the existing summary unchanged.\n"
         "Output plain text only, no markdown, max 8 lines.\n\n"
         f"Existing summary:\n{prior_summary or '(none)'}\n\n"
         f"Recent turns:\n{turns_block}\n\n"

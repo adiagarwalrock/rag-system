@@ -1,11 +1,13 @@
 [project]
 name = "rag-system"
-version = "0.1.0"
+version = "1.0"
 description = "RAG System is a RAG-based enterprise search engine that allows users to search through their documents and get relevant information."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "chonkie[table]>=1.6.2",
+    "langchain-core>=0.3.0",
+    "langgraph>=0.3.0",
     "fastapi>=0.100.0",
     "fastembed>=0.7.0",
     "httpx>=0.28.1",
@@ -15,7 +17,7 @@ dependencies = [
     "llama-index-embeddings-google-genai>=0.5.1",
     "llama-index-embeddings-openai>=0.6.0",
     "llama-index-llms-google-genai>=0.9.5",
-    "llama-index-llms-openai>=0.7.5",
+    "llama-index-llms-openai>=0.7.9",
     "llama-index-readers-file>=0.6.0",
     "llama-index-vector-stores-qdrant>=0.10.0",
     "openai>=2.31.0",
@@ -26,7 +28,7 @@ dependencies = [
     "pymupdf-layout>=1.27.2.2",
     "pytest>=9.0.2",
     "python-dotenv>=1.2.2",
-    "python-multipart>=0.0.24",
+    "python-multipart>=0.0.27",
     "qdrant-client>=1.17.1",
     "reductoai>=0.22.0",
     "requests>=2.33.1",
@@ -37,8 +39,12 @@ dependencies = [
     "streamlit>=1.56.0",
     "tiktoken>=0.12.0",
     "torch>=2.12.0",
+    "torchvision>=0.27.0",
     "transformers>=5.9.0",
     "uvicorn>=0.23.0",
+    "psycopg2-binary>=2.9.12",
+    "docling>=2.97.0",
+    "llama-index-llms-anthropic>=0.11.5",
 ]
 
 [dependency-groups]

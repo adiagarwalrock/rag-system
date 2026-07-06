@@ -7,6 +7,9 @@ import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, List
+from urllib.parse import quote
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +29,9 @@ RICH_CHUNK_TYPES = {
     "reasoning_page",
 }
 ENRICHED_METADATA_FIELDS = (
+    "table_title",
+    "chart_title",
+    "excerpt_keywords",
     "key_chart_facts",
     "approx_datapoints",
     "trend_summary",
@@ -97,6 +103,14 @@ def build_citations(source_nodes: list) -> List[Dict[str, Any]]:
             ),
             "authority_score": metadata.get("authority_score"),
             "asset_refs": asset_refs,
+            "image_assets": build_image_assets(
+                asset_refs=asset_refs,
+                citation_metadata=metadata,
+                document_name=metadata.get("document_name")
+                or metadata.get("file_name")
+                or metadata.get("source_file")
+                or "Unknown",
+            ),
             "has_image_assets": bool(asset_refs),
             "figure_type": metadata.get("figure_type"),
             "chart_type": metadata.get("chart_type"),
@@ -257,6 +271,56 @@ def _normalize_asset_ref(ref: str, artifact_bundle_path: str | None) -> str:
             return str(resolved)
 
     return ref
+
+
+def build_image_assets(
+    *,
+    asset_refs: list[str],
+    citation_metadata: dict[str, Any] | None = None,
+    document_name: str = "",
+) -> list[dict[str, Any]]:
+    citation_metadata = citation_metadata or {}
+    assets: list[dict[str, Any]] = []
+    for ref in asset_refs:
+        path = Path(ref).expanduser()
+        if path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}:
+            continue
+
+        url = _artifact_image_url(path)
+        if not url:
+            continue
+
+        assets.append(
+            {
+                "url": url,
+                "filename": path.name,
+                "page_num": citation_metadata.get("page_num"),
+                "document_id": citation_metadata.get("document_id"),
+                "document_name": document_name,
+                "source_artifact_id": citation_metadata.get("source_artifact_id"),
+                "source_artifact_type": citation_metadata.get("source_artifact_type"),
+            }
+        )
+    return assets
+
+
+def _artifact_image_url(path: Path) -> str | None:
+    try:
+        resolved = path.resolve()
+        root = Path(settings.PARSED_ARTIFACTS_DIR).expanduser().resolve()
+    except OSError:
+        return None
+
+    if root != resolved and root not in resolved.parents:
+        return None
+
+    try:
+        relative = resolved.relative_to(root)
+    except ValueError:
+        return None
+
+    encoded = quote(relative.as_posix(), safe="/")
+    return f"{settings.API_V1_STR}/artifacts/image?path={encoded}"
 
 
 def _asset_signature(ref: str) -> str:

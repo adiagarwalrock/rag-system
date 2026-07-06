@@ -25,7 +25,8 @@ from llama_index.core.base.llms.types import (
 from PIL import Image, ImageStat
 from pydantic import BaseModel
 
-from app.core.ai_provider import extract_chat_response_text, invoke_llm_chat
+from app.core.ai_provider import invoke_llm_chat
+from app.core.message_manager import extract_chat_response_text
 from app.core.config import settings
 from app.core.prompts import (
     _GENERIC_STRUCTURED_PROMPT,
@@ -1864,10 +1865,16 @@ def _run_reasoning_inference(
         else float(settings.REASONING_TIMEOUT_SECONDS)
     )
     developer_prompt = (
-        "Return only valid JSON with keys: key_insights (list[str]), "
-        "metric_comparisons (list[str]), trend_statement (str), "
-        "caveats (list[str]), evidence_refs (list[str]). "
-        "Do not include markdown, prose outside JSON, or code fences."
+        "Return only valid JSON matching this exact schema:\n"
+        '{"key_insights": ["string"], "metric_comparisons": ["string"], '
+        '"trend_statement": "string", "caveats": ["string"], "evidence_refs": ["string"]}\n'
+        "Rules:\n"
+        "- key_insights: 3-5 specific factual claims each containing metric name, value with unit, and period.\n"
+        "- metric_comparisons: period-over-period or series comparisons with both values stated. Use [] if none.\n"
+        "- trend_statement: exactly one sentence citing start value, end value, and direction.\n"
+        "- caveats: data quality concerns only (estimated values, missing periods, GAAP mixing). Use [] if none.\n"
+        "- evidence_refs: row/column/series labels that support the insights. Use [] if cannot be precisely stated.\n"
+        "Do not include markdown fences, prose outside the JSON object, or code fences."
     )
 
     if not settings.is_openai_api_key_placeholder:

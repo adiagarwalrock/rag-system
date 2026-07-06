@@ -27,7 +27,9 @@ class FakeSettings:
             "EMBEDDING_OUTPUT_DIMENSION": None,
             "VECTOR_DIMENSIONS": 1536,
             "OPENAI_USE_RESPONSES": True,
-            "ai_api_key": "test-key",
+            "openai_api_key": "test-key",
+            "gemini_api_key": "",
+            "anthropic_api_key": "",
             "is_openai_api_key_placeholder": False,
         }
         values.update(overrides)
@@ -193,7 +195,7 @@ def test_database_status_reports_snowflake_and_failure():
 
 
 def test_ai_status_skips_live_checks_when_key_is_missing_or_placeholder():
-    settings = FakeSettings(ai_api_key="", is_openai_api_key_placeholder=True)
+    settings = FakeSettings(openai_api_key="", is_openai_api_key_placeholder=True)
 
     status = _service(settings_obj=settings).get_status()["ai"]
 
@@ -203,14 +205,17 @@ def test_ai_status_skips_live_checks_when_key_is_missing_or_placeholder():
     assert status["models_api"]["status"] == "skipped"
 
 
-def test_ai_status_reports_models_api_success_and_model_availability():
-    status = _service().get_status()["ai"]
+def test_ai_status_reports_models_registry_success():
+    # LLM_MODEL and EMBEDDING_MODEL are known registry IDs → both available
+    settings = FakeSettings(
+        LLM_MODEL="gpt-test",
+        EMBEDDING_MODEL="text-embedding-3-large",
+    )
+    status = _service(settings_obj=settings).get_status()["ai"]
 
     assert status["status"] == "ok"
     assert status["initialization"]["status"] == "ok"
     assert status["models_api"]["status"] == "ok"
-    assert status["models_api"]["model_count"] == 2
-    assert status["models_api"]["llm_model_available"] is True
     assert status["models_api"]["embedding_model_available"] is True
 
 
@@ -224,25 +229,22 @@ def test_ai_status_reports_initialization_failure():
     assert "init failed" in status["initialization"]["message"]
 
 
-def test_ai_status_reports_models_api_failure():
-    status = _service(
-        openai_client_factory=lambda **_kwargs: FakeOpenAIClient(
-            error=TimeoutError("models timeout")
-        )
-    ).get_status()["ai"]
+def test_ai_status_reports_embedding_model_not_in_registry():
+    # EMBEDDING_MODEL is not in the registry → embedding_model_available False
+    settings = FakeSettings(
+        LLM_MODEL="gpt-test",
+        EMBEDDING_MODEL="text-embedding-test",  # not in EMBEDDING_REGISTRY
+    )
+    status = _service(settings_obj=settings).get_status()["ai"]
 
-    assert status["status"] == "error"
-    assert status["models_api"]["status"] == "error"
-    assert "models timeout" in status["models_api"]["message"]
-
-
-def test_ai_status_reports_missing_configured_model_ids():
-    status = _service(
-        openai_client_factory=lambda **_kwargs: FakeOpenAIClient(
-            model_ids=["other-model"]
-        )
-    ).get_status()["ai"]
-
-    assert status["status"] == "ok"
-    assert status["models_api"]["llm_model_available"] is False
+    assert status["models_api"]["status"] == "ok"
     assert status["models_api"]["embedding_model_available"] is False
+
+
+def test_list_available_models_includes_embedding_registry():
+    result = _service().list_available_models()
+
+    assert "embedding_models" in result
+    ids = [e["id"] for e in result["embedding_models"]]
+    assert "text-embedding-3-large" in ids
+    assert "gemini-embedding-2" in ids

@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Version
+
+**Current: v1.0** — focused on Traditional (deterministic) RAG. Agentic RAG (`ENABLE_AGENTIC_RAG`, `app/agents/*`, LangGraph graph) is deferred to **v2**; do not extend or activate it in v1 work.
+
 ## Commands
 
 ```bash
@@ -51,6 +55,7 @@ Both call the same orchestration in `app/services/*` in-process. Streamlit uses 
 | Orchestration / business logic | `app/services/*` |
 | Ingestion & parsing | `app/ingestion/*` |
 | Retrieval pipeline | `app/retrieval/*` |
+| Agentic RAG (LangGraph) | `app/agents/*` |
 | Vector store | `app/indexing/vector_store.py`, `app/indexing/chat_history_store.py` |
 | Relational DB / session factory | `app/db/*` |
 | Config / AI init | `app/core/config.py`, `app/core/ai_provider.py` |
@@ -59,10 +64,11 @@ Both call the same orchestration in `app/services/*` in-process. Streamlit uses 
 
 1. Upload creates `Document` + `IngestionJob` in `queued` state; raw file saved to `data/raw`.
 2. `IngestionQueueManager` workers (`app/services/ingest_queue.py`) process jobs asynchronously.
-3. **4-level parser fallback** (each level tried only if its key is set; failure falls through):
+3. **5-level parser fallback** (each level tried only if its key/flag is set; failure falls through):
    1. **Reducto** (`app/ingestion/parser/external/reducto.py`) — if `ENABLE_EXTERNAL_PARSER=true` and `REDUCTO_API_KEY` set
    2. **LlamaParse** (`app/ingestion/parser/external/llamacloud.py`) — if `ENABLE_EXTERNAL_PARSER=true` and `LLAMA_CLOUD_API_KEY` set
    3. **Layout-aware PDF** (`app/ingestion/parser/custom/pdf_pipeline/`) — PDFs when `ENABLE_LAYOUT_AWARE_PDF=true`
+   3b. **Docling** (`app/ingestion/parser/custom/docling_parser.py`) — PDFs when `ENABLE_DOCLING_PARSER=true` (local, no API key required)
    4. **Legacy** (`app/ingestion/parser/custom/legacy.py`) — always available
 4. External parsers (1 & 2) emit `[[START OF PAGE n]]` / `[[END OF PAGE n]]` markers; `to_llama_docs()` splits these into one `LlamaDocument` per page.
 5. All paths feed a single `SemanticSplitterNodeParser` + LLM enrichment pass in `app/services/ingest_service.py`.
@@ -72,18 +78,21 @@ Both call the same orchestration in `app/services/*` in-process. Streamlit uses 
 ### Query / answer flow
 
 1. `ChatConversationService` manages session creation and message persistence.
-2. `VecteraRetriever` performs client-scoped hybrid Qdrant search (dense + sparse, with dense fallback).
-3. Optional query expansion for comparative/visual/conflict prompts.
-4. Cross-encoder reranker (`app/retrieval/cross_encoder_reranker.py`) + semantic/temporal/structural adjustments.
-5. `ConflictDetector` flags numeric disagreements across sources.
-6. Citations built from selected evidence; LLM synthesis produces grounded answer.
-7. Q/A pairs embedded into a dedicated chat-history Qdrant collection for cross-session semantic memory.
+2. **Dispatch**: `execute_query()` in `app/services/query_service.py` checks `ENABLE_AGENTIC_RAG`. Keep this `false` in v1 — the agentic path is not actively developed or supported until v2.
+3. **Traditional path (v1, default)**: `VecteraRetriever` performs client-scoped hybrid Qdrant search → cross-encoder reranker → `ConflictDetector` → citations → LLM synthesis.
+4. **Agentic path (v2, not active)**: LangGraph graph in `app/agents/graph.py` — deferred. Do not extend or wire new features into `app/agents/*` in v1.
+5. Q/A pairs embedded into a dedicated chat-history Qdrant collection for cross-session semantic memory.
+
+### `invoke_llm_chat` structured output
+
+Pass `structured_output_schema=SomePydanticModel` to get a parsed model instance back instead of a raw `ChatResponse`. Uses the OpenAI Responses API (`response.output_text` + `model_validate_json`) when `OPENAI_USE_RESPONSES=true`, otherwise `beta.chat.completions.parse`. All other `invoke_llm_chat` callers are unaffected (parameter defaults to `None`).
 
 ## Configuration
 
 Settings are loaded from `.env` via `pydantic-settings` (`app/core/config.py`). Key points:
 
-- `AI_API_KEY` accepts aliases: `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`.
+- API key env vars: `OPENAI_API_KEY` (primary), `GEMINI_API_KEY` / `GOOGLE_API_KEY` (Gemini).
+- `ENABLE_DOCLING_PARSER` (default `true`) — enables the local Docling PDF parser (level 3b). Set `false` to skip it.
 - `validate_runtime_settings()` fails on missing/placeholder key — no silent fallback.
 - Relational DB: Snowflake when `SNOWFLAKE_ACCOUNT` + `SNOWFLAKE_USER` are set; otherwise SQLite (`rag_local.db`).
 - Schema is ensured at runtime via `ensure_runtime_schema()` — keep all schema changes additive.
@@ -102,6 +111,15 @@ When to use them:
 - Checking a model identifier or endpoint behavior (default models in `config.py` may drift).
 - Debugging an error that looks like a version mismatch or deprecated interface.
 - Implementing a new integration against any external service.
+
+## Streamlit ↔ API Parity
+
+Both entry points (`streamlit_app.py` via `VecteraCore` and `api.py` via `app/api/routes_*.py`) must expose the same capabilities. Any feature added or changed on one side **must be reflected on the other**:
+
+- A new service method in `app/services/*` must get both a REST route in `app/api/routes_*.py` **and** a corresponding method in `ui/lib/api.py` (`VecteraCore`).
+- A new UI workflow in `ui/pages/*` that calls `VecteraCore` must have an equivalent REST endpoint so external callers can do the same thing.
+- Parameter signatures, option flags, and response shapes should match between the two surfaces. If the API adds a query param or request field, the UI adapter should pass it through (even if the UI doesn't yet expose it as a control).
+- Removing or renaming a capability on one side requires the same change on the other — do not leave dead routes or orphaned `VecteraCore` methods.
 
 ## Engineering Rules
 

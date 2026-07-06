@@ -28,14 +28,9 @@ class Settings(BaseSettings):
     )
 
     # OpenAI / LlamaIndex
-    AI_API_KEY: str | None = Field(
+    OPENAI_API_KEY: str | None = Field(
         default=None,
-        validation_alias=AliasChoices(
-            "OPENAI_API_KEY",
-            "AI_API_KEY",
-            "GEMINI_API_KEY",
-            "GOOGLE_API_KEY",
-        ),
+        validation_alias=AliasChoices("OPENAI_API_KEY"),
     )
     HF_API_TOKEN: str | None = Field(
         default=None,
@@ -46,15 +41,25 @@ class Settings(BaseSettings):
             "HUGGINGFACE_HUB_TOKEN",
         ),
     )
-    LLM_MODEL: str = "gpt-5.2"
+    GEMINI_API_KEY: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+    )
+    ANTHROPIC_API_KEY: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ANTHROPIC_API_KEY", "CLAUDE_API_KEY"),
+    )
+    LLM_MODEL: str = "gpt-5.5"
     QUERY_EXPANSION_MODEL: str = "gpt-5.4-mini"
     SESSION_SUMMARY_MODEL: str = "gpt-5.4-mini"
     OPENAI_USE_RESPONSES: bool = True
     EMBEDDING_MODEL: str = "text-embedding-3-large"
     EMBEDDING_OUTPUT_DIMENSION: int | None = None
     RESPONSE_INPUT_BUDGET_RATIO: float = 0.8
-    RESPONSE_MAX_OUTPUT_TOKENS: int = 2500
-RESPONSE_SYNTHESIS_TIMEOUT_SECONDS: int = 240  # max wait for main answer synthesis; gpt-5.2 reasoning_effort=high on cross-document questions can take 2+ minutes
+    RESPONSE_MAX_OUTPUT_TOKENS: int = 6000
+    # max wait for main answer synthesis; gpt-5.2 reasoning_effort=high
+    # on cross-document questions can take 2+ minutes
+    RESPONSE_SYNTHESIS_TIMEOUT_SECONDS: int = 240
     RESPONSE_PROMPT_CACHE_KEY: str = "vectera:grounded-answer:v2"
     RESPONSE_PROMPT_CACHE_RETENTION: str = "24h"
     RESPONSE_USER_TAG: str = "developer"
@@ -71,12 +76,14 @@ RESPONSE_SYNTHESIS_TIMEOUT_SECONDS: int = 240  # max wait for main answer synthe
     CROSS_ENCODER_RERANK_DEVICE: str | None = None
     CROSS_ENCODER_RERANK_TRUST_REMOTE_CODE: bool = False
 
-    COLLECTION_NAME: str = "rag_collection_oai_reducto"
+    COLLECTION_NAME: str = "rag_collection_oai_parser_extractor"
     CHAT_HISTORY_COLLECTION_NAME: str = "chat_history_v1"
     VECTOR_DIMENSIONS: int = 3072
 
     # Layout-aware PDF ingestion
     ENABLE_LAYOUT_AWARE_PDF: bool = True
+    ENABLE_DOCLING_PARSER: bool = True
+    DOCLING_PARSER_VERSION: str = "1.0.0"
     STRICT_LAYOUT_AWARE_PDF_FAILURE: bool = False
     ENABLE_OCR_FALLBACK: bool = True
     ENABLE_MULTIPAGE_TABLE_MERGE: bool = True
@@ -102,7 +109,7 @@ RESPONSE_SYNTHESIS_TIMEOUT_SECONDS: int = 240  # max wait for main answer synthe
     SEMANTIC_SPLITTER_BUFFER_SIZE: int = 1
 
     # External document parsers (Reducto / LlamaParse)
-    # Priority order: Reducto → LlamaParse → Layout-aware PDF → Legacy
+    # Priority order: Reducto → LlamaParse → Layout-aware PDF → Docling → Legacy
     # Each level is attempted only if its key is set; failure falls through to the next.
     ENABLE_EXTERNAL_PARSER: bool = True
     EXTERNAL_PARSER_VERSION: str = "1.0.0"
@@ -119,12 +126,34 @@ RESPONSE_SYNTHESIS_TIMEOUT_SECONDS: int = 240  # max wait for main answer synthe
     ENABLE_LLM_REASONING_ENRICHMENT: bool = True
     REASONING_MAX_PAGES: int = 5
     REASONING_MAX_ARTIFACTS_PER_PAGE: int = 4
-    REASONING_MAX_OUTPUT_TOKENS: int = 700
+    REASONING_MAX_OUTPUT_TOKENS: int = 750
     REASONING_TIMEOUT_SECONDS: int = 30
-    REASONING_MODEL: str | None = "gpt-5.4-mini"  # use a non-reasoning model; gpt-5.2 burns hidden chain-of-thought tokens against max_output_tokens, leaving too little budget for visible JSON
+
+    # Use a non-reasoning model for reasoning enrichment — gpt-5.2 burns hidden
+    # chain-of-thought tokens against max_output_tokens, starving the JSON output.
+    REASONING_MODEL: str | None = "gpt-5.4-mini"
+
+    # Server-wide default reasoning effort.  Requests that omit reasoning_effort fall back to this.
+    # Valid values: "low", "medium", "high".
+    REASONING_EFFORT: str = "medium"
+
+    # OpenAI reasoning summary verbosity: "auto", "concise", "detailed", or None to disable.
+    # Only applied when OPENAI_USE_RESPONSES=True and a reasoning_effort is set.
+    # Must be explicitly opted in — OpenAI does not return reasoning summaries unless reasoning.summary is set.
+    # gpt-5.5 requires reasoning_effort="high" for populated summaries; "medium" returns empty summary.
+    REASONING_SUMMARY: str | None = "auto"
+
+    # Agentic RAG (LangGraph pipeline — query path only, ingestion unchanged)
+    ENABLE_AGENTIC_RAG: bool = False
+    # vector_retrieval_node increments after each pass; guard fires at >= this value
+    AGENTIC_MAX_ITERATIONS: int = 5
+    # defaults to QUERY_EXPANSION_MODEL when None
+    AGENTIC_EVIDENCE_EVALUATOR_MODEL: str | None = None
+    # defaults to QUERY_EXPANSION_MODEL when None
+    AGENTIC_PLANNER_MODEL: str | None = None
 
     # Background ingestion
-    INGESTION_MAX_WORKERS: int = 2
+    INGESTION_MAX_WORKERS: int = 5
     INGESTION_QUEUE_MAX_SIZE: int = 128
 
     # UI responsiveness
@@ -144,8 +173,16 @@ RESPONSE_SYNTHESIS_TIMEOUT_SECONDS: int = 240  # max wait for main answer synthe
         return key.strip("'\"").strip()
 
     @property
-    def ai_api_key(self) -> str:
-        return self._normalize_secret(self.AI_API_KEY)
+    def openai_api_key(self) -> str:
+        return self._normalize_secret(self.OPENAI_API_KEY)
+
+    @property
+    def gemini_api_key(self) -> str:
+        return self._normalize_secret(self.GEMINI_API_KEY)
+
+    @property
+    def anthropic_api_key(self) -> str:
+        return self._normalize_secret(self.ANTHROPIC_API_KEY)
 
     @property
     def hf_api_token(self) -> str:
@@ -153,7 +190,7 @@ RESPONSE_SYNTHESIS_TIMEOUT_SECONDS: int = 240  # max wait for main answer synthe
 
     @property
     def is_openai_api_key_placeholder(self) -> bool:
-        key = self.ai_api_key.lower()
+        key = self.openai_api_key.lower()
         placeholders = {
             "your_openai_api_key_here",
             "your_api_key_here",
@@ -178,4 +215,4 @@ settings = Settings()
 def validate_runtime_settings() -> None:
     """Validate mandatory runtime configuration before serving requests."""
     if settings.is_openai_api_key_placeholder:
-        raise RuntimeError("AI_API_KEY must be set to a valid key before startup.")
+        raise RuntimeError("OPENAI_API_KEY must be set to a valid key before startup.")

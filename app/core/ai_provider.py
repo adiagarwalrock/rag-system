@@ -1,44 +1,37 @@
-"""Centralized OpenAI provider initialization and factories."""
+"""Shared LLM utilities, public factory functions, and thin call API.
+
+Public entry points: invoke_llm_chat, stream_invoke_llm_chat, get_llm, get_embeddings,
+initialize_ai_provider.
+
+All provider-specific logic lives in app/core/models/llm/{openai,anthropic,gemini}.py.
+This file contains only shared helpers used across providers and callers.
+"""
 
 from __future__ import annotations
 
-import logging
-from typing import Any
+from collections.abc import Generator
+from logging import Logger, getLogger
+from typing import Any, TypeVar
+
+from pydantic import BaseModel
+
+_S = TypeVar("_S", bound=BaseModel)
 
 from llama_index.core import Settings as LlamaSettings
-from llama_index.core.base.llms.types import (
-    ChatMessage,
-    ImageBlock,
-    MessageRole,
-    TextBlock,
-)
-from llama_index.embeddings.openai import OpenAIEmbedding
-from llama_index.llms.openai import OpenAI, OpenAIResponses
-
 from app.core.config import settings
+from app.core.embedding_manager import embedding_manager
+from app.core.models.llm_manager import llm_manager
+from app.core.models.embedding.base import EmbeddingProvider
+from app.core.models.llm.base import LLMProvider as _LLMProvider
 
-logger = logging.getLogger(__name__)
+logger: Logger = getLogger(__name__)
 
 _CONFIGURED_SIGNATURE: tuple[Any, ...] | None = None
-DEFAULT_REASONING_EFFORT = "medium"
-SUPPORTED_REASONING_EFFORTS = {"low", "medium", "high"}
-_MESSAGE_ROLE_MAP: dict[str, MessageRole] = {
-    "system": MessageRole.SYSTEM,
-    "developer": MessageRole.DEVELOPER,
-    "user": MessageRole.USER,
-    "assistant": MessageRole.ASSISTANT,
-    "tool": MessageRole.TOOL,
-    "function": MessageRole.FUNCTION,
-    "model": MessageRole.MODEL,
-    "chatbot": MessageRole.CHATBOT,
-}
 
 
-def normalize_reasoning_effort(reasoning_effort: str | None) -> str:
-    effort = (reasoning_effort or "").strip().lower()
-    if effort in SUPPORTED_REASONING_EFFORTS:
-        return effort
-    return DEFAULT_REASONING_EFFORT
+def _is_openai_model(model: str) -> bool:
+    """Return True for bare OpenAI names or 'openai/...' prefixed strings."""
+    return model.startswith("openai/") or "/" not in model
 
 
 def get_llm(
@@ -46,34 +39,40 @@ def get_llm(
     model: str | None = None,
     api_key: str | None = None,
     reasoning_effort: str | None = None,
+    reasoning_summary: str | None = None,
     timeout_seconds: float | None = None,
 ):
-    """Return an OpenAI-compatible LLM instance for the configured API mode."""
+    """Return a LlamaIndex-compatible LLM instance.
+
+    All providers (openai/*, anthropic/*, gemini/*) are routed through LLMManager.
+    When reasoning_effort or timeout_seconds are set, the provider's build_llm() is
+    called directly so those params are forwarded; otherwise the cached instance is
+    returned from LLMManager.get_instance().
+
+    For reasoning models with ``reasoning_effort`` set, ``reasoning_summary``
+    controls chain-of-thought verbosity (``"auto"``, ``"concise"``, ``"detailed"``).
+    """
+
     llm_model = model or settings.LLM_MODEL
-    resolved_key = api_key or settings.ai_api_key
-    llm_class = OpenAIResponses if settings.OPENAI_USE_RESPONSES else OpenAI
-    kwargs: dict[str, Any] = {"model": llm_model, "api_key": resolved_key}
-    if llm_class is OpenAIResponses and reasoning_effort is not None:
-        kwargs["reasoning_options"] = {
-            "effort": normalize_reasoning_effort(reasoning_effort)
-        }
-    if timeout_seconds is not None:
-        kwargs["timeout"] = float(timeout_seconds)
-    return llm_class(**kwargs)
+    return llm_manager.get_instance(
+        model_id=llm_model,
+        api_key=api_key,
+        reasoning_effort=reasoning_effort,
+        reasoning_summary=reasoning_summary,
+        timeout_seconds=timeout_seconds,
+    )
 
 
 def get_embeddings(*, model: str | None = None, api_key: str | None = None):
-    """Return an OpenAI embedding model instance with configured dimensions."""
-    embedding_model = model or settings.EMBEDDING_MODEL
-    resolved_key = api_key or settings.ai_api_key
-    embedding_kwargs: dict[str, Any] = {}
-    if settings.EMBEDDING_OUTPUT_DIMENSION is not None:
-        embedding_kwargs["dimensions"] = settings.EMBEDDING_OUTPUT_DIMENSION
+    """Return a LlamaIndex BaseEmbedding instance for the given model.
 
-    return OpenAIEmbedding(
-        model=embedding_model,
-        api_key=resolved_key,
-        **embedding_kwargs,
+    Delegates to EmbeddingManager which selects the correct provider, resolves
+    the API key from settings, and caches the instance for reuse.
+    """
+    return embedding_manager.get_instance(
+        model_id=model or settings.EMBEDDING_MODEL,
+        api_key=api_key,
+        dimensions=settings.EMBEDDING_OUTPUT_DIMENSION,
     )
 
 
@@ -82,17 +81,75 @@ def invoke_llm_chat(
     model: str,
     input_messages: list[dict[str, Any]],
     reasoning_effort: str | None = None,
+    reasoning_summary: str | None = None,
     max_output_tokens: int | None = None,
     prompt_cache_key: str | None = None,
     prompt_cache_retention: str | None = None,
     safety_identifier: str | None = None,
     user_tag: str | None = None,
     timeout_seconds: float | None = None,
+    structured_output_schema: type[_S] | None = None,
 ) -> Any:
-    """Invoke a chat completion through the centralized LlamaIndex provider."""
-    llm = get_llm(model=model, reasoning_effort=reasoning_effort, timeout_seconds=timeout_seconds)
-    messages = _to_chat_messages(input_messages)
-    runtime_kwargs = _build_chat_runtime_kwargs(
+    """Invoke a chat completion.
+
+    Delegates to LLMManager (Facade) which resolves the correct provider strategy.
+    When ``structured_output_schema`` is a Pydantic model class, the return value
+    is a parsed instance of that model rather than a LlamaIndex ChatResponse.
+    """
+
+    return llm_manager.invoke(
+        model_id=model,
+        input_messages=input_messages,
+        reasoning_effort=reasoning_effort,
+        reasoning_summary=reasoning_summary,
+        max_output_tokens=max_output_tokens,
+        prompt_cache_key=prompt_cache_key,
+        prompt_cache_retention=prompt_cache_retention,
+        safety_identifier=safety_identifier,
+        user_tag=user_tag,
+        timeout_seconds=timeout_seconds,
+        structured_output_schema=structured_output_schema,
+    )
+
+
+def stream_invoke_llm_chat(
+    *,
+    model: str,
+    input_messages: list[dict[str, Any]],
+    reasoning_effort: str | None = None,
+    reasoning_summary: str | None = None,
+    max_output_tokens: int | None = None,
+    prompt_cache_key: str | None = None,
+    prompt_cache_retention: str | None = None,
+    safety_identifier: str | None = None,
+    user_tag: str | None = None,
+    timeout_seconds: float | None = None,
+) -> Generator[tuple[str | None, str | None], None, None]:
+    """Stream a chat completion, yielding ``(reasoning_delta, answer_delta)`` tuples.
+
+    Each tuple has at most one non-None field per event:
+    - ``reasoning_delta`` — an incremental token of the reasoning *summary* (from
+      ``ResponseReasoningSummaryTextDeltaEvent``).  Only fired when the model
+      produces a reasoning summary (i.e. ``reasoning_summary`` is set and the model
+      is a reasoning model such as gpt-5.x / o-series).
+    - ``answer_delta`` — an incremental token of the final answer text.
+
+    The generator is exhausted once ``ResponseCompletedEvent`` arrives.  Callers
+    should accumulate both streams independently; the final answer and reasoning are
+    available in full from the last ``ThinkingBlock`` / ``TextBlock`` on the
+    ``ResponseCompletedEvent`` yield, but it is simpler to just accumulate deltas.
+
+    Only works when ``OPENAI_USE_RESPONSES=True`` for OpenAI models; falls back to a
+    single ``(None, full_answer)`` yield otherwise.
+
+    For non-OpenAI models (anthropic/*, gemini/*), yields answer deltas only.
+    """
+
+    yield from llm_manager.stream(
+        model_id=model,
+        input_messages=input_messages,
+        reasoning_effort=reasoning_effort,
+        reasoning_summary=reasoning_summary,
         max_output_tokens=max_output_tokens,
         prompt_cache_key=prompt_cache_key,
         prompt_cache_retention=prompt_cache_retention,
@@ -100,146 +157,15 @@ def invoke_llm_chat(
         user_tag=user_tag,
         timeout_seconds=timeout_seconds,
     )
-    return llm.chat(messages, **runtime_kwargs)
-
-
-def extract_chat_response_text(response: Any) -> str:
-    """Extract plain text content from a LlamaIndex chat response."""
-    message = getattr(response, "message", None)
-    if message is not None:
-        chunks: list[str] = []
-        for block in getattr(message, "blocks", None) or []:
-            if isinstance(block, TextBlock):
-                text = (block.text or "").strip()
-                if text:
-                    chunks.append(text)
-        if chunks:
-            return "\n".join(chunks).strip()
-
-        message_content = getattr(message, "content", None)
-        if message_content:
-            return str(message_content).strip()
-
-    text = _extract_response_output_text(response)
-    if text:
-        return text
-
-    raw_response = getattr(response, "raw", None)
-    if raw_response is not None:
-        text = _extract_response_output_text(raw_response)
-        if text:
-            return text
-
-    return ""
-
-
-def _extract_response_output_text(response: Any) -> str:
-    output_text = _read_field(response, "output_text")
-    if output_text:
-        return str(output_text).strip()
-
-    output_items = _read_field(response, "output") or []
-    chunks: list[str] = []
-    for item in output_items:
-        if _read_field(item, "type") != "message":
-            continue
-        for content_item in _read_field(item, "content") or []:
-            text = _read_field(content_item, "text")
-            if text:
-                chunks.append(str(text))
-    return "\n".join(chunks).strip()
-
-
-def _read_field(value: Any, field_name: str) -> Any:
-    if isinstance(value, dict):
-        return value.get(field_name)
-    return getattr(value, field_name, None)
-
-
-def _to_chat_messages(input_messages: list[dict[str, Any]]) -> list[ChatMessage]:
-    messages: list[ChatMessage] = []
-    for message in input_messages:
-        if not isinstance(message, dict):
-            continue
-        role = _resolve_message_role(message.get("role"))
-        content = message.get("content")
-        blocks = _content_to_blocks(content)
-        if blocks is not None:
-            messages.append(ChatMessage(role=role, blocks=blocks))
-            continue
-        messages.append(ChatMessage(role=role, content=str(content or "")))
-
-    if not messages:
-        raise ValueError("input_messages must include at least one message")
-    return messages
-
-
-def _content_to_blocks(content: Any) -> list[Any] | None:
-    if not isinstance(content, list):
-        return None
-
-    blocks: list[Any] = []
-    for item in content:
-        if not isinstance(item, dict):
-            continue
-        item_type = str(item.get("type") or "").strip().lower()
-        if item_type == "input_text":
-            text = str(item.get("text") or "").strip()
-            if text:
-                blocks.append(TextBlock(text=text))
-            continue
-        if item_type == "input_image":
-            image_url = str(item.get("image_url") or "").strip()
-            if image_url:
-                blocks.append(ImageBlock(url=image_url))
-
-    return blocks or None
-
-
-def _resolve_message_role(value: Any) -> MessageRole:
-    role = str(value or "user").strip().lower()
-    return _MESSAGE_ROLE_MAP.get(role, MessageRole.USER)
-
-
-def _build_chat_runtime_kwargs(
-    *,
-    max_output_tokens: int | None,
-    prompt_cache_key: str | None,
-    prompt_cache_retention: str | None,
-    safety_identifier: str | None,
-    user_tag: str | None,
-    timeout_seconds: float | None,
-) -> dict[str, Any]:
-    kwargs: dict[str, Any] = {}
-    if timeout_seconds is not None:
-        kwargs["timeout"] = float(timeout_seconds)
-    if user_tag:
-        kwargs["user"] = user_tag
-
-    if settings.OPENAI_USE_RESPONSES:
-        kwargs["truncation"] = "disabled"
-        if max_output_tokens is not None:
-            kwargs["max_output_tokens"] = max_output_tokens
-        if prompt_cache_key:
-            kwargs["prompt_cache_key"] = prompt_cache_key
-        if prompt_cache_retention:
-            kwargs["prompt_cache_retention"] = prompt_cache_retention
-        if safety_identifier:
-            kwargs["safety_identifier"] = safety_identifier
-        return kwargs
-
-    if max_output_tokens is not None:
-        kwargs["max_tokens"] = max_output_tokens
-    return kwargs
 
 
 def initialize_ai_provider(force: bool = False) -> None:
     """Initialize LlamaIndex global LLM/embedding settings from central config."""
     global _CONFIGURED_SIGNATURE
 
-    api_key = settings.ai_api_key
+    api_key = settings.openai_api_key
     if settings.is_openai_api_key_placeholder:
-        raise RuntimeError("AI_API_KEY is required and cannot be a placeholder.")
+        raise RuntimeError("OPENAI_API_KEY is required and cannot be a placeholder.")
 
     signature = (
         api_key,
@@ -260,10 +186,18 @@ def initialize_ai_provider(force: bool = False) -> None:
     LlamaSettings.embed_model = get_embeddings(api_key=api_key)
     _CONFIGURED_SIGNATURE = signature
 
-    llm_api_mode = "responses" if settings.OPENAI_USE_RESPONSES else "chat_completions"
+    embedding_provider = EmbeddingProvider.detect_provider(settings.EMBEDDING_MODEL)
+    llm_provider = _LLMProvider.detect_provider(settings.LLM_MODEL)
+    llm_api_mode = (
+        "responses"
+        if (settings.OPENAI_USE_RESPONSES and _is_openai_model(settings.LLM_MODEL))
+        else "chat_completions"
+    )
     logger.info(
-        "Initialized OpenAI provider (llm=%s, embedding=%s, llm_api=%s)",
+        "Initialized provider (llm=%s [%s/%s], embedding=%s [%s])",
         settings.LLM_MODEL,
-        settings.EMBEDDING_MODEL,
+        llm_provider,
         llm_api_mode,
+        settings.EMBEDDING_MODEL,
+        embedding_provider,
     )

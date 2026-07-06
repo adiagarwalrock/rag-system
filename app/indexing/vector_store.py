@@ -26,7 +26,11 @@ PAYLOAD_INDEXES = (
     ("client_id", qdrant_models.PayloadSchemaType.KEYWORD),
     ("document_id", qdrant_models.PayloadSchemaType.KEYWORD),
     ("file_name", qdrant_models.PayloadSchemaType.KEYWORD),
+    ("document_name", qdrant_models.PayloadSchemaType.KEYWORD),
+    ("parser_name", qdrant_models.PayloadSchemaType.KEYWORD),
+    ("chunk_type", qdrant_models.PayloadSchemaType.KEYWORD),
     ("document_version_group", qdrant_models.PayloadSchemaType.KEYWORD),
+    ("document_type", qdrant_models.PayloadSchemaType.KEYWORD),
     ("page_num", qdrant_models.PayloadSchemaType.INTEGER),
     ("slide_num", qdrant_models.PayloadSchemaType.INTEGER),
 )
@@ -162,11 +166,13 @@ class VectorStoreManager:
         sparse_top_k: int | None = None,
         hybrid_top_k: int | None = None,
         hybrid: bool = True,
+        embed_model: object | None = None,
     ):
         """Get a retriever with optional hybrid dense+sparse Qdrant search."""
-        index = VectorStoreIndex.from_vector_store(
-            vector_store=self._get_vector_store()
-        )
+        index_kwargs: dict = {"vector_store": self._get_vector_store()}
+        if embed_model is not None:
+            index_kwargs["embed_model"] = embed_model
+        index = VectorStoreIndex.from_vector_store(**index_kwargs)
         kwargs = {
             "filters": filters,
             "similarity_top_k": similarity_top_k,

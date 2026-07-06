@@ -30,6 +30,8 @@ from app.ingestion.parser.external.helper import (
     provider_citations,
     provider_metadata_association_schema,
     provider_usage,
+    render_page_screenshots,
+    screenshot_refs,
     split_by_page_markers,
     to_llama_docs_from_extraction,
 )
@@ -70,7 +72,7 @@ class ReductoParser:
     # parse
     # ------------------------------------------------------------------
 
-    def parse(self, pdf_path: Path) -> ParsedDocument:
+    def parse(self, pdf_path: Path, document_id: str | None = None) -> ParsedDocument:
         """Upload + parse via Reducto API; return a ParsedDocument with base metadata."""
         start = time.perf_counter()
 
@@ -180,7 +182,8 @@ class ReductoParser:
 
         # Build ParsedPageChunks from page-sectioned markdown
         page_sections = split_by_page_markers(markdown)
-        page_chunks = self._build_page_chunks(page_sections)
+        screenshot_map = render_page_screenshots(pdf_path, document_id, page_sections)
+        page_chunks = self._build_page_chunks(page_sections, screenshot_map)
 
         return ParsedDocument(
             source_file=str(pdf_path),
@@ -192,7 +195,9 @@ class ReductoParser:
         )
 
     def _build_page_chunks(
-        self, page_sections: list[tuple[int, str]]
+        self,
+        page_sections: list[tuple[int, str]],
+        screenshot_map: dict[int, str] | None = None,
     ) -> list[ParsedPageChunk]:
         chunks: list[ParsedPageChunk] = []
         for page_num, content in page_sections:
@@ -209,7 +214,7 @@ class ReductoParser:
                     source_artifact_type=analyzed.source_artifact_type,
                     source_artifact_id=analyzed.source_artifact_id,
                     metadata=analyzed.metadata,
-                    asset_refs=analyzed.asset_refs,
+                    asset_refs=screenshot_refs(analyzed.page_nums, screenshot_map),
                 )
             )
         return chunks
@@ -277,7 +282,8 @@ class ReductoParser:
         document_metadata: dict[str, Any],
     ) -> tuple[list[LlamaDocument], list[dict[str, Any]]]:
         """Parse + extract + convert to (docs, units). Same shape as parse_pdf_layout_aware()."""
-        parsed = self.parse(pdf_path)
+        document_id = document_metadata.get("document_id")
+        parsed = self.parse(pdf_path, document_id=document_id)
         extracted = self.extract(parsed)
         return to_llama_docs_from_extraction(extracted, document_metadata)
 

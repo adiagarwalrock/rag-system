@@ -1,0 +1,267 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --background: 220 14% 5%;
+  --foreground: 210 20% 94%;
+  --card: 220 13% 8%;
+  --card-foreground: 210 20% 94%;
+  --muted: 220 12% 12%;
+  --muted-foreground: 218 10% 62%;
+  --border: 220 12% 18%;
+  --input: 220 12% 16%;
+  --ring: 211 100% 56%;
+  --primary: 211 100% 56%;
+  --primary-foreground: 210 40% 98%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 210 40% 98%;
+  --warning: 38 92% 50%;
+  --success: 142 72% 36%;
+}
+
+html {
+  font-size: 18px;
+  height: 100%;
+  overflow: hidden;
+}
+
+* {
+  @apply border-border;
+}
+
+body {
+  height: 100%;
+  overflow: hidden;
+  @apply bg-background text-foreground antialiased;
+}
+
+::selection {
+  background: hsl(var(--primary) / 0.35);
+}
+
+@layer components {
+  .control {
+    @apply h-9 rounded-full border border-border bg-background px-3 text-sm text-foreground outline-none transition placeholder:text-muted-foreground hover:bg-muted focus:border-primary/50 focus:bg-muted focus:ring-2 focus:ring-primary/15 disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .button-primary {
+    @apply inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .button-secondary {
+    @apply inline-flex h-9 items-center justify-center gap-2 rounded-md border border-border bg-muted px-3 text-sm font-medium text-foreground transition hover:bg-muted/70 disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .button-ghost {
+    @apply inline-flex h-9 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .print-sources {
+    display: none;
+  }
+}
+
+@media print {
+  @page {
+    margin: 14mm;
+  }
+
+  html,
+  body {
+    height: auto;
+    overflow: visible;
+    background: white !important;
+    color: black !important;
+  }
+
+  body > div,
+  .h-screen,
+  .h-full,
+  .min-h-full,
+  .overflow-hidden,
+  .overflow-y-auto {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background: white !important;
+  }
+
+  .no-print,
+  aside,
+  [aria-label="Open navigation"] {
+    display: none !important;
+  }
+
+  main {
+    margin-left: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+
+  .print-chat {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    color: black !important;
+    background: white !important;
+  }
+
+  .print-chat > div {
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+
+  .chat-print-content {
+    max-width: 190mm !important;
+    min-height: 0 !important;
+    display: block !important;
+    margin: 0 auto !important;
+    font-family: Arial, Helvetica, sans-serif !important;
+  }
+
+  .chat-print-content * {
+    color: black !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .chat-print-thread {
+    display: block !important;
+  }
+
+  .chat-print-turn {
+    display: block !important;
+    margin: 0 0 14pt 0 !important;
+  }
+
+  .chat-print-turn::before {
+    display: block;
+    margin-bottom: 5pt;
+    font-size: 8pt;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: #555 !important;
+    text-transform: uppercase;
+  }
+
+  .chat-print-user::before {
+    content: "Question";
+  }
+
+  .chat-print-assistant::before {
+    content: "Answer";
+  }
+
+  .chat-print-bubble {
+    max-width: none !important;
+    border: 1px solid #d8d8d8 !important;
+    border-radius: 8px !important;
+    padding: 9pt 11pt !important;
+    font-size: 10pt !important;
+    line-height: 1.45 !important;
+  }
+
+  .chat-print-content h1,
+  .chat-print-content h2,
+  .chat-print-content h3 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  .chat-print-content h1 {
+    font-size: 16pt !important;
+    margin: 0 0 10pt !important;
+  }
+
+  .chat-print-content h2 {
+    font-size: 13pt !important;
+    margin: 14pt 0 8pt !important;
+  }
+
+  .chat-print-content h3 {
+    font-size: 11pt !important;
+    margin: 11pt 0 6pt !important;
+  }
+
+  .chat-print-content p,
+  .chat-print-content li {
+    font-size: 10pt !important;
+    line-height: 1.45 !important;
+  }
+
+  .chat-print-content ul,
+  .chat-print-content ol {
+    margin-bottom: 8pt !important;
+  }
+
+  .chat-print-content table {
+    width: 100% !important;
+    min-width: 0 !important;
+    table-layout: fixed !important;
+    font-size: 8.5pt !important;
+  }
+
+  .chat-print-content th,
+  .chat-print-content td {
+    padding: 6pt !important;
+    vertical-align: top !important;
+    word-break: normal !important;
+    overflow-wrap: anywhere !important;
+  }
+
+  .chat-print-content th {
+    font-weight: 700 !important;
+  }
+
+  .chat-print-content table,
+  .chat-print-content th,
+  .chat-print-content td,
+  .chat-print-content details {
+    border-color: #d0d0d0 !important;
+  }
+
+  .print-sources {
+    display: block !important;
+    margin-top: 10pt !important;
+    border-top: 1px solid #d0d0d0 !important;
+    padding-top: 8pt !important;
+  }
+
+  .print-section-title {
+    margin-bottom: 5pt !important;
+    font-size: 8pt !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.04em !important;
+    color: #555 !important;
+    text-transform: uppercase !important;
+  }
+
+  .print-sources ol {
+    margin: 0 !important;
+    padding-left: 16pt !important;
+  }
+
+  .print-sources li {
+    margin-bottom: 5pt !important;
+    font-size: 8.5pt !important;
+  }
+
+  .print-sources blockquote {
+    margin: 4pt 0 0 0 !important;
+    border-left: 2px solid #d0d0d0 !important;
+    padding-left: 7pt !important;
+    color: #444 !important;
+  }
+}

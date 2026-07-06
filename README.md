@@ -12,6 +12,7 @@ Both entry points share the same service layer in `app/services/*`.
 - UI and API both use the same in-process business logic (no duplicated workflow code).
 - Ingestion runs through a background queue with worker threads.
 - Retrieval uses hybrid Qdrant search (dense + sparse) with dense fallback.
+- **Agentic RAG** (`ENABLE_AGENTIC_RAG`, default `false`): LangGraph-based multi-pass retrieval — deferred to v2, not actively supported. Keep disabled in v1.
 - Session-aware chat is enabled, including cross-session semantic memory.
 - Access control is removed; runtime is internal single-tenant mode.
 - Runtime startup requires a valid OpenAI-compatible API key (`OPENAI_API_KEY` / `AI_API_KEY`).
@@ -27,7 +28,7 @@ Both entry points share the same service layer in `app/services/*`.
 
 Follow these steps from the repository root to get the application running:
 
-1. **Set up environment variables**  
+1. **Set up environment variables**
    Copy the example environment file and configure the minimum required variables:
 
    ```bash
@@ -56,14 +57,14 @@ Follow these steps from the repository root to get the application running:
    SNOWFLAKE_ROLE=...
    ```
 
-2. **Run the setup script**  
+2. **Run the setup script**
    This installs Python dependencies via `uv` and necessary npm packages:
 
    ```bash
    ./setup.sh
    ```
 
-3. **Start Qdrant**  
+3. **Start Qdrant**
    You can run Qdrant locally via Docker:
 
    ```bash
@@ -72,7 +73,7 @@ Follow these steps from the repository root to get the application running:
 
    *Alternative:* You can use Qdrant Cloud on their free hosting plan: <https://qdrant.tech/documentation/cloud/>. If using the cloud plan, simply set `QDRANT_URL` and `QDRANT_API_KEY` in your `.env` to match your cluster instead of running the docker command.
 
-4. **Start the Streamlit Application**  
+4. **Start the Streamlit Application**
 
    ```bash
    uv run streamlit run streamlit_app.py
@@ -80,13 +81,26 @@ Follow these steps from the repository root to get the application running:
 
    Streamlit is available at `http://localhost:8501`.
 
-5. **(Optional) Start the API Server**  
+5. **(Optional) Start the API Server**
 
    ```bash
    uv run uvicorn api:app --reload --port 8000
    ```
 
    API docs will be available at `http://localhost:8000/docs`.
+
+6. **(Optional) Start the Next.js Frontend Console**
+
+   The frontend is a separate Next.js app in `frontend/`. It requires the API server (step 5) to be running.
+
+   ```bash
+   cd frontend
+   cp .env.example .env.local   # first time only
+   npm install                  # first time only
+   npm run dev
+   ```
+
+   The console is available at `http://localhost:3000`. The `.env.local` default points to `http://127.0.0.1:8000/api/v1` — no changes needed for local development.
 
 ## Runtime Wiring
 
@@ -102,8 +116,13 @@ See [architecture.md](./architecture.md) for the full system map. Current bounda
 - Orchestration: `app/services/*`
 - Ingestion/parsing: `app/ingestion/*`
 - Retrieval: `app/retrieval/*`
+- **Agentic RAG**: `app/agents/*` — LangGraph graph, nodes, state, and adapter (v2, not active)
 - Vector store integration: `app/indexing/vector_store.py`
 - Relational data/session state: `app/db/*`
+
+### Agentic RAG (`app/agents/`)
+
+Deferred to v2. `ENABLE_AGENTIC_RAG` defaults to `false` — do not enable in v1. The code exists but is not actively developed or supported.
 
 ## Environment and Integrations
 
@@ -111,7 +130,7 @@ Configuration is loaded from `.env` via `pydantic-settings` (`app/core/config.py
 
 ### API key behavior
 
-- `AI_API_KEY` accepts aliases including `OPENAI_API_KEY`.
+- Set `OPENAI_API_KEY` for OpenAI models, or `GEMINI_API_KEY` / `GOOGLE_API_KEY` for Gemini.
 - Placeholder or missing keys fail startup validation (`validate_runtime_settings`).
 - AI provider initialization is centralized in `app/core/ai_provider.py`.
 
@@ -123,7 +142,7 @@ Configuration is loaded from `.env` via `pydantic-settings` (`app/core/config.py
 
 ### Qdrant behavior
 
-- Main collection uses `settings.COLLECTION_NAME` (default `rag_collection_oai`).
+- Main collection uses `settings.COLLECTION_NAME` (default `rag_collection_oai_parser_extractor`).
 - Retrieval prefers hybrid dense+sparse mode; dense fallback is automatic.
 - Vector dimension mismatches are enforced and can require collection recreation.
 
@@ -132,10 +151,11 @@ Configuration is loaded from `.env` via `pydantic-settings` (`app/core/config.py
 1. Upload is validated and persisted (`Document`, `IngestionJob`) in queued state.
 2. Raw file is saved to `data/raw`.
 3. Background workers process queued ingestion tasks.
-4. Parsing — 4-level fallback chain (each level is skipped if its key is absent or it fails):
+4. Parsing — 5-level fallback chain (each level is skipped if its key/flag is absent or it fails):
    1. **Reducto** — if `ENABLE_EXTERNAL_PARSER=true` and `REDUCTO_API_KEY` is set. VLM-powered agentic table and figure extraction; returns page-delimited markdown.
    2. **LlamaParse** — if `ENABLE_EXTERNAL_PARSER=true` and `LLAMA_CLOUD_API_KEY` / `LLAMAPARSE_API_KEY` is set. Returns page-delimited markdown.
    3. **Layout-aware PDF** — custom pipeline (`app/ingestion/parser/custom/pdf_pipeline/`) for PDFs when `ENABLE_LAYOUT_AWARE_PDF=true`.
+   3b. **Docling** — local layout-aware parser (`app/ingestion/parser/custom/docling_parser.py`) for PDFs when `ENABLE_DOCLING_PARSER=true`. No API key required.
    4. **Legacy** — LlamaIndex readers; always available as final fallback.
 5. All parsed output goes through a single `SemanticSplitterNodeParser` pass followed by LLM enrichment (title, summary, keywords, questions answered).
 6. Version metadata is resolved and persisted (`DocumentVersion` + supersession logic).
@@ -183,7 +203,7 @@ Chat orchestration (`ChatConversationService`) adds:
 - Available for `failed`, `indexed`, or `completed` documents.
 - Requires original raw file to still exist in `data/raw`.
 
-UI: Document Library -> `Retry`  
+UI: Document Library -> `Retry`
 API: `POST /api/v1/documents/{document_id}/retry`
 
 ### Delete document
@@ -191,7 +211,7 @@ API: `POST /api/v1/documents/{document_id}/retry`
 - Removes vectors, relational mappings, ingestion jobs, and raw file.
 - On failure, status is set to `deleting_failed`.
 
-UI: Document Library -> `Delete`  
+UI: Document Library -> `Delete`
 API: `DELETE /api/v1/documents/{document_id}?hard=true`
 
 ## Verification
@@ -230,3 +250,45 @@ uv run pytest tests/test_retrieval.py::test_name
 - `setup_check` can fail even when runtime fallback to SQLite is acceptable.
 - Changing embedding/vector dimensions against an existing Qdrant collection may require recreating it.
 - Chat session management is currently exposed through the internal Streamlit adapter (`ui/lib/api.py`), while REST query endpoints accept `session_id` but do not provide dedicated session CRUD routes.
+
+
+## For serving
+
+Use your static IP by binding both servers to `0.0.0.0` and pointing the frontend API env to the static IP.
+
+Example, replace `YOUR_STATIC_IP`:
+
+```bash
+# backend
+uv run uvicorn api:app --host 0.0.0.0 --port 8000
+```
+
+In `frontend/.env.local`:
+
+```bash
+NEXT_PUBLIC_API_BASE_URL=http://YOUR_STATIC_IP:8000/api/v1
+```
+
+Then run frontend:
+
+```bash
+cd frontend
+npm run dev -- --hostname 0.0.0.0 --port 3000
+```
+
+Open:
+
+```text
+http://YOUR_STATIC_IP:3000
+```
+
+Also make sure your machine/cloud firewall allows inbound:
+
+```text
+TCP 3000  # Next.js UI
+TCP 8000  # FastAPI backend
+```
+
+Good news: `api.py` already has permissive CORS, so the API should accept requests from `http://YOUR_STATIC_IP:3000`.
+
+For anything beyond local testing, put this behind Nginx/Caddy with HTTPS instead of exposing ports `3000` and `8000` directly.

@@ -10,6 +10,7 @@ VECTOR_COLLECTION = settings.VECTOR_COLLECTION
 def test_execute_query_persists_query_retrieval_and_conflict_logs(
     db_session, seeded_entities, monkeypatch
 ):
+    monkeypatch.setattr(settings, "ENABLE_AGENTIC_RAG", False)
     client = seeded_entities["client"]
     document = seeded_entities["document"]
 
@@ -30,15 +31,20 @@ def test_execute_query_persists_query_retrieval_and_conflict_logs(
             self,
             client_id: str,
             reasoning_effort: str = "medium",
+            reasoning_summary: str | None = None,
             conversation_context: dict | None = None,
+            reasoning_callback=None,
+            answer_callback=None,
+            **kwargs,
         ):
             self.client_id = client_id
             self.reasoning_effort = reasoning_effort
+            self.reasoning_summary = reasoning_summary
             self.conversation_context = conversation_context
 
-        def query(self, question: str) -> dict:
+        def query(self, question: str, status_callback=None) -> dict:
             assert self.client_id == client.id
-            assert self.reasoning_effort == "medium"
+            assert self.reasoning_effort == "high"
             assert question == "What changed in v2?"
             return {
                 "answer": "Policy v2 changes renewal terms.",
@@ -64,16 +70,19 @@ def test_execute_query_persists_query_retrieval_and_conflict_logs(
         question="What changed in v2?",
         client_id=client.id,
         db=db_session,
+        reasoning_effort="high",
     )
 
     assert result["query_id"]
     assert result["latency_ms"] >= 0
     assert result["answer"] == "Policy v2 changes renewal terms."
+    assert result["reasoning_effort"] == "high"
 
     query_log = (
         db_session.query(QueryLog).filter(QueryLog.id == result["query_id"]).one()
     )
     assert query_log.status == "completed"
+    assert query_log.reasoning_effort == "high"
 
     retrieval_logs = (
         db_session.query(RetrievalLog)
@@ -99,6 +108,7 @@ def test_execute_query_persists_query_retrieval_and_conflict_logs(
 def test_execute_query_marks_query_log_failed_on_retrieval_error(
     db_session, seeded_entities, monkeypatch
 ):
+    monkeypatch.setattr(settings, "ENABLE_AGENTIC_RAG", False)
     client = seeded_entities["client"]
 
     class FailingRetriever:
@@ -106,13 +116,18 @@ def test_execute_query_marks_query_log_failed_on_retrieval_error(
             self,
             client_id: str,
             reasoning_effort: str = "medium",
+            reasoning_summary: str | None = None,
             conversation_context: dict | None = None,
+            reasoning_callback=None,
+            answer_callback=None,
+            **kwargs,
         ):
             self.client_id = client_id
             self.reasoning_effort = reasoning_effort
+            self.reasoning_summary = reasoning_summary
             self.conversation_context = conversation_context
 
-        def query(self, question: str) -> dict:
+        def query(self, question: str, status_callback=None) -> dict:
             raise RuntimeError("simulated retrieval failure")
 
     monkeypatch.setattr(query_service, "VecteraRetriever", FailingRetriever)

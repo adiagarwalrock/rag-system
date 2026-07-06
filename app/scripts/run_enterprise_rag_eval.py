@@ -56,6 +56,7 @@ class EvalRunnerConfig:
     timestamped_output: bool
     debug_output_path: Path | None
     question_timeout_seconds: int
+    isolate: bool = False
 
 
 @dataclass
@@ -182,6 +183,7 @@ class EnterpriseRAGEvalRunner:
             started_at=started_at,
             finished_at=finished_at,
             output_paths=output_paths,
+            results_by_line=results_by_line,
         )
         output_paths.manifest_path.write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
@@ -371,6 +373,7 @@ class EnterpriseRAGEvalRunner:
                         client_id=client_id,
                         question=item.question,
                         reasoning_effort=self.config.reasoning_effort,
+                        skip_conversation_context=self.config.isolate,
                     )
 
                 answer = str(result.get("answer", "")).strip() or "No answer generated."
@@ -470,6 +473,7 @@ class EnterpriseRAGEvalRunner:
             "query_expanded": result.get("query_expanded"),
             "retrieval_diagnostics": result.get("retrieval_diagnostics"),
             "intent_labels": result.get("intent_labels"),
+            "agentic_iterations": result.get("agentic_iterations"),
             "companion_queries": result.get("companion_queries"),
             "companion_counts_by_query": result.get("companion_counts_by_query"),
             "evidence_by_document": result.get("evidence_by_document"),
@@ -582,7 +586,21 @@ class EnterpriseRAGEvalRunner:
         started_at: datetime,
         finished_at: datetime,
         output_paths: OutputPaths,
+        results_by_line: dict[int, "QuestionExecutionResult"] | None = None,
     ) -> dict[str, Any]:
+        agentic_iter_counts = [
+            r.diagnostics.get("agentic_iterations")
+            for r in (results_by_line or {}).values()
+            if r.diagnostics.get("agentic_iterations") is not None
+        ]
+        agentic_summary: dict[str, Any] = {}
+        if agentic_iter_counts:
+            agentic_summary = {
+                "agentic_questions": len(agentic_iter_counts),
+                "agentic_avg_iterations": round(sum(agentic_iter_counts) / len(agentic_iter_counts), 2),
+                "agentic_max_iterations": max(agentic_iter_counts),
+                "agentic_looped_count": sum(1 for n in agentic_iter_counts if n > 1),
+            }
         return {
             "run_id": run_id,
             "started_at": started_at.isoformat(),
@@ -593,6 +611,7 @@ class EnterpriseRAGEvalRunner:
             "client_name": self.config.client_name,
             "client_id": client_id,
             "reasoning_effort": self.config.reasoning_effort,
+            "isolation_mode": self.config.isolate,
             "workers": self.config.workers,
             "max_retries": self.config.max_retries,
             "initial_backoff_seconds": self.config.initial_backoff_seconds,
@@ -604,6 +623,7 @@ class EnterpriseRAGEvalRunner:
             "failed": stats.failed,
             "skipped_malformed": stats.skipped_malformed,
             "blank_rows": stats.blank_rows,
+            **agentic_summary,
         }
 
     @staticmethod
@@ -681,6 +701,15 @@ def _build_parser() -> argparse.ArgumentParser:
             "Questions exceeding this limit are marked failed instead of hanging."
         ),
     )
+    parser.add_argument(
+        "--isolate",
+        action="store_true",
+        default=False,
+        help=(
+            "Disable cross-session and in-session context injection for clean evaluation. "
+            "Each question is answered without influence from prior queries in the chat history."
+        ),
+    )
     return parser
 
 
@@ -722,6 +751,7 @@ def _validate_args(args: argparse.Namespace) -> EvalRunnerConfig:
         timestamped_output=bool(args.timestamped_output),
         debug_output_path=debug_output_path,
         question_timeout_seconds=int(args.question_timeout),
+        isolate=bool(args.isolate),
     )
 
 
@@ -747,6 +777,7 @@ def main() -> int:
     print(f"Manifest: {artifacts.manifest_path}")
     print(f"Client: {config.client_name} ({artifacts.client_id})")
     print(f"Reasoning effort: {config.reasoning_effort}")
+    print(f"Isolation mode: {config.isolate}")
     print(f"Workers: {config.workers}")
     print(f"Timestamped output: {config.timestamped_output}")
     print(f"Rows read (non-blank): {stats.total_rows}")

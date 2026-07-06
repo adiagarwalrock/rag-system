@@ -1,0 +1,97 @@
+import Link from "next/link";
+import { Trash2 } from "lucide-react";
+import type { Client } from "@/lib/api/schemas";
+import { ConfirmDeleteDialog } from "@/components/common/confirm-delete-dialog";
+import { resolveEmbedLabel, useEmbeddingModels, resolveLLMLabel, useLLMModels } from "@/lib/hooks/use-models";
+import { formatDate, formatNumber } from "@/lib/utils";
+
+export function ClientCard({
+  client,
+  onDelete,
+  pending,
+}: {
+  client: Client;
+  onDelete: () => void;
+  pending?: boolean;
+}) {
+  const { data: embeddingModels = [] } = useEmbeddingModels();
+  const { data: llmModels = [] } = useLLMModels();
+  const embedLabel = resolveEmbedLabel(client.embedding_model, embeddingModels);
+  const llmLabel = resolveLLMLabel(client.llm_model, llmModels);
+  const documentLibraryHref = `/documents?client_id=${encodeURIComponent(client.id)}#library`;
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-4">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(420px,1fr)_auto] xl:items-start">
+        <div className="min-w-0">
+          <h3 className="truncate text-sm font-semibold">
+            <Link
+              href={documentLibraryHref}
+              className="rounded-sm hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {client.name}
+            </Link>
+          </h3>
+          <p className="mt-1 text-sm text-muted-foreground">{client.description || "No description"}</p>
+          <p className="mt-2 break-all font-mono text-xs text-muted-foreground">{client.id}</p>
+        </div>
+        <div className="grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
+          <Metric label="Documents" value={formatNumber(client.document_count)} href={documentLibraryHref} />
+          <Metric label="Queries" value={formatNumber(client.query_count)} />
+          <Metric label="Sessions" value={formatNumber(client.session_count)} />
+          <Metric label="Memory" value={formatNumber(client.memory_point_count)} />
+        </div>
+        <ConfirmDeleteDialog
+          title="Delete workspace"
+          description="Deleting a workspace cascades documents, history, chat memory, and vector metadata."
+          onConfirm={onDelete}
+          pending={pending}
+        >
+          <button className="button-ghost h-8 w-8 p-0 text-red-300" aria-label="Delete workspace">
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </ConfirmDeleteDialog>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-3 font-mono text-xs text-muted-foreground">
+        <span>created {formatDate(client.created_at)}</span>
+        {embedLabel && (
+          <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground">
+            embed: {embedLabel}
+          </span>
+        )}
+        {llmLabel && (
+          <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground">
+            llm: {llmLabel}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Metric({ label, value, href }: { label: string; value: string; href?: string }) {
+  const content = (
+    <>
+      <div className="text-muted-foreground">{label}</div>
+      <div className="mt-1 font-mono text-foreground">{value}</div>
+    </>
+  );
+
+  if (href) {
+    return (
+      <Link
+        href={href}
+        className="rounded-md border border-border bg-muted/30 p-2 transition hover:border-primary/50 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        aria-label={`View ${label.toLowerCase()}`}
+      >
+        {content}
+      </Link>
+    );
+  }
+
+  return (
+    <div className="rounded-md border border-border bg-muted/30 p-2">
+      {content}
+    </div>
+  );
+}

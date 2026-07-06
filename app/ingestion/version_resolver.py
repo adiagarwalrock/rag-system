@@ -103,6 +103,28 @@ MONTH_DISPLAY = {
 }
 
 
+_INVESTOR_DAY_TOKENS = ("investor day", "investor event", "analyst day", "annual meeting")
+_MERGER_TOKENS = ("merger", "acquisition", "transaction", "business combination")
+_QUARTERLY_UPDATE_TOKENS = (
+    "quarterly", "company update", "earnings update",
+)
+# Matches q1/q2/q3/q4 surrounded by word boundaries (handles hyphens and spaces)
+_QUARTER_PATTERN = re.compile(r"\bq[1-4]\b")
+
+
+def _infer_document_type(combined_lower: str) -> str | None:
+    """Classify document as investor-day, merger-presentation, quarterly-update, or None."""
+    if any(t in combined_lower for t in _INVESTOR_DAY_TOKENS):
+        return "investor-day"
+    if any(t in combined_lower for t in _MERGER_TOKENS):
+        return "merger-presentation"
+    if any(t in combined_lower for t in _QUARTERLY_UPDATE_TOKENS) or _QUARTER_PATTERN.search(
+        combined_lower
+    ):
+        return "quarterly-update"
+    return None
+
+
 def _new_version_result() -> dict:
     return {
         "version_label": None,
@@ -113,6 +135,7 @@ def _new_version_result() -> dict:
         "effective_to": None,
         "is_current": False,
         "confidence_score": 0.0,
+        "document_type": None,
     }
 
 
@@ -296,5 +319,7 @@ def resolve_version(filename: str, content_preview: str = "") -> dict:
     version_group = _build_version_group(filename)
     if version_group:
         result["version_group"] = version_group
+
+    result["document_type"] = _infer_document_type(lower)
 
     return result

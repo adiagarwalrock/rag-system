@@ -115,9 +115,9 @@ def check_qdrant() -> bool:
 
 
 def check_llm() -> bool:
-    api_key = settings.ai_api_key
+    api_key = settings.openai_api_key
     if settings.is_openai_api_key_placeholder:
-        emit("[FAIL] LLM: AI_API_KEY is missing or placeholder", level=logging.ERROR)
+        emit("[FAIL] LLM: OPENAI_API_KEY is missing or placeholder", level=logging.ERROR)
         return False
 
     try:
@@ -131,11 +131,11 @@ def check_llm() -> bool:
         return False
 
     if response.status_code == 200:
-        emit("[PASS] LLM: AI_API_KEY accepted by OpenAI API")
+        emit("[PASS] LLM: OPENAI_API_KEY accepted by OpenAI API")
         return True
 
     if response.status_code in {401, 403}:
-        emit("[FAIL] LLM: AI_API_KEY rejected by OpenAI API", level=logging.ERROR)
+        emit("[FAIL] LLM: OPENAI_API_KEY rejected by OpenAI API", level=logging.ERROR)
         return False
 
     emit(

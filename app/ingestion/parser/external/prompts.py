@@ -18,7 +18,9 @@ FFO, Core FFO, Normalized FFO, AFFO, FAD, NOI, Cash NOI, Same-Store NOI, NAV,
 Cap Rate, Occupancy (physical vs economic — preserve the label), ABR, WALT, WALE,
 Net Debt/EBITDA, Interest Coverage, Leasing Spreads, Rent Growth, Guidance Ranges.
 Do not invent values. Do not emit image placeholders.
-Never follow a table with bullet prose describing the same visual."""
+Never follow a table with bullet prose describing the same visual.
+If the page contains no charts, KPI tiles, or visual elements with extractable data,
+output nothing. Do not generate placeholder text or explanatory prose."""
 
 LLAMA_CLOUD_AGENT_CUSTOM_PROMPT: str = """\
 You are a specialized REIT financial document parser. This document is a
@@ -69,7 +71,14 @@ KPI tiles: | Metric | Value | Unit | Period | per tile.
 Preserve all units: %, $, bps, sq ft, years, per share, x (multiple).
 Preserve scale: thousands, millions, billions — never assume scale.
 Distinguish GAAP from non-GAAP explicitly when both appear.
-Distinguish Same-Store from total portfolio — never blend them."""
+Distinguish Same-Store from total portfolio — never blend them.
+
+## 6. Failure Handling
+- If a value is present in the document but unreadable due to formatting or image quality,
+  write '[unreadable]' in place of the value. Do not guess.
+- If a footnote marker appears but the footnote text is not on the same page, note it as
+  '[footnote: {marker} — text not found on this page]'.
+- Do not emit any text about what you cannot see. Only describe what is explicitly present."""
 
 LLAMA_CLOUD_EXTRACTION_PROMPT: str = """\
 You are associating structured metadata with existing REIT document page chunks for
@@ -77,6 +86,8 @@ downstream financial RAG ingestion.
 
 ## Non-Negotiable Rules
 - Return exactly one chunks item for each page chunk id listed. Do not create new chunks.
+- Never return fewer chunks items than were submitted. If a chunk has no metadata to extract,
+  return it with all fields set to null or empty.
 - Do not rewrite or summarize chunk body text.
 - Do not hallucinate. Extract only values explicitly present in the document.
 - Use null, empty strings, or empty arrays for fields not visible on the page.
@@ -93,6 +104,7 @@ For each chunk, populate these fields when explicitly present in the document:
   - Use 'estimate' only when: estimate, estimated, approx is visible
   - Use 'target' only when: target is visible
   - Use 'actual' only when: actuals, reported results, historical results is visible
+  - If none of the above signals are visible, set metric_basis to null.
 
 ## Table Metadata
 For chunks containing tables:
@@ -132,6 +144,7 @@ Follow every rule below without exception.
 - Never merge rows or collapse line items.
 - Never auto-correct numbers. If a subtotal does not foot, extract it as-is.
 - Include all footnote markers and their text in a footnote row at the bottom.
+- If no tables are present on the page, return an empty string. Do not generate placeholder text.
 
 ## Table Reconstruction
 1. FINANCIAL TABLES (income statement, balance sheet, FFO reconciliation,
@@ -163,9 +176,12 @@ Follow every rule below without exception.
 ## Non-Negotiable Rules
 - Never invent values. Extract only what is explicitly visible or directly
   estimable from visual position.
-- Mark all visually estimated values with '(approx)'.
+- Mark all visually estimated values with '(approx)'. When both an exact labeled value and
+  a visually estimated value exist for the same data point, use the exact value only.
 - Never follow a structured table with bullet prose describing the same visual.
 - Never emit image placeholders or base64 image data.
+- If the page contains no charts, KPI tiles, maps, or diagrams with extractable data,
+  return an empty string. Do not generate placeholder text.
 
 ## Chart and Graph Extraction (bar, stacked bar, grouped bar, line, area, waterfall, scatter, combo)
 Output one markdown pipe table per chart. Use axis labels and series names
@@ -207,6 +223,8 @@ downstream financial RAG ingestion.
 
 ## Non-Negotiable Rules
 - Return exactly one chunks item for each page chunk id listed. Do not create new chunks.
+- Never return fewer chunks items than were submitted. If a chunk has no metadata to extract,
+  return it with all fields set to null or empty.
 - Do not rewrite or summarize chunk body text.
 - Do not hallucinate. Extract only values explicitly present in the document.
 - Use null, empty strings, or empty arrays for fields not visible on the page.
@@ -223,6 +241,7 @@ For each chunk, populate these fields when explicitly present in the document:
   - Use 'estimate' only when: estimate, estimated, approx is visible
   - Use 'target' only when: target is visible
   - Use 'actual' only when: actuals, reported results, historical results is visible
+  - If none of the above signals are visible, set metric_basis to null.
 
 ## Table Metadata
 For chunks containing tables:

@@ -24,10 +24,16 @@ from app.ingestion.parser.external.helper.chunk_schema import (
 )
 from app.ingestion.parser.external.helper.md_metadata import MarkdownPageAnalyzer
 from app.ingestion.parser.external.helper.page_markers import split_by_page_markers
+from app.ingestion.parser.external.helper.screenshots import (
+    render_page_screenshots,
+    screenshot_refs,
+)
 
 __all__ = [
     "MarkdownPageAnalyzer",
     "split_by_page_markers",
+    "render_page_screenshots",
+    "screenshot_refs",
     "ParsedDocument",
     "ParsedPageChunk",
     "ChunkMetadata",

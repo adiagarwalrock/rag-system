@@ -252,10 +252,18 @@ def _is_non_conflict_pair(
     right: NodeNumericFacts,
     allow_cross_group: bool,
 ) -> bool:
-    # Same document + same version disagreements are usually chunking noise.
+    # Same document + same version disagreements are usually chunking noise,
+    # UNLESS the two chunks come from different pages/slides — in that case they
+    # may represent genuine intra-document metric discrepancies (e.g. a "Platform"
+    # slide reporting 5,500+ customers vs a "Customer Base" slide reporting 5,000+).
     if left.document_id and left.document_id == right.document_id:
         if left.version_label == right.version_label:
-            return True
+            left_meta = (left.node.node.metadata or {}) if left.node else {}
+            right_meta = (right.node.node.metadata or {}) if right.node else {}
+            left_page = left_meta.get("page_num") or left_meta.get("slide_num")
+            right_page = right_meta.get("page_num") or right_meta.get("slide_num")
+            if not (left_page and right_page and left_page != right_page):
+                return True
     if left.source_name_key and left.source_name_key == right.source_name_key:
         if left.version_label == right.version_label:
             return True

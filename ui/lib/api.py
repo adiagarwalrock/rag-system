@@ -49,13 +49,18 @@ class VecteraCore:
                     "name": c.name,
                     "description": c.description,
                     "created_at": c.created_at.isoformat() if c.created_at else None,
+                    "embedding_model": c.embedding_model,
                 }
                 for c in clients
             ]
 
-    def create_client(self, name: str, description: str = "") -> dict:
+    def create_client(
+        self,
+        name: str,
+        description: str = "",
+        embedding_model: Optional[str] = None,
+    ) -> dict:
         with SessionLocal() as db:
-            # check if exists
             existing = db.query(Client).filter(Client.name == name).first()
             if existing:
                 raise ValueError(f"Client {name} already exists.")
@@ -63,7 +68,10 @@ class VecteraCore:
             import uuid
 
             new_client = Client(
-                id=str(uuid.uuid4()), name=name, description=description
+                id=str(uuid.uuid4()),
+                name=name,
+                description=description,
+                embedding_model=embedding_model or None,
             )
             db.add(new_client)
             db.commit()
@@ -72,7 +80,13 @@ class VecteraCore:
                 "id": new_client.id,
                 "name": new_client.name,
                 "description": new_client.description,
+                "embedding_model": new_client.embedding_model,
             }
+
+    def list_embedding_models(self) -> List[Dict[str, Any]]:
+        """Return all embedding models from the registry."""
+        svc = RuntimeStatusService()
+        return svc.list_available_models()["embedding_models"]
 
     def delete_client(self, client_id: str) -> dict:
         with SessionLocal() as db:
@@ -112,6 +126,7 @@ class VecteraCore:
         client_id: str,
         file_name: str,
         file_content: bytes,
+        parser_preference: str | None = None,
     ) -> dict:
         with SessionLocal() as db:
             # Need client_name for ingestion service metadata
@@ -124,6 +139,7 @@ class VecteraCore:
                 client_id=client_id,
                 client_name=client_name,
                 db=db,
+                parser_preference=parser_preference,
             )
             return {
                 "id": doc.id,
@@ -131,6 +147,12 @@ class VecteraCore:
                 "status": doc.status,
                 "ingestion_job_id": job.id,
             }
+
+    def list_available_parsers(self) -> list[dict]:
+        """Return all parsers with their availability given current config."""
+        from app.ingestion.parser.registry import get_available_parsers
+
+        return get_available_parsers()
 
     def get_document_status(self, document_id: str) -> dict:
         with SessionLocal() as db:
@@ -195,7 +217,10 @@ class VecteraCore:
         client_id: str,
         question: str,
         reasoning_effort: str = "medium",
+        reasoning_summary: str | None = None,
         session_id: str | None = None,
+        status_callback=None,
+        reasoning_callback=None,
     ) -> dict:
         with SessionLocal() as db:
             try:
@@ -203,7 +228,10 @@ class VecteraCore:
                     client_id=client_id,
                     question=question,
                     reasoning_effort=reasoning_effort,
+                    reasoning_summary=reasoning_summary,
                     session_id=session_id,
+                    status_callback=status_callback,
+                    reasoning_callback=reasoning_callback,
                 )
                 return response
             except Exception as e:
@@ -300,9 +328,9 @@ class VecteraCore:
                 response_messages.append(payload)
             return response_messages
 
-    def clear_chat_session(self, session_id: str) -> Dict[str, Any]:
+    def clear_chat_session(self, session_id: str, client_id: str) -> Dict[str, Any]:
         with SessionLocal() as db:
-            ChatConversationService(db).clear_session(session_id=session_id)
+            ChatConversationService(db).clear_session(session_id=session_id, client_id=client_id)
             return {"status": "success", "session_id": session_id}
 
     def list_query_history(

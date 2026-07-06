@@ -76,10 +76,12 @@ def test_ensure_runtime_schema_adds_chat_message_payload_columns_and_drops_legac
 
     schema = inspect(engine)
     chat_columns = {column["name"] for column in schema.get_columns("chat_messages")}
+    query_columns = {column["name"] for column in schema.get_columns("query_logs")}
     table_names = set(schema.get_table_names())
 
     assert "reasoning" in chat_columns
     assert "citations_json" in chat_columns
+    assert "reasoning_effort" in query_columns
     assert "users" not in table_names
     assert "roles" not in table_names
     assert "user_roles" not in table_names

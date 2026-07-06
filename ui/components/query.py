@@ -1,3 +1,7 @@
+import io
+import queue
+import threading
+import time
 from pathlib import Path
 from datetime import datetime
 
@@ -12,6 +16,7 @@ from ui.components.utils import (
 )
 
 REASONING_EFFORT_OPTIONS = ("low", "medium", "high")
+DEFAULT_REASONING_SUMMARY = "auto"
 
 
 def _stream_text(text: str):
@@ -157,8 +162,10 @@ def _render_result_details(result: dict):
 
     reasoning = (result.get("reasoning") or "").strip()
     if reasoning:
-        with st.expander(":material/psychology: Reasoning trace", expanded=False):
-            st.write(reasoning)
+        with st.expander(
+            ":material/psychology: Model reasoning summary", expanded=False
+        ):
+            st.markdown(f"*{reasoning}*")
 
     if citations:
         with st.expander(
@@ -285,17 +292,95 @@ def _submit_question(
         st.markdown(question)
 
     with st.chat_message("assistant"):
-        with st.spinner("Searching documents and drafting a sourced answer..."):
-            result = api.query(
-                client_id,
-                question,
-                reasoning_effort=reasoning_effort,
-                session_id=session_id,
-            )
-            answer = result.get("answer", "No answer generated.")
-            st.write_stream(_stream_text(answer))
-            _render_result_details(result)
-            return result
+        step_queue: queue.Queue = queue.Queue()
+        result_holder: dict = {}
+
+        def _run_query() -> None:
+            def _status_cb(msg: str) -> None:
+                step_queue.put(("step", msg))
+
+            def _reasoning_cb(delta: str) -> None:
+                step_queue.put(("reasoning", delta))
+
+            try:
+                r = api.query(
+                    client_id,
+                    question,
+                    reasoning_effort=reasoning_effort,
+                    reasoning_summary=DEFAULT_REASONING_SUMMARY,
+                    session_id=session_id,
+                    status_callback=_status_cb,
+                    reasoning_callback=_reasoning_cb,
+                )
+                step_queue.put(("done", r))
+            except Exception as exc:  # noqa: BLE001
+                step_queue.put(("error", exc))
+
+        worker = threading.Thread(target=_run_query, daemon=True)
+        worker.start()
+
+        # Use st.status while the pipeline is running, then clear it completely
+        # so it doesn't sit above the answer once done.
+        status_placeholder = st.empty()
+        reasoning_placeholder = st.empty()
+        reasoning_buf = io.StringIO()
+        _last_reasoning_render = 0.0
+        _REASONING_RENDER_INTERVAL = 0.15  # seconds between expander re-renders
+
+        def _render_live_reasoning(text: str) -> None:
+            with reasoning_placeholder:
+                with st.expander(
+                    ":material/psychology: Model reasoning summary",
+                    expanded=True,
+                ):
+                    st.markdown(f"*{text}*")
+
+        with status_placeholder:
+            with st.status("Processing your question…", expanded=True) as status_box:
+                while True:
+                    kind, payload = step_queue.get()
+                    if kind == "step":
+                        status_box.write(payload)
+                    elif kind == "reasoning":
+                        reasoning_buf.write(payload)
+                        now = time.monotonic()
+                        if now - _last_reasoning_render >= _REASONING_RENDER_INTERVAL:
+                            _render_live_reasoning(reasoning_buf.getvalue())
+                            _last_reasoning_render = now
+                    elif kind == "done":
+                        result_holder["result"] = payload
+                        status_box.update(
+                            label="✓ Done", state="complete", expanded=False
+                        )
+                        break
+                    elif kind == "error":
+                        status_box.update(
+                            label="Error during processing", state="error", expanded=True
+                        )
+                        worker.join(timeout=5)
+                        raise payload
+
+        # Remove the status container entirely — answer and details render fresh below
+        status_placeholder.empty()
+
+        result = result_holder.get("result")
+        if result is None:
+            raise RuntimeError("Query worker exited without producing a result")
+
+        # Prefer the full reasoning text from the result dict; fall back to whatever
+        # was accumulated live from the streaming deltas.
+        live_reasoning = reasoning_buf.getvalue().strip()
+        if not (result.get("reasoning") or "").strip() and live_reasoning:
+            result = dict(result)
+            result["reasoning"] = live_reasoning
+
+        # Clear the live reasoning placeholder — _render_result_details shows the final version.
+        reasoning_placeholder.empty()
+
+        answer = result.get("answer", "No answer generated.")
+        st.write_stream(_stream_text(answer))
+        _render_result_details(result)
+        return result
 
 
 def _format_session_timestamp(raw_value: str | None) -> str:
@@ -349,7 +434,7 @@ def render_query():
         st.session_state["query_active_client_name"] = active_name
 
     st.session_state["query_active_client_id"] = client_options[active_name]
-    st.session_state.setdefault("query_reasoning_effort", "medium")
+    st.session_state.setdefault("query_reasoning_effort", "high")
 
     with st.sidebar:
         with st.form("query_workspace_form"):
@@ -415,11 +500,11 @@ def render_query():
                 0,
                 (
                     REASONING_EFFORT_OPTIONS.index(
-                        st.session_state.get("query_reasoning_effort", "medium")
+                        st.session_state.get("query_reasoning_effort", "high")
                     )
-                    if st.session_state.get("query_reasoning_effort", "medium")
+                    if st.session_state.get("query_reasoning_effort", "high")
                     in REASONING_EFFORT_OPTIONS
-                    else 1
+                    else 2
                 ),
             ),
             help="Controls response depth. Applied when OpenAI Responses mode is enabled.",
@@ -445,7 +530,7 @@ def render_query():
             width="stretch",
             disabled=not bool(active_session_id),
         ):
-            api.clear_chat_session(active_session_id)
+            api.clear_chat_session(active_session_id, selected_client_id)
             st.rerun()
 
         if st.button(
@@ -475,7 +560,7 @@ def render_query():
                     api,
                     selected_client_id,
                     trimmed,
-                    st.session_state.get("query_reasoning_effort", "medium"),
+                    st.session_state.get("query_reasoning_effort", "high"),
                     active_session_id,
                 )
                 returned_session_id = result.get("session_id")
@@ -483,5 +568,6 @@ def render_query():
                     st.session_state[_active_session_key(selected_client_id)] = (
                         returned_session_id
                     )
+                st.rerun()
             except Exception as exc:
                 st.error(str(exc))

@@ -15,20 +15,28 @@ def test_execute_client_query_creates_session_and_persists_turns(
 
     captured: dict = {}
     indexed: dict = {}
+    status_events: list[str] = []
+    session_events: list[dict] = []
 
     def _fake_execute_query(
         question: str,
         client_id: str,
         db,
+        llm_model: str | None = None,
         reasoning_effort: str = "medium",
+        reasoning_summary: str | None = None,
         session_id: str | None = None,
         conversation_context: dict | None = None,
+        status_callback=None,
+        reasoning_callback=None,
+        answer_callback=None,
     ) -> dict:
         captured["question"] = question
         captured["client_id"] = client_id
         captured["reasoning_effort"] = reasoning_effort
         captured["session_id"] = session_id
         captured["conversation_context"] = conversation_context
+        status_events.append("execute_query")
         return {
             "answer": "Policy v2 changed retention clauses.",
             "reasoning": "Policy v2 updated retention from 30 to 45 days.",
@@ -47,14 +55,19 @@ def test_execute_client_query_creates_session_and_persists_turns(
         }
 
     monkeypatch.setattr(chat_conversation_service, "execute_query", _fake_execute_query)
-    monkeypatch.setattr(
-        service.context_service,
-        "build_context_bundle",
-        lambda **kwargs: ChatContextBundle(
+
+    def _fake_context_bundle(**kwargs):
+        status_events.append("build_context")
+        return ChatContextBundle(
             session_summary="Summary",
             recent_turns=[{"role": "user", "content": "Earlier context"}],
             cross_session_pairs=[],
-        ),
+        )
+
+    monkeypatch.setattr(
+        service.context_service,
+        "build_context_bundle",
+        _fake_context_bundle,
     )
     monkeypatch.setattr(
         service.context_service,
@@ -73,17 +86,36 @@ def test_execute_client_query_creates_session_and_persists_turns(
         lambda response: "Updated session summary",
     )
 
+    def _session_callback(payload: dict) -> None:
+        status_events.append("session_callback")
+        session_events.append(payload.copy())
+        persisted_user_message = (
+            db_session.query(ChatMessage)
+            .filter(ChatMessage.id == payload["user_message_id"])
+            .one()
+        )
+        assert persisted_user_message.session_id == payload["session_id"]
+
     result = service.execute_client_query(
         client_id=client.id,
         question="What changed in policy v2?",
         reasoning_effort="high",
+        status_callback=status_events.append,
+        session_callback=_session_callback,
     )
 
     assert result["session_id"]
     assert captured["session_id"] == result["session_id"]
+    assert session_events == [
+        {
+            "session_id": result["session_id"],
+            "user_message_id": result["user_message_id"],
+        }
+    ]
     assert captured["client_id"] == client.id
     assert captured["reasoning_effort"] == "high"
     assert captured["conversation_context"]["session_summary"] == "Summary"
+    assert status_events[:3] == ["session_callback", "build_context", "execute_query"]
 
     sessions = (
         db_session.query(ChatSession).filter(ChatSession.client_id == client.id).all()
@@ -163,7 +195,7 @@ def test_clear_session_removes_messages_and_resets_summary(
         lambda session_id: deleted.__setitem__("called", True),
     )
 
-    service.clear_session(session_id=session.id)
+    service.clear_session(session_id=session.id, client_id=client.id)
 
     remaining = (
         db_session.query(ChatMessage)

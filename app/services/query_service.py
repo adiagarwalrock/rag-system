@@ -7,11 +7,14 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import insert, true
 from sqlalchemy.orm import Session
+
+from app.core.config import settings
 
 from app.db.models.document import (
     ConflictLog,
@@ -28,9 +31,16 @@ logger = logging.getLogger(__name__)
 class QueryExecutionRequest:
     question: str
     client_id: str
+    llm_model: str | None = None
     reasoning_effort: str = "medium"
+    reasoning_summary: str | None = None
     session_id: str | None = None
     conversation_context: dict[str, Any] | None = None
+    status_callback: Callable[[str], None] | None = field(default=None, compare=False)
+    reasoning_callback: Callable[[str], None] | None = field(
+        default=None, compare=False
+    )
+    answer_callback: Callable[[str], None] | None = field(default=None, compare=False)
 
 
 class QueryLogWriter:
@@ -47,6 +57,8 @@ class QueryLogWriter:
             session_id=request.session_id,
             question=request.question,
             status="running",
+            llm_model=request.llm_model,
+            reasoning_effort=request.reasoning_effort,
         )
         self.db.add(query_log)
         self.db.commit()
@@ -140,6 +152,7 @@ class QueryExecutionService:
 
         try:
             result = self._run_retrieval(request)
+            result.setdefault("reasoning_effort", request.reasoning_effort)
             latency_ms = self._latency_ms(start_time)
 
             citations = result.get("citations", [])
@@ -179,10 +192,17 @@ class QueryExecutionService:
     def _run_retrieval(self, request: QueryExecutionRequest) -> dict[str, Any]:
         retriever = self.retriever_factory(
             client_id=request.client_id,
+            llm_model=request.llm_model,
             reasoning_effort=request.reasoning_effort,
+            reasoning_summary=request.reasoning_summary,
             conversation_context=request.conversation_context,
+            reasoning_callback=request.reasoning_callback,
+            answer_callback=request.answer_callback,
+            db=self.db,
         )
-        return retriever.query(request.question)
+        return retriever.query(
+            request.question, status_callback=request.status_callback
+        )
 
     @staticmethod
     def _latency_ms(start_time: float) -> int:
@@ -193,12 +213,21 @@ def execute_query(
     question: str,
     client_id: str,
     db: Session,
+    llm_model: str | None = None,
     reasoning_effort: str = "medium",
+    reasoning_summary: str | None = None,
     session_id: str | None = None,
     conversation_context: dict | None = None,
+    status_callback: Callable[[str], None] | None = None,
+    reasoning_callback: Callable[[str], None] | None = None,
+    answer_callback: Callable[[str], None] | None = None,
 ) -> dict:
     """
     Execute a full query pipeline: retrieve, answer, log.
+
+    ``status_callback`` is called at each pipeline stage with a human-readable label.
+    Callers (e.g. the Streamlit UI) can use this to update a live progress panel while
+    the synchronous pipeline runs.
 
     Returns:
         Dict with answer, citations, conflicts, and query metadata.
@@ -206,8 +235,21 @@ def execute_query(
     request = QueryExecutionRequest(
         question=question,
         client_id=client_id,
+        llm_model=llm_model,
         reasoning_effort=reasoning_effort,
+        reasoning_summary=reasoning_summary,
         session_id=session_id,
         conversation_context=conversation_context,
+        status_callback=status_callback,
+        reasoning_callback=reasoning_callback,
+        answer_callback=answer_callback,
     )
+
+    if settings.ENABLE_AGENTIC_RAG:
+        from app.agents.adapter import AgenticRetrieverAdapter
+
+        return QueryExecutionService(
+            db, retriever_factory=AgenticRetrieverAdapter
+        ).execute(request)
+
     return QueryExecutionService(db).execute(request)
