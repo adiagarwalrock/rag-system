@@ -61,11 +61,13 @@ class ChunkArtifactAssembler:
         return chunks
 
     def _append_body_text_chunks(self, chunks: list[ChunkArtifact]) -> None:
-        for page_num, page_regions in self._regions_by_page.items():
+        all_page_nums = set(self._regions_by_page.keys()) | set(self._manifests.keys())
+        for page_num in sorted(all_page_nums):
             manifest = self._manifests.get(page_num)
             if manifest is None:
                 continue
 
+            page_regions = self._regions_by_page.get(page_num, [])
             body_regions = [
                 region
                 for region in page_regions
@@ -73,6 +75,7 @@ class ChunkArtifactAssembler:
                 in {"body_text", "section_heading", "subsection_heading"}
             ]
             grouped_regions = _group_regions_by_section(body_regions)
+            page_chunk_count = 0
             for section_path, section_regions in grouped_regions.items():
                 merged_text = "\n".join(
                     region.text for region in section_regions if region.text
@@ -103,6 +106,32 @@ class ChunkArtifactAssembler:
                                 continuation_flag=False,
                                 figure_type=None,
                                 source_artifact_type="region_group",
+                            ),
+                        )
+                    )
+                    page_chunk_count += 1
+
+            if page_chunk_count == 0 and settings.ENABLE_MULTIMODAL_CAPTIONING:
+                llm_summary = getattr(manifest, "llm_page_summary", None)
+                if llm_summary and llm_summary.strip():
+                    chunks.append(
+                        ChunkArtifact(
+                            chunk_id=str(uuid.uuid4()),
+                            chunk_type="body_text",
+                            source_artifact_type="vision_summary",
+                            source_artifact_id=f"{page_num}:vision_summary",
+                            page_nums=[page_num],
+                            text=llm_summary.strip(),
+                            metadata=_base_chunk_metadata(
+                                manifest=manifest,
+                                section_path="vision_extracted",
+                                region_ids=[],
+                                bbox_refs=[],
+                                caption="",
+                                units=[],
+                                continuation_flag=False,
+                                figure_type=None,
+                                source_artifact_type="vision_summary",
                             ),
                         )
                     )

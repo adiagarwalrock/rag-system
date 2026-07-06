@@ -217,6 +217,22 @@ def _wants_chart_evidence(question: str) -> bool:
     return any(term in normalized for term in CHART_EVIDENCE_TERMS)
 
 
+def _doc_family(node: Any) -> str:
+    meta = getattr(node, "node", node).metadata or {}
+    return (
+        meta.get("document_family")
+        or meta.get("document_version_group")
+        or meta.get("document_id")
+        or ""
+    )
+
+
+def _is_cross_document_synthesis_query(ranked_nodes: list) -> bool:
+    """True when the retrieved pool spans at least 3 distinct document families."""
+    families = {_doc_family(n) for n in ranked_nodes if _doc_family(n)}
+    return len(families) >= 3
+
+
 # ---------------------------------------------------------------------------
 # Node classifiers
 # ---------------------------------------------------------------------------

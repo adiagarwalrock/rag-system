@@ -19,6 +19,7 @@ from app.services.synth_parse import (
     split_reasoning_from_text as _split_reasoning_from_text,
 )
 from app.components.retriever.core import (
+    CROSS_DOCUMENT_EVIDENCE_LIMIT,
     RAGRetriever,
     _build_retrieval_diagnostics,
     _fuse_node_batches,
@@ -216,7 +217,7 @@ def test_citations_are_bounded_subset_of_ranked_candidates():
     citations = build_citations(evidence_nodes)
 
     assert len(ranked) == 10
-    assert len(citations) <= retriever.evidence_limit
+    assert len(citations) <= CROSS_DOCUMENT_EVIDENCE_LIMIT
 
     ranked_ids = {node.node.node_id for node in ranked}
     citation_ids = {citation["vector_node_id"] for citation in citations}
@@ -569,13 +570,15 @@ def test_collect_image_evidence_paths_respects_max_images(tmp_path):
 
 def test_visual_query_injects_image_evidence_when_top_evidence_has_no_images():
     retriever = RAGRetriever("client-1", top_k=10)
+    # All text nodes share one document_id so cross-document cap does not fire;
+    # evidence_limit is the binding cap for this test.
     ranked = [
         _node(
             f"text-{i}",
             1.0 - (i * 0.01),
             {
                 "chunk_type": "body_text",
-                "document_id": f"doc-{i}",
+                "document_id": "single-doc",
             },
         )
         for i in range(7)
@@ -587,7 +590,7 @@ def test_visual_query_injects_image_evidence_when_top_evidence_has_no_images():
                 0.5,
                 {
                     "chunk_type": "figure_artifact",
-                    "document_id": "img-doc-1",
+                    "document_id": "single-doc",
                     "asset_refs": ["/tmp/figure-1.png"],
                 },
             ),
@@ -596,7 +599,7 @@ def test_visual_query_injects_image_evidence_when_top_evidence_has_no_images():
                 0.49,
                 {
                     "chunk_type": "chart_context",
-                    "document_id": "img-doc-2",
+                    "document_id": "single-doc",
                     "asset_refs": ["/tmp/figure-2.png"],
                 },
             ),

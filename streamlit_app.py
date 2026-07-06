@@ -40,6 +40,11 @@ pg = st.navigation(
             title="Qdrant Inspector",
             icon=":material/dataset:",
         ),
+        st.Page(
+            "frontend/pages/7_Qdrant_Query_Debug.py",
+            title="Qdrant Query Debug",
+            icon=":material/manage_search:",
+        ),
     ]
 )
 
